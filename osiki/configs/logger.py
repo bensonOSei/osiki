@@ -27,6 +27,6 @@ def setup_logging(log_level: str = "INFO", json_logs: bool = False) -> None:
         )
 
 
-def get_logger(name: str = __name__) -> logger:  # type: ignore[valid-type]
+def get_logger(name: str = __name__):  # type: ignore[no-untyped-def]
     """Get a logger instance with the given name."""
     return logger.bind(name=name)

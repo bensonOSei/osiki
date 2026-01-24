@@ -1,0 +1,38 @@
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/{{ route_prefix }}", tags=["{{ tag }}"])
+
+
+@router.get("")
+async def list_{{ plural_snake }}():
+    """List all {{ plural_snake }}."""
+    # TODO: Implement list endpoint
+    return {"{{ plural_snake }}": []}
+
+
+@router.get("/{% raw %}{{% endraw %}{{ var_name }}_id{% raw %}}{% endraw %}")
+async def get_{{ snake_name }}({{ var_name }}_id: str):
+    """Get a {{ snake_name }} by ID."""
+    # TODO: Implement get endpoint
+    return {"{{ var_name }}_id": {{ var_name }}_id}
+
+
+@router.post("")
+async def create_{{ snake_name }}():
+    """Create a new {{ snake_name }}."""
+    # TODO: Implement create endpoint
+    return {"message": "{{ class_name }} created"}
+
+
+@router.put("/{% raw %}{{% endraw %}{{ var_name }}_id{% raw %}}{% endraw %}")
+async def update_{{ snake_name }}({{ var_name }}_id: str):
+    """Update a {{ snake_name }}."""
+    # TODO: Implement update endpoint
+    return {"{{ var_name }}_id": {{ var_name }}_id, "message": "{{ class_name }} updated"}
+
+
+@router.delete("/{% raw %}{{% endraw %}{{ var_name }}_id{% raw %}}{% endraw %}")
+async def delete_{{ snake_name }}({{ var_name }}_id: str):
+    """Delete a {{ snake_name }}."""
+    # TODO: Implement delete endpoint
+    return {"{{ var_name }}_id": {{ var_name }}_id, "message": "{{ class_name }} deleted"}

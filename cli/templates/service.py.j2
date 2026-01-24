@@ -1,0 +1,19 @@
+from loguru import logger
+
+from osiki.services.{{ snake_name }}.base_{{ snake_name }}_service import (
+    Base{{ class_name }}Service,
+    {{ class_name }}Result,
+)
+
+
+class {{ class_name }}Service(Base{{ class_name }}Service):
+    def __init__(self) -> None:
+        pass  # TODO: Add dependencies
+
+    async def execute(self, *args, **kwargs) -> {{ class_name }}Result:
+        logger.debug("Executing {{ class_name }}Service")
+        # TODO: Implement service logic
+        return {{ class_name }}Result(
+            success=True,
+            message="{{ class_name }} executed successfully",
+        )

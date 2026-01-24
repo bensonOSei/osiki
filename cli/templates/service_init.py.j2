@@ -1,0 +1,7 @@
+from osiki.services.{{ snake_name }}.base_{{ snake_name }}_service import (
+    Base{{ class_name }}Service,
+    {{ class_name }}Result,
+)
+from osiki.services.{{ snake_name }}.{{ snake_name }}_service import {{ class_name }}Service
+
+__all__ = ["Base{{ class_name }}Service", "{{ class_name }}Service", "{{ class_name }}Result"]

@@ -1,0 +1,66 @@
+import time
+
+from beanie import PydanticObjectId
+from loguru import logger
+
+from osiki.models.{{ model_file }} import {{ class_name }}
+from osiki.repositories.{{ plural_snake }}.base_{{ snake_name }}_repository import (
+    Base{{ class_name }}Repository,
+)
+
+
+class MongoDB{{ class_name }}Repository(Base{{ class_name }}Repository):
+    async def create(self, {{ var_name }}: {{ class_name }}) -> {{ class_name }}:
+        await {{ var_name }}.insert()
+        logger.debug("{{ class_name }} created", {{ var_name }}_id=str({{ var_name }}.id))
+        return {{ var_name }}
+
+    async def get_by_id(self, {{ var_name }}_id: str) -> {{ class_name }} | None:
+        {{ var_name }} = await {{ class_name }}.get(PydanticObjectId({{ var_name }}_id))
+        if not {{ var_name }}:
+            logger.debug("{{ class_name }} not found", {{ var_name }}_id={{ var_name }}_id)
+        return {{ var_name }}
+
+    async def update(self, {{ var_name }}: {{ class_name }}) -> {{ class_name }}:
+        {{ var_name }}.updated_at = time.time()
+        await {{ var_name }}.save()
+        logger.debug("{{ class_name }} updated", {{ var_name }}_id=str({{ var_name }}.id))
+        return {{ var_name }}
+
+    async def deactivate(self, {{ var_name }}_id: str) -> bool:
+        {{ var_name }} = await self.get_by_id({{ var_name }}_id)
+        if not {{ var_name }}:
+            logger.warning(
+                "Attempted to deactivate non-existent {{ class_name|lower }}",
+                {{ var_name }}_id={{ var_name }}_id,
+            )
+            return False
+        {{ var_name }}.is_active = False
+        {{ var_name }}.updated_at = time.time()
+        await {{ var_name }}.save()
+        logger.info("{{ class_name }} deactivated", {{ var_name }}_id={{ var_name }}_id)
+        return True
+
+    async def reactivate(self, {{ var_name }}_id: str) -> bool:
+        {{ var_name }} = await self.get_by_id({{ var_name }}_id)
+        if not {{ var_name }}:
+            logger.warning(
+                "Attempted to reactivate non-existent {{ class_name|lower }}",
+                {{ var_name }}_id={{ var_name }}_id,
+            )
+            return False
+        {{ var_name }}.is_active = True
+        {{ var_name }}.updated_at = time.time()
+        await {{ var_name }}.save()
+        logger.info("{{ class_name }} reactivated", {{ var_name }}_id={{ var_name }}_id)
+        return True
+
+    async def list_active(
+        self, skip: int = 0, limit: int = 100
+    ) -> list[{{ class_name }}]:
+        return await (
+            {{ class_name }}.find({{ class_name }}.is_active == True)
+            .skip(skip)
+            .limit(limit)
+            .to_list()
+        )

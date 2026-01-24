@@ -1,0 +1,31 @@
+from beanie import Document{% if has_indexed_fields %}, Indexed{% endif %}{% if has_object_id_fields %}, PydanticObjectId{% endif %}
+
+{% if has_indexes -%}
+from pymongo import IndexModel
+{% endif -%}
+from osiki.models.base import MetadataMixin, SoftDeleteMixin, TimestampMixin
+
+
+class {{ class_name }}(Document, TimestampMixin, SoftDeleteMixin, MetadataMixin):
+{%- if fields %}
+{% for field in fields %}
+{%- if field.unique %}
+    {{ field.name }}: Indexed({{ field.type }}, unique=True)  # type: ignore[valid-type]
+{%- elif field.indexed %}
+    {{ field.name }}: Indexed({{ field.type }})  # type: ignore[valid-type]
+{%- else %}
+    {{ field.name }}: {{ field.type }}{% if field.default is defined %} = {{ field.default }}{% endif %}
+
+{%- endif %}
+{%- endfor %}
+{%- else %}
+    pass  # TODO: Add fields
+{%- endif %}
+
+    class Settings:
+        name = "{{ collection_name }}"
+{%- if has_indexes %}
+        indexes = [
+            IndexModel([("is_active", 1), ("created_at", -1)]),
+        ]
+{%- endif %}

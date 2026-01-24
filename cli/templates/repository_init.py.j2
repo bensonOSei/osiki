@@ -1,0 +1,8 @@
+from osiki.repositories.{{ plural_snake }}.base_{{ snake_name }}_repository import (
+    Base{{ class_name }}Repository,
+)
+from osiki.repositories.{{ plural_snake }}.mongodb_{{ snake_name }}_repository import (
+    MongoDB{{ class_name }}Repository,
+)
+
+__all__ = ["Base{{ class_name }}Repository", "MongoDB{{ class_name }}Repository"]

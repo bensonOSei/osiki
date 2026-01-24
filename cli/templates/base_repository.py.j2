@@ -1,0 +1,25 @@
+from abc import ABC, abstractmethod
+
+from osiki.models.{{ model_file }} import {{ class_name }}
+
+
+class Base{{ class_name }}Repository(ABC):
+    @abstractmethod
+    async def create(self, {{ var_name }}: {{ class_name }}) -> {{ class_name }}: ...
+
+    @abstractmethod
+    async def get_by_id(self, {{ var_name }}_id: str) -> {{ class_name }} | None: ...
+
+    @abstractmethod
+    async def update(self, {{ var_name }}: {{ class_name }}) -> {{ class_name }}: ...
+
+    @abstractmethod
+    async def deactivate(self, {{ var_name }}_id: str) -> bool: ...
+
+    @abstractmethod
+    async def reactivate(self, {{ var_name }}_id: str) -> bool: ...
+
+    @abstractmethod
+    async def list_active(
+        self, skip: int = 0, limit: int = 100
+    ) -> list[{{ class_name }}]: ...
