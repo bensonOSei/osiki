@@ -1,0 +1,46 @@
+[project]
+name = "osiki"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Benson Osei Mensah",email = "kbenson643@gmail.com"}
+]
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi (>=0.128.0,<0.129.0)",
+    "beanie (>=2.0.1,<3.0.0)",
+    "mypy (>=1.19.1,<2.0.0)",
+    "black (>=26.1.0,<27.0.0)",
+    "ruff (>=0.14.14,<0.15.0)",
+    "pydantic-settings (>=2.12.0,<3.0.0)",
+    "uvicorn (>=0.40.0,<0.41.0)",
+    "loguru (>=0.7.3,<0.8.0)",
+    "pymongo (>=4.16.0,<5.0.0)"
+]
+
+
+[tool.black]
+line-length = 88
+target-version = ["py313"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E712"]  # Beanie ODM requires == True/False for query building
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+ignore_missing_imports = true
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pre-commit (>=4.5.1,<5.0.0)"
+]

@@ -1,0 +1,67 @@
+from beanie import PydanticObjectId
+from loguru import logger
+
+from osiki.models.permission import Permission
+from osiki.repositories.permissions.base_permission_repository import (
+    BasePermissionRepository,
+)
+
+
+class MongoDBPermissionRepository(BasePermissionRepository):
+    async def create(self, permission: Permission) -> Permission:
+        await permission.insert()
+        logger.debug(
+            "Permission created",
+            permission_id=str(permission.id),
+            resource=permission.resource,
+            action=permission.action,
+        )
+        return permission
+
+    async def get_by_id(self, permission_id: str) -> Permission | None:
+        permission = await Permission.get(PydanticObjectId(permission_id))
+        if not permission:
+            logger.debug("Permission not found", permission_id=permission_id)
+        return permission
+
+    async def get_by_ids(self, permission_ids: list[str]) -> list[Permission]:
+        object_ids = [PydanticObjectId(pid) for pid in permission_ids]
+        return await Permission.find(
+            {"_id": {"$in": object_ids}, "is_active": True}
+        ).to_list()
+
+    async def get_by_resource_action(
+        self, resource: str, action: str
+    ) -> Permission | None:
+        return await Permission.find_one(
+            Permission.resource == resource,
+            Permission.action == action,
+            Permission.is_active == True,
+        )
+
+    async def get_by_resource(self, resource: str) -> list[Permission]:
+        return await Permission.find(
+            Permission.resource == resource,
+            Permission.is_active == True,
+        ).to_list()
+
+    async def deactivate(self, permission_id: str) -> bool:
+        permission = await self.get_by_id(permission_id)
+        if not permission:
+            logger.warning(
+                "Attempted to deactivate non-existent permission",
+                permission_id=permission_id,
+            )
+            return False
+        permission.is_active = False
+        await permission.save()
+        logger.info("Permission deactivated", permission_id=permission_id)
+        return True
+
+    async def list_active(self, skip: int = 0, limit: int = 100) -> list[Permission]:
+        return (
+            await Permission.find(Permission.is_active == True)
+            .skip(skip)
+            .limit(limit)
+            .to_list()
+        )
