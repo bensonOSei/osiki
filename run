@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Osiki CLI wrapper - runs the CLI without needing 'poetry run'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Use poetry run if available, otherwise try the venv directly
+if command -v poetry &> /dev/null && [ -f "pyproject.toml" ]; then
+    poetry run osiki "$@"
+elif [ -f ".venv/bin/osiki" ]; then
+    .venv/bin/osiki "$@"
+else
+    echo "Error: Please run 'poetry install' first to set up the CLI"
+    exit 1
+fi
