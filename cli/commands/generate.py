@@ -7,7 +7,7 @@ from cli.generators.repository import generate_repository
 from cli.generators.route import generate_route
 from cli.generators.service import generate_service
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=True, rich_markup_mode=None)
 
 
 @app.command("model")  # type: ignore[misc]
