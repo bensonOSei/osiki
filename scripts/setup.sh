@@ -145,6 +145,41 @@ print_header "Setting up pre-commit hooks..."
 poetry run pre-commit install
 print_success "Pre-commit hooks installed"
 
+# Setup CLI alias
+print_header "Setting up Osiki CLI..."
+
+SHELL_RC=""
+if [ -n "$ZSH_VERSION" ] || [ "$SHELL" = "/bin/zsh" ]; then
+    SHELL_RC="$HOME/.zshrc"
+elif [ -n "$BASH_VERSION" ] || [ "$SHELL" = "/bin/bash" ]; then
+    SHELL_RC="$HOME/.bashrc"
+fi
+
+ALIAS_LINE="alias osiki='$PROJECT_ROOT/run'"
+
+if [ -n "$SHELL_RC" ]; then
+    if grep -q "alias osiki=" "$SHELL_RC" 2>/dev/null; then
+        print_success "Osiki CLI alias already configured"
+    else
+        echo ""
+        read -p "Add 'osiki' command to your shell? [Y/n] " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            echo "" >> "$SHELL_RC"
+            echo "# Osiki CLI" >> "$SHELL_RC"
+            echo "$ALIAS_LINE" >> "$SHELL_RC"
+            print_success "Added osiki alias to $SHELL_RC"
+            echo "  Run 'source $SHELL_RC' or start a new terminal to use 'osiki' command"
+        else
+            print_warning "Skipped CLI alias setup"
+            echo "  You can still use: ./run generate <command>"
+        fi
+    fi
+else
+    print_warning "Could not detect shell config file"
+    echo "  Add this to your shell config: $ALIAS_LINE"
+fi
+
 # Ask about starting services
 print_header "Docker services"
 
@@ -178,7 +213,14 @@ echo -e "${GREEN}=============================${NC}"
 echo -e "${GREEN}Setup complete!${NC}"
 echo -e "${GREEN}=============================${NC}"
 echo ""
-echo "Quick start commands:"
+echo "Osiki CLI commands:"
+echo "  osiki generate model <Name>       - Generate a Beanie model"
+echo "  osiki generate repository <Name>  - Generate repository files"
+echo "  osiki generate service <Name>     - Generate service files"
+echo "  osiki generate route <Name>       - Generate API route"
+echo "  osiki generate all <Name>         - Generate all of the above"
+echo ""
+echo "Development commands:"
 echo "  make dev        - Run the development server locally"
 echo "  make up         - Start Docker services"
 echo "  make down       - Stop Docker services"
