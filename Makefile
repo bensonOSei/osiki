@@ -1,19 +1,23 @@
-.PHONY: help install dev up down build logs shell lint format typecheck pre-commit clean
+.PHONY: help install dev up down build logs shell lint format typecheck pre-commit clean test test-unit test-integration test-cov
 
 help:
 	@echo "Available commands:"
-	@echo "  make install      - Install dependencies"
-	@echo "  make dev          - Run development server locally"
-	@echo "  make up           - Start docker-compose services"
-	@echo "  make down         - Stop docker-compose services"
-	@echo "  make build        - Build docker images"
-	@echo "  make logs         - View docker-compose logs"
-	@echo "  make shell        - Open shell in api container"
-	@echo "  make lint         - Run ruff linter"
-	@echo "  make format       - Format code with black and ruff"
-	@echo "  make typecheck    - Run mypy type checker"
-	@echo "  make pre-commit   - Run pre-commit hooks"
-	@echo "  make clean        - Remove cache files"
+	@echo "  make install          - Install dependencies"
+	@echo "  make dev              - Run development server locally"
+	@echo "  make up               - Start docker-compose services"
+	@echo "  make down             - Stop docker-compose services"
+	@echo "  make build            - Build docker images"
+	@echo "  make logs             - View docker-compose logs"
+	@echo "  make shell            - Open shell in api container"
+	@echo "  make lint             - Run ruff linter"
+	@echo "  make format           - Format code with black and ruff"
+	@echo "  make typecheck        - Run mypy type checker"
+	@echo "  make pre-commit       - Run pre-commit hooks"
+	@echo "  make clean            - Remove cache files"
+	@echo "  make test             - Run all tests"
+	@echo "  make test-unit        - Run unit tests only"
+	@echo "  make test-integration - Run integration tests only"
+	@echo "  make test-cov         - Run tests with coverage report"
 
 install:
 	poetry install
@@ -54,3 +58,15 @@ clean:
 	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+
+test:
+	poetry run pytest
+
+test-unit:
+	poetry run pytest tests/unit
+
+test-integration:
+	poetry run pytest tests/integration
+
+test-cov:
+	poetry run pytest --cov=osiki --cov-report=term-missing
