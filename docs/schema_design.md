@@ -1,4 +1,4 @@
-## RBAC Management System - Schema Design Report
+# RBAC Management System - Schema Design Report
 
 ---
 
@@ -32,13 +32,13 @@ This document defines the MongoDB schema for a multi-tenant, hierarchical RBAC (
 
 ### 1. Soft Delete Strategy
 
-| Collection | Strategy | Rationale |
-|------------|----------|-----------|
-| `users`, `groups`, `roles`, `permissions` | Soft delete (`is_active: false`) | Audit trails reference these entities; compliance requires historical data |
-| `user_roles`, `user_groups`, `group_roles` | Soft delete | Assignment history is the audit trail |
-| `constraints` | Soft delete | Historical constraint violations must be explainable |
-| `audit_logs` | TTL hard delete (1-2 years) | High volume; retention limits apply |
-| `access_logs` | TTL hard delete (30-90 days) | Extremely high volume; primarily for monitoring |
+| Collection                                 | Strategy                         | Rationale                                                                  |
+| ------------------------------------------ | -------------------------------- | -------------------------------------------------------------------------- |
+| `users`, `groups`, `roles`, `permissions`  | Soft delete (`is_active: false`) | Audit trails reference these entities; compliance requires historical data |
+| `user_roles`, `user_groups`, `group_roles` | Soft delete                      | Assignment history is the audit trail                                      |
+| `constraints`                              | Soft delete                      | Historical constraint violations must be explainable                       |
+| `audit_logs`                               | TTL hard delete (1-2 years)      | High volume; retention limits apply                                        |
+| `access_logs`                              | TTL hard delete (30-90 days)     | Extremely high volume; primarily for monitoring                            |
 
 ### 2. Permission Inheritance
 
@@ -72,11 +72,11 @@ Result:     ✅ ALLOWED (global access)
 
 ### 4. Access Logging Strategy
 
-| Event Type | Logging Rate | Rationale |
-|------------|--------------|-----------|
-| Denials | 100% | Security critical; enables threat detection |
-| Slow requests (>50ms) | 100% | Performance monitoring |
-| Successful requests | 10% sampled | Analytics without storage explosion |
+| Event Type            | Logging Rate | Rationale                                   |
+| --------------------- | ------------ | ------------------------------------------- |
+| Denials               | 100%         | Security critical; enables threat detection |
+| Slow requests (>50ms) | 100%         | Performance monitoring                      |
+| Successful requests   | 10% sampled  | Analytics without storage explosion         |
 
 ---
 
@@ -92,7 +92,7 @@ Represents entities that can be assigned roles and permissions.
   _id: ObjectId,
   external_id: String,                    // From auth provider (Auth0, Firebase, etc.)
   email: String,                          // Optional, for lookups
-  
+
   // Attributes
   metadata: {
     display_name: String,
@@ -100,10 +100,10 @@ Represents entities that can be assigned roles and permissions.
     employee_id: String,
     // ... extensible
   },
-  
+
   // State
   is_active: Boolean,                     // Soft delete flag
-  
+
   // Timestamps
   created_at: ISODate,
   updated_at: ISODate
@@ -112,15 +112,15 @@ Represents entities that can be assigned roles and permissions.
 
 **Field Details**:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `_id` | ObjectId | Auto | Primary key |
-| `external_id` | String | Yes | Unique identifier from external auth provider |
-| `email` | String | No | User email, unique if provided |
-| `metadata` | Object | No | Flexible key-value attributes |
-| `is_active` | Boolean | Yes | `false` = soft deleted |
-| `created_at` | ISODate | Yes | Document creation time |
-| `updated_at` | ISODate | Yes | Last modification time |
+| Field         | Type     | Required | Description                                   |
+| ------------- | -------- | -------- | --------------------------------------------- |
+| `_id`         | ObjectId | Auto     | Primary key                                   |
+| `external_id` | String   | Yes      | Unique identifier from external auth provider |
+| `email`       | String   | No       | User email, unique if provided                |
+| `metadata`    | Object   | No       | Flexible key-value attributes                 |
+| `is_active`   | Boolean  | Yes      | `false` = soft deleted                        |
+| `created_at`  | ISODate  | Yes      | Document creation time                        |
+| `updated_at`  | ISODate  | Yes      | Last modification time                        |
 
 ---
 
@@ -134,7 +134,7 @@ Logical groupings of users for bulk role assignment.
   _id: ObjectId,
   name: String,                           // Unique group name
   description: String,
-  
+
   // Attributes
   metadata: {
     department: String,
@@ -142,10 +142,10 @@ Logical groupings of users for bulk role assignment.
     manager_id: String,
     // ... extensible
   },
-  
+
   // State
   is_active: Boolean,
-  
+
   // Timestamps
   created_at: ISODate,
   updated_at: ISODate
@@ -154,15 +154,15 @@ Logical groupings of users for bulk role assignment.
 
 **Field Details**:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `_id` | ObjectId | Auto | Primary key |
-| `name` | String | Yes | Unique group identifier |
-| `description` | String | No | Human-readable description |
-| `metadata` | Object | No | Flexible attributes |
-| `is_active` | Boolean | Yes | `false` = soft deleted |
-| `created_at` | ISODate | Yes | Document creation time |
-| `updated_at` | ISODate | Yes | Last modification time |
+| Field         | Type     | Required | Description                |
+| ------------- | -------- | -------- | -------------------------- |
+| `_id`         | ObjectId | Auto     | Primary key                |
+| `name`        | String   | Yes      | Unique group identifier    |
+| `description` | String   | No       | Human-readable description |
+| `metadata`    | Object   | No       | Flexible attributes        |
+| `is_active`   | Boolean  | Yes      | `false` = soft deleted     |
+| `created_at`  | ISODate  | Yes      | Document creation time     |
+| `updated_at`  | ISODate  | Yes      | Last modification time     |
 
 ---
 
@@ -176,13 +176,13 @@ Defines named collections of permissions with optional hierarchy.
   _id: ObjectId,
   name: String,                           // Unique role name
   description: String,
-  
+
   // Hierarchy
   parent_role_id: ObjectId | null,        // Reference to parent role (null = root)
-  
+
   // Permissions
   permission_ids: [ObjectId],             // Direct permissions (not inherited)
-  
+
   // Attributes
   metadata: {
     owner: String,                        // Team/person responsible for this role
@@ -190,13 +190,13 @@ Defines named collections of permissions with optional hierarchy.
     tags: [String],                       // Categorization tags
     // ... extensible
   },
-  
+
   // Protection
   is_system: Boolean,                     // true = cannot be deleted or modified
-  
+
   // State
   is_active: Boolean,
-  
+
   // Timestamps
   created_at: ISODate,
   updated_at: ISODate
@@ -205,20 +205,21 @@ Defines named collections of permissions with optional hierarchy.
 
 **Field Details**:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `_id` | ObjectId | Auto | Primary key |
-| `name` | String | Yes | Unique role identifier |
-| `description` | String | No | Human-readable description |
-| `parent_role_id` | ObjectId | No | Parent role for inheritance; `null` = root role |
-| `permission_ids` | [ObjectId] | Yes | Array of permission references (can be empty) |
-| `metadata` | Object | No | Flexible attributes |
-| `is_system` | Boolean | Yes | Protected system roles cannot be modified |
-| `is_active` | Boolean | Yes | `false` = soft deleted |
-| `created_at` | ISODate | Yes | Document creation time |
-| `updated_at` | ISODate | Yes | Last modification time |
+| Field            | Type       | Required | Description                                     |
+| ---------------- | ---------- | -------- | ----------------------------------------------- |
+| `_id`            | ObjectId   | Auto     | Primary key                                     |
+| `name`           | String     | Yes      | Unique role identifier                          |
+| `description`    | String     | No       | Human-readable description                      |
+| `parent_role_id` | ObjectId   | No       | Parent role for inheritance; `null` = root role |
+| `permission_ids` | [ObjectId] | Yes      | Array of permission references (can be empty)   |
+| `metadata`       | Object     | No       | Flexible attributes                             |
+| `is_system`      | Boolean    | Yes      | Protected system roles cannot be modified       |
+| `is_active`      | Boolean    | Yes      | `false` = soft deleted                          |
+| `created_at`     | ISODate    | Yes      | Document creation time                          |
+| `updated_at`     | ISODate    | Yes      | Last modification time                          |
 
 **Hierarchy Rules**:
+
 - A role with `parent_role_id: null` is a root role
 - Circular references are forbidden (enforced in application)
 - No maximum depth limit
@@ -236,10 +237,10 @@ Atomic permission definitions representing resource-action pairs.
   _id: ObjectId,
   resource: String,                       // e.g., "invoices", "users", "reports"
   action: String,                         // e.g., "read", "write", "delete", "admin"
-  
+
   // Description
   description: String,
-  
+
   // Attributes
   metadata: {
     service: String,                      // Owning service
@@ -247,10 +248,10 @@ Atomic permission definitions representing resource-action pairs.
     risk_level: String,                   // "low", "medium", "high", "critical"
     // ... extensible
   },
-  
+
   // State
   is_active: Boolean,
-  
+
   // Timestamps
   created_at: ISODate
 }
@@ -258,19 +259,20 @@ Atomic permission definitions representing resource-action pairs.
 
 **Field Details**:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `_id` | ObjectId | Auto | Primary key |
-| `resource` | String | Yes | Resource identifier |
-| `action` | String | Yes | Action identifier |
-| `description` | String | No | Human-readable description |
-| `metadata` | Object | No | Flexible attributes |
-| `is_active` | Boolean | Yes | `false` = soft deleted |
-| `created_at` | ISODate | Yes | Document creation time |
+| Field         | Type     | Required | Description                |
+| ------------- | -------- | -------- | -------------------------- |
+| `_id`         | ObjectId | Auto     | Primary key                |
+| `resource`    | String   | Yes      | Resource identifier        |
+| `action`      | String   | Yes      | Action identifier          |
+| `description` | String   | No       | Human-readable description |
+| `metadata`    | Object   | No       | Flexible attributes        |
+| `is_active`   | Boolean  | Yes      | `false` = soft deleted     |
+| `created_at`  | ISODate  | Yes      | Document creation time     |
 
 **Permission String Format**: `{resource}:{action}`
 
 **Wildcard Support** (application-level):
+
 - `invoices:*` — All actions on invoices resource
 - `*:read` — Read action on all resources
 - `*:*` — Superadmin (all permissions)
@@ -294,11 +296,11 @@ Junction collection linking users to roles with scope and metadata.
 {
   // Identity
   _id: ObjectId,
-  
+
   // Relationship
   user_id: ObjectId,                      // Reference to users collection
   role_id: ObjectId,                      // Reference to roles collection
-  
+
   // Scope (flexible multi-tenancy)
   scope: {
     tenant_id: String,
@@ -307,16 +309,16 @@ Junction collection linking users to roles with scope and metadata.
     department: String,
     // ... any keys
   },
-  
+
   // Assignment metadata (audit trail)
   assigned_by: String,                    // User ID or "system"
   assigned_at: ISODate,
   expires_at: ISODate | null,             // Optional expiration
   assignment_reason: String,              // Optional justification
-  
+
   // State
   is_active: Boolean,
-  
+
   // Timestamps
   created_at: ISODate,
   updated_at: ISODate
@@ -325,19 +327,19 @@ Junction collection linking users to roles with scope and metadata.
 
 **Field Details**:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `_id` | ObjectId | Auto | Primary key |
-| `user_id` | ObjectId | Yes | Reference to user |
-| `role_id` | ObjectId | Yes | Reference to role |
-| `scope` | Object | Yes | Scope restriction; `{}` = global |
-| `assigned_by` | String | Yes | Who made this assignment |
-| `assigned_at` | ISODate | Yes | When assignment was made |
-| `expires_at` | ISODate | No | Auto-revoke after this time |
-| `assignment_reason` | String | No | Justification for audit |
-| `is_active` | Boolean | Yes | `false` = revoked |
-| `created_at` | ISODate | Yes | Document creation time |
-| `updated_at` | ISODate | Yes | Last modification time |
+| Field               | Type     | Required | Description                      |
+| ------------------- | -------- | -------- | -------------------------------- |
+| `_id`               | ObjectId | Auto     | Primary key                      |
+| `user_id`           | ObjectId | Yes      | Reference to user                |
+| `role_id`           | ObjectId | Yes      | Reference to role                |
+| `scope`             | Object   | Yes      | Scope restriction; `{}` = global |
+| `assigned_by`       | String   | Yes      | Who made this assignment         |
+| `assigned_at`       | ISODate  | Yes      | When assignment was made         |
+| `expires_at`        | ISODate  | No       | Auto-revoke after this time      |
+| `assignment_reason` | String   | No       | Justification for audit          |
+| `is_active`         | Boolean  | Yes      | `false` = revoked                |
+| `created_at`        | ISODate  | Yes      | Document creation time           |
+| `updated_at`        | ISODate  | Yes      | Last modification time           |
 
 **Uniqueness**: Combination of `(user_id, role_id, scope)` should be unique when `is_active: true`.
 
@@ -351,19 +353,19 @@ Junction collection linking users to groups.
 {
   // Identity
   _id: ObjectId,
-  
+
   // Relationship
   user_id: ObjectId,                      // Reference to users collection
   group_id: ObjectId,                     // Reference to groups collection
-  
+
   // Membership metadata
   added_by: String,                       // User ID or "system"
   added_at: ISODate,
   membership_type: String,                // "member", "admin", "owner" (optional)
-  
+
   // State
   is_active: Boolean,
-  
+
   // Timestamps
   created_at: ISODate,
   updated_at: ISODate
@@ -372,17 +374,17 @@ Junction collection linking users to groups.
 
 **Field Details**:
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `_id` | ObjectId | Auto | Primary key |
-| `user_id` | ObjectId | Yes | Reference to user |
-| `group_id` | ObjectId | Yes | Reference to group |
-| `added_by` | String | Yes | Who added user to group |
-| `added_at` | ISODate | Yes | When user was added |
-| `membership_type` | String | No | Role within the group |
-| `is_active` | Boolean | Yes | `false` = removed from group |
-| `created_at` | ISODate | Yes | Document creation time |
-| `updated_at` | ISODate | Yes | Last modification time |
+| Field             | Type     | Required | Description                  |
+| ----------------- | -------- | -------- | ---------------------------- |
+| `_id`             | ObjectId | Auto     | Primary key                  |
+| `user_id`         | ObjectId | Yes      | Reference to user            |
+| `group_id`        | ObjectId | Yes      | Reference to group           |
+| `added_by`        | String   | Yes      | Who added user to group      |
+| `added_at`        | ISODate  | Yes      | When user was added          |
+| `membership_type` | String   | No       | Role within the group        |
+| `is_active`       | Boolean  | Yes      | `false` = removed from group |
+| `created_at`      | ISODate  | Yes      | Document creation time       |
+| `updated_at`      | ISODate  | Yes      | Last modification time       |
 
 **Uniqueness**: Combination of `(user_id, group_id)` should be unique when `is_active: true`.
 
@@ -396,11 +398,11 @@ Junction collection linking groups to roles with scope.
 {
   // Identity
   _id: ObjectId,
-  
+
   // Relationship
   group_id: ObjectId,                     // Reference to groups collection
   role_id: ObjectId,                      // Reference to roles collection
-  
+
   // Scope (same structure as user_roles)
   scope: {
     tenant_id: String,
@@ -408,16 +410,16 @@ Junction collection linking groups to roles with scope.
     branch_id: String,
     // ... any keys
   },
-  
+
   // Assignment metadata
   assigned_by: String,
   assigned_at: ISODate,
   expires_at: ISODate | null,
   assignment_reason: String,
-  
+
   // State
   is_active: Boolean,
-  
+
   // Timestamps
   created_at: ISODate,
   updated_at: ISODate
@@ -438,27 +440,27 @@ Business rules that restrict role assignments.
   _id: ObjectId,
   name: String,                           // Human-readable constraint name
   description: String,
-  
+
   // Constraint definition
   type: String,                           // "mutual_exclusion" | "cardinality" | "prerequisite"
-  
+
   config: {
     // === For mutual_exclusion ===
     role_ids: [ObjectId],                 // Roles that cannot be held together
-    
+
     // === For cardinality ===
     role_id: ObjectId,                    // Target role
     max_assignments: Number,              // Maximum number of assignments
     scope_level: String,                  // "global" | "per_tenant" | "per_scope"
-    
+
     // === For prerequisite ===
     role_id: ObjectId,                    // Role that requires prerequisite
     requires_role_id: ObjectId,           // Required role
   },
-  
+
   // State
   is_active: Boolean,
-  
+
   // Timestamps
   created_at: ISODate,
   updated_at: ISODate
@@ -467,19 +469,19 @@ Business rules that restrict role assignments.
 
 **Constraint Types**:
 
-| Type | Description | Example |
-|------|-------------|---------|
+| Type               | Description                                 | Example                                |
+| ------------------ | ------------------------------------------- | -------------------------------------- |
 | `mutual_exclusion` | User cannot hold these roles simultaneously | Payment initiator and payment approver |
-| `cardinality` | Limits number of users with this role | Max 3 super_admins globally |
-| `prerequisite` | Must have role A before getting role B | Must be `employee` before `manager` |
+| `cardinality`      | Limits number of users with this role       | Max 3 super_admins globally            |
+| `prerequisite`     | Must have role A before getting role B      | Must be `employee` before `manager`    |
 
 **Scope Level for Cardinality**:
 
-| Level | Meaning |
-|-------|---------|
-| `global` | Max N assignments across entire system |
-| `per_tenant` | Max N assignments per tenant_id |
-| `per_scope` | Max N assignments per exact scope match |
+| Level        | Meaning                                 |
+| ------------ | --------------------------------------- |
+| `global`     | Max N assignments across entire system  |
+| `per_tenant` | Max N assignments per tenant_id         |
+| `per_scope`  | Max N assignments per exact scope match |
 
 ---
 
@@ -491,27 +493,27 @@ Immutable record of all administrative actions.
 {
   // Identity
   _id: ObjectId,
-  
+
   // When
   timestamp: ISODate,
-  
+
   // Who
   actor_id: String,                       // User ID, "system", or API key ID
   actor_type: String,                     // "user" | "system" | "api_key"
-  
+
   // What
   action: String,                         // Action identifier (see table below)
-  
+
   // Target
   target_type: String,                    // "user" | "role" | "permission" | "group" | "constraint"
   target_id: String,                      // ID of affected entity
-  
+
   // Changes
   changes: {
     before: Object | null,                // State before change (null for creates)
     after: Object | null,                 // State after change (null for deletes)
   },
-  
+
   // Context
   context: {
     ip_address: String,
@@ -525,33 +527,33 @@ Immutable record of all administrative actions.
 
 **Action Types**:
 
-| Action | Description |
-|--------|-------------|
-| `user.created` | New user registered |
-| `user.updated` | User metadata modified |
-| `user.deactivated` | User soft deleted |
-| `user.reactivated` | User restored |
-| `role.created` | New role defined |
-| `role.updated` | Role modified |
-| `role.deactivated` | Role soft deleted |
-| `role.permission_added` | Permission added to role |
-| `role.permission_removed` | Permission removed from role |
-| `role.parent_changed` | Role hierarchy modified |
-| `permission.created` | New permission defined |
-| `permission.deactivated` | Permission soft deleted |
-| `user_role.assigned` | Role assigned to user |
-| `user_role.revoked` | Role removed from user |
-| `user_role.expired` | Role auto-expired |
-| `group.created` | New group created |
-| `group.updated` | Group modified |
-| `group.deactivated` | Group soft deleted |
-| `group_role.assigned` | Role assigned to group |
-| `group_role.revoked` | Role removed from group |
-| `user_group.added` | User added to group |
-| `user_group.removed` | User removed from group |
-| `constraint.created` | New constraint defined |
-| `constraint.deactivated` | Constraint removed |
-| `constraint.violated` | Assignment blocked by constraint |
+| Action                    | Description                      |
+| ------------------------- | -------------------------------- |
+| `user.created`            | New user registered              |
+| `user.updated`            | User metadata modified           |
+| `user.deactivated`        | User soft deleted                |
+| `user.reactivated`        | User restored                    |
+| `role.created`            | New role defined                 |
+| `role.updated`            | Role modified                    |
+| `role.deactivated`        | Role soft deleted                |
+| `role.permission_added`   | Permission added to role         |
+| `role.permission_removed` | Permission removed from role     |
+| `role.parent_changed`     | Role hierarchy modified          |
+| `permission.created`      | New permission defined           |
+| `permission.deactivated`  | Permission soft deleted          |
+| `user_role.assigned`      | Role assigned to user            |
+| `user_role.revoked`       | Role removed from user           |
+| `user_role.expired`       | Role auto-expired                |
+| `group.created`           | New group created                |
+| `group.updated`           | Group modified                   |
+| `group.deactivated`       | Group soft deleted               |
+| `group_role.assigned`     | Role assigned to group           |
+| `group_role.revoked`      | Role removed from group          |
+| `user_group.added`        | User added to group              |
+| `user_group.removed`      | User removed from group          |
+| `constraint.created`      | New constraint defined           |
+| `constraint.deactivated`  | Constraint removed               |
+| `constraint.violated`     | Assignment blocked by constraint |
 
 **TTL**: Documents automatically deleted after 730 days (2 years).
 
@@ -565,26 +567,26 @@ Record of authorization check requests and results.
 {
   // Identity
   _id: ObjectId,
-  
+
   // When
   timestamp: ISODate,
-  
+
   // Request
   user_id: String,                        // User being checked
   resource: String,                       // Requested resource
   action: String,                         // Requested action
   scope: Object,                          // Request scope/context
-  
+
   // Result
   allowed: Boolean,                       // Authorization decision
   matched_permission: String | null,      // e.g., "invoices:write"
   matched_via: String | null,             // e.g., "role:finance_admin" or "group:finance_team"
   denial_reason: String | null,           // If denied: "no_permission" | "scope_mismatch" | "user_inactive"
-  
+
   // Performance
   latency_ms: Number,                     // Processing time
   cache_hit: Boolean,                     // Whether result came from cache
-  
+
   // Context
   context: {
     request_id: String,                   // Correlation ID
@@ -596,15 +598,16 @@ Record of authorization check requests and results.
 
 **Denial Reasons**:
 
-| Reason | Description |
-|--------|-------------|
-| `no_permission` | User has no matching permission |
-| `scope_mismatch` | User has permission but not for requested scope |
-| `user_inactive` | User is deactivated |
-| `role_inactive` | Matched role is deactivated |
-| `assignment_expired` | Role assignment has expired |
+| Reason               | Description                                     |
+| -------------------- | ----------------------------------------------- |
+| `no_permission`      | User has no matching permission                 |
+| `scope_mismatch`     | User has permission but not for requested scope |
+| `user_inactive`      | User is deactivated                             |
+| `role_inactive`      | Matched role is deactivated                     |
+| `assignment_expired` | Role assignment has expired                     |
 
 **Logging Rules**:
+
 - All denials: 100% logged
 - Slow requests (>50ms): 100% logged
 - Successful requests: 10% sampled
@@ -829,7 +832,7 @@ Record of authorization check requests and results.
 
 ```python
 async def get_effective_permissions(
-    user_id: str, 
+    user_id: str,
     scope: dict | None = None
 ) -> set[str]:
     """
@@ -840,7 +843,7 @@ async def get_effective_permissions(
     4. Scope filtering
     """
     permissions = set()
-    
+
     # Step 1: Get user's direct role assignments
     direct_assignments = await user_roles_collection.find({
         "user_id": ObjectId(user_id),
@@ -850,15 +853,15 @@ async def get_effective_permissions(
             {"expires_at": {"$gt": datetime.utcnow()}}
         ]
     }).to_list()
-    
+
     # Step 2: Get user's groups
     user_groups = await user_groups_collection.find({
         "user_id": ObjectId(user_id),
         "is_active": True
     }).to_list()
-    
+
     group_ids = [ug["group_id"] for ug in user_groups]
-    
+
     # Step 3: Get role assignments via groups
     group_assignments = await group_roles_collection.find({
         "group_id": {"$in": group_ids},
@@ -868,27 +871,27 @@ async def get_effective_permissions(
             {"expires_at": {"$gt": datetime.utcnow()}}
         ]
     }).to_list()
-    
+
     # Step 4: Combine all assignments
     all_assignments = direct_assignments + group_assignments
-    
+
     # Step 5: Filter by scope
     if scope:
         all_assignments = [
-            a for a in all_assignments 
+            a for a in all_assignments
             if scope_matches(a.get("scope", {}), scope)
         ]
-    
+
     # Step 6: Expand role hierarchy and collect permissions
     for assignment in all_assignments:
         role_ids = await get_role_with_ancestors(assignment["role_id"])
-        
+
         for role_id in role_ids:
             role = await roles_collection.find_one({
                 "_id": role_id,
                 "is_active": True
             })
-            
+
             if role:
                 for perm_id in role.get("permission_ids", []):
                     permission = await permissions_collection.find_one({
@@ -897,7 +900,7 @@ async def get_effective_permissions(
                     })
                     if permission:
                         permissions.add(f"{permission['resource']}:{permission['action']}")
-    
+
     return permissions
 ```
 
@@ -908,27 +911,27 @@ async def get_role_with_ancestors(role_id: ObjectId) -> list[ObjectId]:
     """
     Get a role and all its ancestors (walking up the hierarchy).
     Returns list ordered from input role to root.
-    
+
     Includes cycle detection.
     """
     ancestors = []
     visited = set()
     current_id = role_id
-    
+
     while current_id:
         # Cycle detection
         if current_id in visited:
             raise ValueError(f"Circular role hierarchy detected at {current_id}")
-        
+
         visited.add(current_id)
         ancestors.append(current_id)
-        
+
         role = await roles_collection.find_one({"_id": current_id})
         if not role:
             break
-            
+
         current_id = role.get("parent_role_id")
-    
+
     return ancestors
 ```
 
@@ -938,7 +941,7 @@ async def get_role_with_ancestors(role_id: ObjectId) -> list[ObjectId]:
 def scope_matches(user_scope: dict | None, request_scope: dict) -> bool:
     """
     Check if user's scope allows access to requested scope.
-    
+
     Rule: User scope must be a SUBSET of request scope.
     - Empty user scope = global access (matches everything)
     - Every key in user_scope must exist in request_scope with same value
@@ -946,13 +949,13 @@ def scope_matches(user_scope: dict | None, request_scope: dict) -> bool:
     # Empty or None scope = global access
     if not user_scope:
         return True
-    
+
     for key, value in user_scope.items():
         if key not in request_scope:
             return False
         if request_scope[key] != value:
             return False
-    
+
     return True
 ```
 
@@ -967,7 +970,7 @@ async def authorize(
 ) -> AuthorizationResult:
     """
     Main authorization check.
-    
+
     Returns detailed result including:
     - allowed: bool
     - matched_permission: str | None
@@ -977,7 +980,7 @@ async def authorize(
     # Check cache first
     cache_key = f"rbac:user:{user_id}:permissions:{hash_scope(scope)}"
     cached_permissions = await redis.get(cache_key)
-    
+
     if cached_permissions:
         permissions = json.loads(cached_permissions)
         cache_hit = True
@@ -985,7 +988,7 @@ async def authorize(
         permissions = await get_effective_permissions(user_id, scope)
         await redis.setex(cache_key, 300, json.dumps(list(permissions)))  # 5 min TTL
         cache_hit = False
-    
+
     # Check for exact match
     required_permission = f"{resource}:{action}"
     if required_permission in permissions:
@@ -994,14 +997,14 @@ async def authorize(
             matched_permission=required_permission,
             cache_hit=cache_hit
         )
-    
+
     # Check for wildcard matches
     wildcards = [
         f"{resource}:*",    # All actions on resource
         f"*:{action}",      # Action on all resources
         "*:*"               # Superadmin
     ]
-    
+
     for wildcard in wildcards:
         if wildcard in permissions:
             return AuthorizationResult(
@@ -1009,7 +1012,7 @@ async def authorize(
                 matched_permission=wildcard,
                 cache_hit=cache_hit
             )
-    
+
     return AuthorizationResult(
         allowed=False,
         denial_reason="no_permission",
@@ -1031,7 +1034,7 @@ async def validate_constraints(
     constraints = await constraints_collection.find({
         "is_active": True
     }).to_list()
-    
+
     for constraint in constraints:
         if constraint["type"] == "mutual_exclusion":
             if await check_mutual_exclusion_violated(user_id, role_id, constraint):
@@ -1040,7 +1043,7 @@ async def validate_constraints(
                     constraint_name=constraint["name"],
                     reason="User already has a mutually exclusive role"
                 )
-        
+
         elif constraint["type"] == "cardinality":
             if await check_cardinality_violated(role_id, scope, constraint):
                 return ConstraintValidationResult(
@@ -1048,7 +1051,7 @@ async def validate_constraints(
                     constraint_name=constraint["name"],
                     reason=f"Maximum {constraint['config']['max_assignments']} assignments reached"
                 )
-        
+
         elif constraint["type"] == "prerequisite":
             if await check_prerequisite_missing(user_id, role_id, constraint):
                 return ConstraintValidationResult(
@@ -1056,7 +1059,7 @@ async def validate_constraints(
                     constraint_name=constraint["name"],
                     reason="Prerequisite role not assigned"
                 )
-    
+
     return ConstraintValidationResult(valid=True)
 ```
 
@@ -1240,34 +1243,34 @@ async def validate_constraints(
 
 ### Entity Validation
 
-| Entity | Rule |
-|--------|------|
-| `users.external_id` | Required, unique, immutable after creation |
-| `users.email` | Valid email format if provided, unique |
-| `groups.name` | Required, unique, 1-100 characters |
-| `roles.name` | Required, unique, 1-100 characters |
-| `roles.parent_role_id` | Must reference existing active role; no cycles |
-| `permissions.resource` | Required, 1-100 characters, alphanumeric + underscore |
-| `permissions.action` | Required, 1-50 characters, alphanumeric + underscore |
-| `permissions` (compound) | `resource` + `action` must be unique |
+| Entity                   | Rule                                                  |
+| ------------------------ | ----------------------------------------------------- |
+| `users.external_id`      | Required, unique, immutable after creation            |
+| `users.email`            | Valid email format if provided, unique                |
+| `groups.name`            | Required, unique, 1-100 characters                    |
+| `roles.name`             | Required, unique, 1-100 characters                    |
+| `roles.parent_role_id`   | Must reference existing active role; no cycles        |
+| `permissions.resource`   | Required, 1-100 characters, alphanumeric + underscore |
+| `permissions.action`     | Required, 1-50 characters, alphanumeric + underscore  |
+| `permissions` (compound) | `resource` + `action` must be unique                  |
 
 ### Assignment Validation
 
-| Rule | Description |
-|------|-------------|
-| Active target | Cannot assign inactive role/group |
-| Active user | Cannot assign role to inactive user |
-| Duplicate check | Same user+role+scope combination cannot exist twice (when active) |
-| Constraint check | All active constraints must pass before assignment |
-| Scope format | Scope keys must be strings; values must be strings |
+| Rule             | Description                                                       |
+| ---------------- | ----------------------------------------------------------------- |
+| Active target    | Cannot assign inactive role/group                                 |
+| Active user      | Cannot assign role to inactive user                               |
+| Duplicate check  | Same user+role+scope combination cannot exist twice (when active) |
+| Constraint check | All active constraints must pass before assignment                |
+| Scope format     | Scope keys must be strings; values must be strings                |
 
 ### Hierarchy Validation
 
-| Rule | Description |
-|------|-------------|
-| No cycles | Role cannot be its own ancestor |
+| Rule                 | Description                                 |
+| -------------------- | ------------------------------------------- |
+| No cycles            | Role cannot be its own ancestor             |
 | No orphans on delete | Cannot deactivate role with active children |
-| Max depth (soft) | Warning if hierarchy exceeds 10 levels |
+| Max depth (soft)     | Warning if hierarchy exceeds 10 levels      |
 
 ---
 
@@ -1284,21 +1287,21 @@ rbac:role:{role_id}:permissions                    → Set of permission strings
 
 ### TTLs
 
-| Key Pattern | TTL | Rationale |
-|-------------|-----|-----------|
-| User permissions | 5 minutes | Balance between freshness and performance |
-| Role ancestors | 1 hour | Hierarchy changes rarely |
-| Role permissions | 10 minutes | Moderate change frequency |
+| Key Pattern      | TTL        | Rationale                                 |
+| ---------------- | ---------- | ----------------------------------------- |
+| User permissions | 5 minutes  | Balance between freshness and performance |
+| Role ancestors   | 1 hour     | Hierarchy changes rarely                  |
+| Role permissions | 10 minutes | Moderate change frequency                 |
 
 ### Invalidation Triggers
 
-| Event | Invalidate |
-|-------|------------|
-| Role assigned/revoked for user | `rbac:user:{user_id}:*` |
-| User added/removed from group | `rbac:user:{user_id}:*` |
-| Permission added/removed from role | `rbac:role:{role_id}:*` + all users with role |
-| Role hierarchy changed | `rbac:role:{role_id}:ancestors` + all descendant roles + all users with affected roles |
-| Role deactivated | All related caches |
+| Event                              | Invalidate                                                                             |
+| ---------------------------------- | -------------------------------------------------------------------------------------- |
+| Role assigned/revoked for user     | `rbac:user:{user_id}:*`                                                                |
+| User added/removed from group      | `rbac:user:{user_id}:*`                                                                |
+| Permission added/removed from role | `rbac:role:{role_id}:*` + all users with role                                          |
+| Role hierarchy changed             | `rbac:role:{role_id}:ancestors` + all descendant roles + all users with affected roles |
+| Role deactivated                   | All related caches                                                                     |
 
 ---
 

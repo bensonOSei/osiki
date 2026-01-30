@@ -77,7 +77,7 @@ __all__ = [
 
 
 @pytest.fixture(scope="session")
-def event_loop() -> asyncio.AbstractEventLoop:
+def event_loop() -> asyncio.AbstractEventLoop:  # type: ignore
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
