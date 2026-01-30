@@ -2,18 +2,25 @@ import time
 
 from beanie import PydanticObjectId
 
+from osiki.models.access_log import AccessLog
 from osiki.models.constraint import Constraint, ConstraintType
+from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
 from osiki.models.role import Role
+from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
+from osiki.repositories.access_logs.base_access_log_repository import (
+    BaseAccessLogRepository,
+)
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
 )
 from osiki.repositories.group_roles.base_group_role_repository import (
     BaseGroupRoleRepository,
 )
+from osiki.repositories.groups.base_group_repository import BaseGroupRepository
 from osiki.repositories.permissions.base_permission_repository import (
     BasePermissionRepository,
 )
@@ -24,6 +31,7 @@ from osiki.repositories.user_groups.base_user_group_repository import (
 from osiki.repositories.user_roles.base_user_role_repository import (
     BaseUserRoleRepository,
 )
+from osiki.repositories.users.base_user_repository import BaseUserRepository
 
 
 class MockUserRoleRepository(BaseUserRoleRepository):
@@ -338,3 +346,125 @@ class MockConstraintRepository(BaseConstraintRepository):
             self._data[constraint_id].is_active = False
             return True
         return False
+
+
+class MockUserRepository(BaseUserRepository):
+    def __init__(self) -> None:
+        self._data: dict[str, User] = {}
+
+    async def create(self, user: User) -> User:
+        if user.id is None:
+            user.id = PydanticObjectId()
+        self._data[str(user.id)] = user
+        return user
+
+    async def get_by_id(self, user_id: str) -> User | None:
+        return self._data.get(user_id)
+
+    async def get_by_external_id(self, external_id: str) -> User | None:
+        for user in self._data.values():
+            if user.external_id == external_id and user.is_active:
+                return user
+        return None
+
+    async def get_by_email(self, email: str) -> User | None:
+        for user in self._data.values():
+            if user.email == email and user.is_active:
+                return user
+        return None
+
+    async def update(self, user: User) -> User:
+        user.updated_at = time.time()
+        self._data[str(user.id)] = user
+        return user
+
+    async def deactivate(self, user_id: str) -> bool:
+        if user_id in self._data:
+            self._data[user_id].is_active = False
+            return True
+        return False
+
+    async def reactivate(self, user_id: str) -> bool:
+        if user_id in self._data:
+            self._data[user_id].is_active = True
+            return True
+        return False
+
+    async def list_active(self, skip: int = 0, limit: int = 100) -> list[User]:
+        active = [u for u in self._data.values() if u.is_active]
+        return active[skip : skip + limit]
+
+
+class MockGroupRepository(BaseGroupRepository):
+    def __init__(self) -> None:
+        self._data: dict[str, Group] = {}
+
+    async def create(self, group: Group) -> Group:
+        if group.id is None:
+            group.id = PydanticObjectId()
+        self._data[str(group.id)] = group
+        return group
+
+    async def get_by_id(self, group_id: str) -> Group | None:
+        return self._data.get(group_id)
+
+    async def get_by_name(self, name: str) -> Group | None:
+        for group in self._data.values():
+            if group.name == name and group.is_active:
+                return group
+        return None
+
+    async def update(self, group: Group) -> Group:
+        group.updated_at = time.time()
+        self._data[str(group.id)] = group
+        return group
+
+    async def deactivate(self, group_id: str) -> bool:
+        if group_id in self._data:
+            self._data[group_id].is_active = False
+            return True
+        return False
+
+    async def reactivate(self, group_id: str) -> bool:
+        if group_id in self._data:
+            self._data[group_id].is_active = True
+            return True
+        return False
+
+    async def list_active(self, skip: int = 0, limit: int = 100) -> list[Group]:
+        active = [g for g in self._data.values() if g.is_active]
+        return active[skip : skip + limit]
+
+
+class MockAccessLogRepository(BaseAccessLogRepository):
+    def __init__(self) -> None:
+        self._data: dict[str, AccessLog] = {}
+
+    async def create(self, access_log: AccessLog) -> AccessLog:
+        if access_log.id is None:
+            access_log.id = PydanticObjectId()
+        self._data[str(access_log.id)] = access_log
+        return access_log
+
+    async def get_by_user(
+        self, user_id: str, skip: int = 0, limit: int = 100
+    ) -> list[AccessLog]:
+        return [al for al in self._data.values() if al.user_id == user_id][
+            skip : skip + limit
+        ]
+
+    async def get_denials(self, skip: int = 0, limit: int = 100) -> list[AccessLog]:
+        return [al for al in self._data.values() if not al.allowed][skip : skip + limit]
+
+    async def get_by_resource(
+        self, resource: str, action: str | None = None, skip: int = 0, limit: int = 100
+    ) -> list[AccessLog]:
+        result = []
+        for al in self._data.values():
+            if al.resource == resource:
+                if action is None or al.action == action:
+                    result.append(al)
+        return result[skip : skip + limit]
+
+    async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AccessLog]:
+        return list(self._data.values())[skip : skip + limit]

@@ -9,21 +9,27 @@ from tests.mocks.factories import (
     make_user_role,
 )
 from tests.mocks.repositories import (
+    MockAccessLogRepository,
     MockConstraintRepository,
+    MockGroupRepository,
     MockGroupRoleRepository,
     MockPermissionRepository,
     MockRoleRepository,
     MockUserGroupRepository,
+    MockUserRepository,
     MockUserRoleRepository,
 )
 
 __all__ = [
     # Repositories
+    "MockAccessLogRepository",
     "MockConstraintRepository",
+    "MockGroupRepository",
     "MockGroupRoleRepository",
     "MockPermissionRepository",
     "MockRoleRepository",
     "MockUserGroupRepository",
+    "MockUserRepository",
     "MockUserRoleRepository",
     # Factories
     "make_constraint",

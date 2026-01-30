@@ -54,6 +54,7 @@ dev = [
     "pytest-asyncio (>=0.24.0,<1.0.0)",
     "pytest-cov (>=6.0.0,<7.0.0)",
     "mongomock-motor (>=0.0.34,<1.0.0)",
+    "httpx (>=0.28.1,<0.29.0)",
 ]
 
 [tool.pytest.ini_options]
@@ -65,4 +66,8 @@ asyncio_default_fixture_loop_scope = "function"
 omit = [
     "osiki/main.py",
     "osiki/configs/*",
+    "osiki/api/routes/health.py",
 ]
+
+[tool.coverage.report]
+fail_under = 100
