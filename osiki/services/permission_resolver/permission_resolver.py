@@ -123,12 +123,15 @@ class PermissionResolver(BasePermissionResolver):
                 raise ValueError(f"Circular role hierarchy detected at {current_id}")
 
             visited.add(current_id)
-            ancestors.append(current_id)
 
             role = await self._role_repo.get_by_id(current_id)
             if not role:
+                # Only add initial role if not found (backward compatibility)
+                if not ancestors:
+                    ancestors.append(current_id)
                 break
 
+            ancestors.append(current_id)
             current_id = str(role.parent_role_id) if role.parent_role_id else None
 
         logger.trace(

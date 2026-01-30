@@ -3,7 +3,7 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):  # type: ignore[misc]
+class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -12,6 +12,13 @@ class Settings(BaseSettings):  # type: ignore[misc]
 
     # App
     app_name: str = "Osiki"
+    api_prefix: str = "/api/v1"
+
+    # CORS
+    cors_origins: list[str] = ["*"]
+    cors_allow_methods: list[str] = ["*"]
+    cors_allow_headers: list[str] = ["*"]
+    cors_allow_credentials: bool = True
 
     # MongoDB
     mongodb_url: str = "mongodb://localhost:27017/osiki"
@@ -23,5 +30,5 @@ class Settings(BaseSettings):  # type: ignore[misc]
 
 
 @lru_cache
-def get_settings() -> Settings:
-    return Settings()
+def get_settings() -> AppSettings:
+    return AppSettings()

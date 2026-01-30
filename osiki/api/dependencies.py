@@ -1,0 +1,183 @@
+from typing import Annotated
+
+from fastapi import Depends
+
+from osiki.repositories.access_logs.base_access_log_repository import (
+    BaseAccessLogRepository,
+)
+from osiki.repositories.access_logs.mongodb_access_log_repository import (
+    MongoDBAccessLogRepository,
+)
+from osiki.repositories.constraints.base_constraint_repository import (
+    BaseConstraintRepository,
+)
+from osiki.repositories.constraints.mongodb_constraint_repository import (
+    MongoDBConstraintRepository,
+)
+from osiki.repositories.group_roles.base_group_role_repository import (
+    BaseGroupRoleRepository,
+)
+from osiki.repositories.group_roles.mongodb_group_role_repository import (
+    MongoDBGroupRoleRepository,
+)
+from osiki.repositories.groups.base_group_repository import BaseGroupRepository
+from osiki.repositories.groups.mongodb_group_repository import MongoDBGroupRepository
+from osiki.repositories.permissions.base_permission_repository import (
+    BasePermissionRepository,
+)
+from osiki.repositories.permissions.mongodb_permission_repository import (
+    MongoDBPermissionRepository,
+)
+from osiki.repositories.roles.base_role_repository import BaseRoleRepository
+from osiki.repositories.roles.mongodb_role_repository import MongoDBRoleRepository
+from osiki.repositories.user_groups.base_user_group_repository import (
+    BaseUserGroupRepository,
+)
+from osiki.repositories.user_groups.mongodb_user_group_repository import (
+    MongoDBUserGroupRepository,
+)
+from osiki.repositories.user_roles.base_user_role_repository import (
+    BaseUserRoleRepository,
+)
+from osiki.repositories.user_roles.mongodb_user_role_repository import (
+    MongoDBUserRoleRepository,
+)
+from osiki.repositories.users.base_user_repository import BaseUserRepository
+from osiki.repositories.users.mongodb_user_repository import MongoDBUserRepository
+from osiki.services.authorization.authorization_service import AuthorizationService
+from osiki.services.authorization.base_authorization_service import (
+    BaseAuthorizationService,
+)
+from osiki.services.constraint_validator.base_constraint_validator import (
+    BaseConstraintValidator,
+)
+from osiki.services.constraint_validator.constraint_validator import ConstraintValidator
+from osiki.services.permission_resolver.base_permission_resolver import (
+    BasePermissionResolver,
+)
+from osiki.services.permission_resolver.permission_resolver import PermissionResolver
+from osiki.services.scope_matcher.base_scope_matcher import BaseScopeMatcher
+from osiki.services.scope_matcher.scope_matcher import ScopeMatcher
+
+
+# Repository dependencies
+def get_user_repository() -> BaseUserRepository:
+    return MongoDBUserRepository()
+
+
+def get_group_repository() -> BaseGroupRepository:
+    return MongoDBGroupRepository()
+
+
+def get_role_repository() -> BaseRoleRepository:
+    return MongoDBRoleRepository()
+
+
+def get_permission_repository() -> BasePermissionRepository:
+    return MongoDBPermissionRepository()
+
+
+def get_user_role_repository() -> BaseUserRoleRepository:
+    return MongoDBUserRoleRepository()
+
+
+def get_user_group_repository() -> BaseUserGroupRepository:
+    return MongoDBUserGroupRepository()
+
+
+def get_group_role_repository() -> BaseGroupRoleRepository:
+    return MongoDBGroupRoleRepository()
+
+
+def get_constraint_repository() -> BaseConstraintRepository:
+    return MongoDBConstraintRepository()
+
+
+def get_access_log_repository() -> BaseAccessLogRepository:
+    return MongoDBAccessLogRepository()
+
+
+# Service dependencies
+def get_scope_matcher() -> BaseScopeMatcher:
+    return ScopeMatcher()
+
+
+def get_constraint_validator(
+    constraint_repository: Annotated[
+        BaseConstraintRepository, Depends(get_constraint_repository)
+    ],
+    user_role_repository: Annotated[
+        BaseUserRoleRepository, Depends(get_user_role_repository)
+    ],
+) -> BaseConstraintValidator:
+    return ConstraintValidator(
+        constraint_repository=constraint_repository,
+        user_role_repository=user_role_repository,
+    )
+
+
+def get_permission_resolver(
+    user_role_repository: Annotated[
+        BaseUserRoleRepository, Depends(get_user_role_repository)
+    ],
+    user_group_repository: Annotated[
+        BaseUserGroupRepository, Depends(get_user_group_repository)
+    ],
+    group_role_repository: Annotated[
+        BaseGroupRoleRepository, Depends(get_group_role_repository)
+    ],
+    role_repository: Annotated[BaseRoleRepository, Depends(get_role_repository)],
+    permission_repository: Annotated[
+        BasePermissionRepository, Depends(get_permission_repository)
+    ],
+    scope_matcher: Annotated[BaseScopeMatcher, Depends(get_scope_matcher)],
+) -> BasePermissionResolver:
+    return PermissionResolver(
+        user_role_repository=user_role_repository,
+        user_group_repository=user_group_repository,
+        group_role_repository=group_role_repository,
+        role_repository=role_repository,
+        permission_repository=permission_repository,
+        scope_matcher=scope_matcher,
+    )
+
+
+def get_authorization_service(
+    permission_resolver: Annotated[
+        BasePermissionResolver, Depends(get_permission_resolver)
+    ],
+) -> BaseAuthorizationService:
+    return AuthorizationService(permission_resolver=permission_resolver)
+
+
+# Type aliases for dependency injection
+UserRepository = Annotated[BaseUserRepository, Depends(get_user_repository)]
+GroupRepository = Annotated[BaseGroupRepository, Depends(get_group_repository)]
+RoleRepository = Annotated[BaseRoleRepository, Depends(get_role_repository)]
+PermissionRepository = Annotated[
+    BasePermissionRepository, Depends(get_permission_repository)
+]
+UserRoleRepository = Annotated[
+    BaseUserRoleRepository, Depends(get_user_role_repository)
+]
+UserGroupRepository = Annotated[
+    BaseUserGroupRepository, Depends(get_user_group_repository)
+]
+GroupRoleRepository = Annotated[
+    BaseGroupRoleRepository, Depends(get_group_role_repository)
+]
+ConstraintRepository = Annotated[
+    BaseConstraintRepository, Depends(get_constraint_repository)
+]
+AccessLogRepository = Annotated[
+    BaseAccessLogRepository, Depends(get_access_log_repository)
+]
+AuthorizationServiceDep = Annotated[
+    BaseAuthorizationService, Depends(get_authorization_service)
+]
+PermissionResolverDep = Annotated[
+    BasePermissionResolver, Depends(get_permission_resolver)
+]
+ConstraintValidatorDep = Annotated[
+    BaseConstraintValidator, Depends(get_constraint_validator)
+]

@@ -20,3 +20,4 @@ repos:
         additional_dependencies:
           - fastapi>=0.128.0
           - beanie>=2.0.1
+          - pydantic-settings>=2.12.0
