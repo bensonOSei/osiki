@@ -1,0 +1,37 @@
+name: Code Quality
+description: Run formatting, linting, and type checking
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.13"
+
+    - name: Install Poetry
+      run: pip install poetry
+      shell: bash
+
+    - name: Cache Poetry dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pypoetry
+        key: poetry-${{ hashFiles('poetry.lock') }}
+        restore-keys: poetry-
+
+    - name: Install dependencies
+      run: poetry install --no-interaction
+      shell: bash
+
+    - name: Check formatting (Black)
+      run: poetry run black --check .
+      shell: bash
+
+    - name: Lint (Ruff)
+      run: poetry run ruff check .
+      shell: bash
+
+    - name: Type check (MyPy)
+      run: poetry run mypy .
+      shell: bash

@@ -128,9 +128,29 @@ The full list of commands is in `make help`.
 
 ## Submitting a pull request
 
+### PR title format
+
+PR titles must follow conventional commit format. CI will reject titles that don't match.
+
+```text
+type: description
+type(scope): description
+```
+
+Allowed types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, `perf`
+
+Examples:
+
+- `feat: add bulk role assignment endpoint`
+- `fix(auth): handle expired role assignments`
+- `docs: update contributing guide`
+- `refactor(repos): extract shared query logic`
+
+### Before opening
+
 1. Make sure tests pass: `make test`
 2. Make sure the code is clean: `make pre-commit`
-3. Write a clear PR description — what changed and why.
+3. Fill in the PR template — what changed and why.
 4. If you're adding a new feature, mention it in the PR so the README can be updated.
 
 That's it. If something in this guide is unclear or out of date, feel free to open an issue about it.

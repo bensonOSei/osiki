@@ -1,0 +1,30 @@
+name: PR Title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  check-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title format
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          PATTERN='^(feat|fix|docs|refactor|test|chore|ci|perf)(\(.+\))?: .+'
+          if [[ ! "$PR_TITLE" =~ $PATTERN ]]; then
+            echo "::error::PR title must follow conventional commit format."
+            echo ""
+            echo "Expected: type: description"
+            echo "     or:  type(scope): description"
+            echo ""
+            echo "Allowed types: feat, fix, docs, refactor, test, chore, ci, perf"
+            echo ""
+            echo "Examples:"
+            echo "  feat: add bulk role assignment endpoint"
+            echo "  fix(auth): handle expired role assignments"
+            echo "  docs: update contributing guide"
+            exit 1
+          fi
+          echo "PR title is valid: $PR_TITLE"
