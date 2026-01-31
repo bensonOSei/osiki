@@ -27,20 +27,18 @@ class MongoDBConstraintRepository(BaseConstraintRepository):
         return constraint
 
     async def get_active(self) -> list[Constraint]:
-        return await Constraint.find(
-            Constraint.is_active == True
-        ).to_list()  # noqa: E712
+        return await Constraint.find(Constraint.is_active == True).to_list()
 
     async def get_by_type(self, constraint_type: ConstraintType) -> list[Constraint]:
         return await Constraint.find(
             Constraint.type == constraint_type,
-            Constraint.is_active == True,  # noqa: E712
+            Constraint.is_active == True,
         ).to_list()
 
     async def get_by_role_id(self, role_id: str) -> list[Constraint]:
         role_oid = PydanticObjectId(role_id)
         return await Constraint.find(
-            Constraint.is_active == True,  # noqa: E712
+            Constraint.is_active == True,
             {
                 "$or": [
                     {"config.role_ids": role_oid},
@@ -49,6 +47,12 @@ class MongoDBConstraintRepository(BaseConstraintRepository):
                 ]
             },
         ).to_list()
+
+    async def update(self, constraint: Constraint) -> Constraint:
+        constraint.updated_at = time.time()
+        await constraint.save()
+        logger.info("Constraint updated", constraint_id=str(constraint.id))
+        return constraint
 
     async def deactivate(self, constraint_id: str) -> bool:
         constraint = await self.get_by_id(constraint_id)

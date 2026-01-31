@@ -341,6 +341,11 @@ class MockConstraintRepository(BaseConstraintRepository):
                         break
         return result
 
+    async def update(self, constraint: Constraint) -> Constraint:
+        constraint.updated_at = time.time()
+        self._data[str(constraint.id)] = constraint
+        return constraint
+
     async def deactivate(self, constraint_id: str) -> bool:
         if constraint_id in self._data:
             self._data[constraint_id].is_active = False

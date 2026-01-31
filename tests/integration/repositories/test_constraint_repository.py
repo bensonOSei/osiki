@@ -97,6 +97,24 @@ async def test_deactivate() -> None:
     assert result is True
 
 
+async def test_update() -> None:
+    repo = MongoDBConstraintRepository()
+    constraint = await repo.create(
+        Constraint(
+            name="original",
+            type=ConstraintType.MUTUAL_EXCLUSION,
+            config=ConstraintConfig(),
+        )
+    )
+    constraint.name = "updated"
+    result = await repo.update(constraint)
+    assert result.name == "updated"
+
+    fetched = await repo.get_by_id(str(result.id))
+    assert fetched is not None
+    assert fetched.name == "updated"
+
+
 async def test_deactivate_not_found() -> None:
     repo = MongoDBConstraintRepository()
     result = await repo.deactivate(str(PydanticObjectId()))
