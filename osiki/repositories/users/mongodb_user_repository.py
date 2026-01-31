@@ -57,6 +57,4 @@ class MongoDBUserRepository(BaseUserRepository):
         return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[User]:
-        return (
-            await User.find(User.is_active == True).skip(skip).limit(limit).to_list()
-        )
+        return await User.find(User.is_active == True).skip(skip).limit(limit).to_list()

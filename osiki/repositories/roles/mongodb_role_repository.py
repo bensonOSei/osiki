@@ -55,9 +55,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
         return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
-        return (
-            await Role.find(Role.is_active == True).skip(skip).limit(limit).to_list()
-        )
+        return await Role.find(Role.is_active == True).skip(skip).limit(limit).to_list()
 
     async def add_permission(self, role_id: str, permission_id: str) -> bool:
         role = await self.get_by_id(role_id)
