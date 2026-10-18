@@ -7,7 +7,11 @@ from osiki.repositories.access_logs.base_access_log_repository import (
 
 
 class MongoDBAccessLogRepository(BaseAccessLogRepository):
+    def __init__(self, environment_id: str) -> None:
+        self.environment_id = environment_id
+
     async def create(self, access_log: AccessLog) -> AccessLog:
+        access_log.environment_id = self.environment_id
         await access_log.insert()
         logger.debug(
             "Access log created",
@@ -23,7 +27,10 @@ class MongoDBAccessLogRepository(BaseAccessLogRepository):
         self, user_id: str, skip: int = 0, limit: int = 100
     ) -> list[AccessLog]:
         return (
-            await AccessLog.find(AccessLog.user_id == user_id)
+            await AccessLog.find(
+                AccessLog.environment_id == self.environment_id,
+                AccessLog.user_id == user_id,
+            )
             .sort("-timestamp")
             .skip(skip)
             .limit(limit)
@@ -32,7 +39,10 @@ class MongoDBAccessLogRepository(BaseAccessLogRepository):
 
     async def get_denials(self, skip: int = 0, limit: int = 100) -> list[AccessLog]:
         return (
-            await AccessLog.find(AccessLog.allowed == False)
+            await AccessLog.find(
+                AccessLog.environment_id == self.environment_id,
+                AccessLog.allowed == False,
+            )
             .sort("-timestamp")
             .skip(skip)
             .limit(limit)
@@ -48,15 +58,22 @@ class MongoDBAccessLogRepository(BaseAccessLogRepository):
     ) -> list[AccessLog]:
         if action:
             query = AccessLog.find(
-                AccessLog.resource == resource, AccessLog.action == action
+                AccessLog.environment_id == self.environment_id,
+                AccessLog.resource == resource,
+                AccessLog.action == action,
             )
         else:
-            query = AccessLog.find(AccessLog.resource == resource)
+            query = AccessLog.find(
+                AccessLog.environment_id == self.environment_id,
+                AccessLog.resource == resource,
+            )
         return await query.sort("-timestamp").skip(skip).limit(limit).to_list()
 
     async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AccessLog]:
         return (
-            await AccessLog.find_all()
+            await AccessLog.find(
+                AccessLog.environment_id == self.environment_id,
+            )
             .sort("-timestamp")
             .skip(skip)
             .limit(limit)

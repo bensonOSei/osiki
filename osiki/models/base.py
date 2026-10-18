@@ -9,6 +9,10 @@ class TimestampMixin(BaseModel):
     updated_at: float = Field(default_factory=time.time)
 
 
+class EnvironmentMixin(BaseModel):
+    environment_id: str = "default"
+
+
 class SoftDeleteMixin(BaseModel):
     is_active: bool = True
 

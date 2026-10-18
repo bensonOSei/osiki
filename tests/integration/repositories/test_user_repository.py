@@ -7,7 +7,7 @@ from osiki.repositories.users.mongodb_user_repository import MongoDBUserReposito
 
 
 async def test_create() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     user = User(external_id="ext-1", email="test@test.com")
     result = await repo.create(user)
     assert result.id is not None
@@ -15,7 +15,7 @@ async def test_create() -> None:
 
 
 async def test_get_by_id() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     user = User(external_id="ext-2")
     created = await repo.create(user)
     result = await repo.get_by_id(str(created.id))
@@ -24,13 +24,13 @@ async def test_get_by_id() -> None:
 
 
 async def test_get_by_id_not_found() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     result = await repo.get_by_id(str(PydanticObjectId()))
     assert result is None
 
 
 async def test_get_by_external_id() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     user = User(external_id="ext-3")
     await repo.create(user)
     result = await repo.get_by_external_id("ext-3")
@@ -39,13 +39,13 @@ async def test_get_by_external_id() -> None:
 
 
 async def test_get_by_external_id_not_found() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     result = await repo.get_by_external_id("nonexistent")
     assert result is None
 
 
 async def test_get_by_email() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     user = User(external_id="email-test", email="email@test.com")
     await repo.create(user)
     result = await repo.get_by_email("email@test.com")
@@ -54,7 +54,7 @@ async def test_get_by_email() -> None:
 
 
 async def test_update() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     user = User(external_id="update-test")
     created = await repo.create(user)
     created.email = "updated@test.com"
@@ -63,7 +63,7 @@ async def test_update() -> None:
 
 
 async def test_deactivate() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     user = User(external_id="ext-4")
     created = await repo.create(user)
     result = await repo.deactivate(str(created.id))
@@ -74,13 +74,13 @@ async def test_deactivate() -> None:
 
 
 async def test_deactivate_not_found() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     result = await repo.deactivate(str(PydanticObjectId()))
     assert result is False
 
 
 async def test_reactivate() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     user = User(external_id="ext-5", is_active=False)
     created = await repo.create(user)
     result = await repo.reactivate(str(created.id))
@@ -91,13 +91,13 @@ async def test_reactivate() -> None:
 
 
 async def test_reactivate_not_found() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     result = await repo.reactivate(str(PydanticObjectId()))
     assert result is False
 
 
 async def test_list_active() -> None:
-    repo = MongoDBUserRepository()
+    repo = MongoDBUserRepository("default")
     await repo.create(User(external_id="active-1"))
     await repo.create(User(external_id="active-2"))
     user3 = await repo.create(User(external_id="inactive"))

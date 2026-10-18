@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from osiki.api.environment import EnvironmentId
 from osiki.repositories.access_logs.base_access_log_repository import (
     BaseAccessLogRepository,
 )
@@ -61,40 +62,44 @@ from osiki.services.scope_matcher.scope_matcher import ScopeMatcher
 
 
 # Repository dependencies
-def get_user_repository() -> BaseUserRepository:
-    return MongoDBUserRepository()
+def get_user_repository(environment_id: EnvironmentId) -> BaseUserRepository:
+    return MongoDBUserRepository(environment_id)
 
 
-def get_group_repository() -> BaseGroupRepository:
-    return MongoDBGroupRepository()
+def get_group_repository(environment_id: EnvironmentId) -> BaseGroupRepository:
+    return MongoDBGroupRepository(environment_id)
 
 
-def get_role_repository() -> BaseRoleRepository:
-    return MongoDBRoleRepository()
+def get_role_repository(environment_id: EnvironmentId) -> BaseRoleRepository:
+    return MongoDBRoleRepository(environment_id)
 
 
-def get_permission_repository() -> BasePermissionRepository:
-    return MongoDBPermissionRepository()
+def get_permission_repository(
+    environment_id: EnvironmentId,
+) -> BasePermissionRepository:
+    return MongoDBPermissionRepository(environment_id)
 
 
-def get_user_role_repository() -> BaseUserRoleRepository:
-    return MongoDBUserRoleRepository()
+def get_user_role_repository(environment_id: EnvironmentId) -> BaseUserRoleRepository:
+    return MongoDBUserRoleRepository(environment_id)
 
 
-def get_user_group_repository() -> BaseUserGroupRepository:
-    return MongoDBUserGroupRepository()
+def get_user_group_repository(environment_id: EnvironmentId) -> BaseUserGroupRepository:
+    return MongoDBUserGroupRepository(environment_id)
 
 
-def get_group_role_repository() -> BaseGroupRoleRepository:
-    return MongoDBGroupRoleRepository()
+def get_group_role_repository(environment_id: EnvironmentId) -> BaseGroupRoleRepository:
+    return MongoDBGroupRoleRepository(environment_id)
 
 
-def get_constraint_repository() -> BaseConstraintRepository:
-    return MongoDBConstraintRepository()
+def get_constraint_repository(
+    environment_id: EnvironmentId,
+) -> BaseConstraintRepository:
+    return MongoDBConstraintRepository(environment_id)
 
 
-def get_access_log_repository() -> BaseAccessLogRepository:
-    return MongoDBAccessLogRepository()
+def get_access_log_repository(environment_id: EnvironmentId) -> BaseAccessLogRepository:
+    return MongoDBAccessLogRepository(environment_id)
 
 
 # Service dependencies

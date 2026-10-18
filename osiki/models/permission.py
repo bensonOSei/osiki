@@ -4,10 +4,10 @@ from beanie import Document
 from pydantic import Field
 from pymongo import IndexModel
 
-from osiki.models.base import MetadataMixin, SoftDeleteMixin
+from osiki.models.base import EnvironmentMixin, MetadataMixin, SoftDeleteMixin
 
 
-class Permission(Document, SoftDeleteMixin, MetadataMixin):
+class Permission(Document, EnvironmentMixin, SoftDeleteMixin, MetadataMixin):
     resource: str
     action: str
     description: str | None = None
@@ -16,9 +16,11 @@ class Permission(Document, SoftDeleteMixin, MetadataMixin):
     class Settings:
         name = "permissions"
         indexes = [
-            IndexModel([("resource", 1), ("action", 1)], unique=True),
-            IndexModel([("resource", 1)]),
-            IndexModel([("is_active", 1)]),
+            IndexModel(
+                [("environment_id", 1), ("resource", 1), ("action", 1)], unique=True
+            ),
+            IndexModel([("environment_id", 1), ("resource", 1)]),
+            IndexModel([("environment_id", 1), ("is_active", 1)]),
         ]
 
     @property

@@ -7,7 +7,11 @@ from osiki.repositories.audit_logs.base_audit_log_repository import (
 
 
 class MongoDBAuditLogRepository(BaseAuditLogRepository):
+    def __init__(self, environment_id: str) -> None:
+        self.environment_id = environment_id
+
     async def create(self, audit_log: AuditLog) -> AuditLog:
+        audit_log.environment_id = self.environment_id
         await audit_log.insert()
         logger.debug(
             "Audit log created",
@@ -23,7 +27,10 @@ class MongoDBAuditLogRepository(BaseAuditLogRepository):
         self, actor_id: str, skip: int = 0, limit: int = 100
     ) -> list[AuditLog]:
         return (
-            await AuditLog.find(AuditLog.actor_id == actor_id)
+            await AuditLog.find(
+                AuditLog.environment_id == self.environment_id,
+                AuditLog.actor_id == actor_id,
+            )
             .sort("-timestamp")
             .skip(skip)
             .limit(limit)
@@ -35,7 +42,9 @@ class MongoDBAuditLogRepository(BaseAuditLogRepository):
     ) -> list[AuditLog]:
         return (
             await AuditLog.find(
-                AuditLog.target_type == target_type, AuditLog.target_id == target_id
+                AuditLog.environment_id == self.environment_id,
+                AuditLog.target_type == target_type,
+                AuditLog.target_id == target_id,
             )
             .sort("-timestamp")
             .skip(skip)
@@ -47,7 +56,10 @@ class MongoDBAuditLogRepository(BaseAuditLogRepository):
         self, action: str, skip: int = 0, limit: int = 100
     ) -> list[AuditLog]:
         return (
-            await AuditLog.find(AuditLog.action == action)
+            await AuditLog.find(
+                AuditLog.environment_id == self.environment_id,
+                AuditLog.action == action,
+            )
             .sort("-timestamp")
             .skip(skip)
             .limit(limit)
@@ -56,7 +68,9 @@ class MongoDBAuditLogRepository(BaseAuditLogRepository):
 
     async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AuditLog]:
         return (
-            await AuditLog.find_all()
+            await AuditLog.find(
+                AuditLog.environment_id == self.environment_id,
+            )
             .sort("-timestamp")
             .skip(skip)
             .limit(limit)

@@ -11,7 +11,7 @@ from osiki.repositories.roles.mongodb_role_repository import MongoDBRoleReposito
 
 
 async def test_create() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     role = Role(name="admin-role")
     result = await repo.create(role)
     assert result.id is not None
@@ -19,7 +19,7 @@ async def test_create() -> None:
 
 
 async def test_get_by_id() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     role = Role(name="reader-role")
     created = await repo.create(role)
     result = await repo.get_by_id(str(created.id))
@@ -28,13 +28,13 @@ async def test_get_by_id() -> None:
 
 
 async def test_get_by_id_not_found() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     result = await repo.get_by_id(str(PydanticObjectId()))
     assert result is None
 
 
 async def test_get_by_name() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     role = Role(name="writer-role")
     await repo.create(role)
     result = await repo.get_by_name("writer-role")
@@ -43,7 +43,7 @@ async def test_get_by_name() -> None:
 
 
 async def test_get_by_ids() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     r1 = await repo.create(Role(name="role-a"))
     r2 = await repo.create(Role(name="role-b"))
     result = await repo.get_by_ids([str(r1.id), str(r2.id)])
@@ -51,7 +51,7 @@ async def test_get_by_ids() -> None:
 
 
 async def test_get_children() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     parent = await repo.create(Role(name="parent-role"))
     await repo.create(Role(name="child-1", parent_role_id=parent.id))
     await repo.create(Role(name="child-2", parent_role_id=parent.id))
@@ -60,7 +60,7 @@ async def test_get_children() -> None:
 
 
 async def test_update() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     role = Role(name="update-role")
     created = await repo.create(role)
     created.description = "Updated description"
@@ -69,8 +69,8 @@ async def test_update() -> None:
 
 
 async def test_add_permission() -> None:
-    repo = MongoDBRoleRepository()
-    perm_repo = MongoDBPermissionRepository()
+    repo = MongoDBRoleRepository("default")
+    perm_repo = MongoDBPermissionRepository("default")
     perm = await perm_repo.create(Permission(resource="docs", action="read"))
     role = await repo.create(Role(name="role-with-perm"))
     result = await repo.add_permission(str(role.id), str(perm.id))
@@ -81,13 +81,13 @@ async def test_add_permission() -> None:
 
 
 async def test_add_permission_not_found() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     result = await repo.add_permission(str(PydanticObjectId()), str(PydanticObjectId()))
     assert result is False
 
 
 async def test_remove_permission() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     perm_id = PydanticObjectId()
     role = await repo.create(Role(name="role-with-perm-2", permission_ids=[perm_id]))
     result = await repo.remove_permission(str(role.id), str(perm_id))
@@ -98,7 +98,7 @@ async def test_remove_permission() -> None:
 
 
 async def test_remove_permission_not_found() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     result = await repo.remove_permission(
         str(PydanticObjectId()), str(PydanticObjectId())
     )
@@ -106,7 +106,7 @@ async def test_remove_permission_not_found() -> None:
 
 
 async def test_deactivate() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     role = await repo.create(Role(name="to-deactivate-role"))
     result = await repo.deactivate(str(role.id))
     assert result is True
@@ -116,20 +116,20 @@ async def test_deactivate() -> None:
 
 
 async def test_deactivate_system_role() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     role = await repo.create(Role(name="system-role", is_system=True))
     result = await repo.deactivate(str(role.id))
     assert result is False
 
 
 async def test_deactivate_not_found() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     result = await repo.deactivate(str(PydanticObjectId()))
     assert result is False
 
 
 async def test_list_active() -> None:
-    repo = MongoDBRoleRepository()
+    repo = MongoDBRoleRepository("default")
     await repo.create(Role(name="active-role-1"))
     await repo.create(Role(name="active-role-2"))
     result = await repo.list_active()

@@ -8,28 +8,40 @@ from osiki.repositories.roles.base_role_repository import BaseRoleRepository
 
 
 class MongoDBRoleRepository(BaseRoleRepository):
+    def __init__(self, environment_id: str) -> None:
+        self.environment_id = environment_id
+
     async def create(self, role: Role) -> Role:
+        role.environment_id = self.environment_id
         await role.insert()
         logger.debug("Role created", role_id=str(role.id), name=role.name)
         return role
 
     async def get_by_id(self, role_id: str) -> Role | None:
-        role = await Role.get(PydanticObjectId(role_id))
+        role = await Role.find_one(
+            {"_id": PydanticObjectId(role_id), "environment_id": self.environment_id}
+        )
         if not role:
             logger.debug("Role not found", role_id=role_id)
         return role
 
     async def get_by_name(self, name: str) -> Role | None:
-        return await Role.find_one(Role.name == name, Role.is_active == True)
+        return await Role.find_one(
+            Role.environment_id == self.environment_id,
+            Role.name == name,
+            Role.is_active == True,
+        )
 
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         object_ids = [PydanticObjectId(rid) for rid in role_ids]
         return await Role.find(
-            {"_id": {"$in": object_ids}, "is_active": True}
+            Role.environment_id == self.environment_id,
+            {"_id": {"$in": object_ids}, "is_active": True},
         ).to_list()
 
     async def get_children(self, parent_role_id: str) -> list[Role]:
         return await Role.find(
+            Role.environment_id == self.environment_id,
             Role.parent_role_id == PydanticObjectId(parent_role_id),
             Role.is_active == True,
         ).to_list()
@@ -55,7 +67,14 @@ class MongoDBRoleRepository(BaseRoleRepository):
         return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
-        return await Role.find(Role.is_active == True).skip(skip).limit(limit).to_list()
+        return (
+            await Role.find(
+                Role.environment_id == self.environment_id, Role.is_active == True
+            )
+            .skip(skip)
+            .limit(limit)
+            .to_list()
+        )
 
     async def add_permission(self, role_id: str, permission_id: str) -> bool:
         role = await self.get_by_id(role_id)

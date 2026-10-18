@@ -4,6 +4,8 @@ from beanie import Document
 from pydantic import BaseModel, Field
 from pymongo import DESCENDING, IndexModel
 
+from osiki.models.base import EnvironmentMixin
+
 
 class AccessContext(BaseModel):
     request_id: str | None = None
@@ -11,7 +13,7 @@ class AccessContext(BaseModel):
     ip_address: str | None = None
 
 
-class AccessLog(Document):
+class AccessLog(Document, EnvironmentMixin):
     timestamp: float = Field(default_factory=time.time)
     user_id: str
     resource: str
@@ -28,9 +30,20 @@ class AccessLog(Document):
     class Settings:
         name = "access_logs"
         indexes = [
-            IndexModel([("timestamp", DESCENDING)]),
-            IndexModel([("user_id", 1), ("timestamp", DESCENDING)]),
-            IndexModel([("allowed", 1), ("timestamp", DESCENDING)]),
-            IndexModel([("resource", 1), ("action", 1), ("timestamp", DESCENDING)]),
+            IndexModel([("environment_id", 1), ("timestamp", DESCENDING)]),
+            IndexModel(
+                [("environment_id", 1), ("user_id", 1), ("timestamp", DESCENDING)]
+            ),
+            IndexModel(
+                [("environment_id", 1), ("allowed", 1), ("timestamp", DESCENDING)]
+            ),
+            IndexModel(
+                [
+                    ("environment_id", 1),
+                    ("resource", 1),
+                    ("action", 1),
+                    ("timestamp", DESCENDING),
+                ]
+            ),
             IndexModel([("timestamp", 1)], expireAfterSeconds=7776000),  # 90 days
         ]

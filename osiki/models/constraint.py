@@ -4,7 +4,7 @@ from beanie import Document, PydanticObjectId
 from pydantic import BaseModel
 from pymongo import IndexModel
 
-from osiki.models.base import SoftDeleteMixin, TimestampMixin
+from osiki.models.base import EnvironmentMixin, SoftDeleteMixin, TimestampMixin
 
 
 class ConstraintType(StrEnum):
@@ -27,7 +27,7 @@ class ConstraintConfig(BaseModel):
     requires_role_id: PydanticObjectId | None = None
 
 
-class Constraint(Document, TimestampMixin, SoftDeleteMixin):
+class Constraint(Document, EnvironmentMixin, TimestampMixin, SoftDeleteMixin):
     name: str
     description: str | None = None
     type: ConstraintType
@@ -36,8 +36,8 @@ class Constraint(Document, TimestampMixin, SoftDeleteMixin):
     class Settings:
         name = "constraints"
         indexes = [
-            IndexModel([("type", 1), ("is_active", 1)]),
-            IndexModel([("config.role_ids", 1)]),
-            IndexModel([("config.role_id", 1)]),
-            IndexModel([("config.requires_role_id", 1)]),
+            IndexModel([("environment_id", 1), ("type", 1), ("is_active", 1)]),
+            IndexModel([("environment_id", 1), ("config.role_ids", 1)]),
+            IndexModel([("environment_id", 1), ("config.role_id", 1)]),
+            IndexModel([("environment_id", 1), ("config.requires_role_id", 1)]),
         ]

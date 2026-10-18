@@ -37,39 +37,39 @@ from osiki.services.scope_matcher.scope_matcher import ScopeMatcher
 
 
 def test_get_user_repository() -> None:
-    assert isinstance(get_user_repository(), MongoDBUserRepository)
+    assert isinstance(get_user_repository("default"), MongoDBUserRepository)
 
 
 def test_get_group_repository() -> None:
-    assert isinstance(get_group_repository(), MongoDBGroupRepository)
+    assert isinstance(get_group_repository("default"), MongoDBGroupRepository)
 
 
 def test_get_role_repository() -> None:
-    assert isinstance(get_role_repository(), MongoDBRoleRepository)
+    assert isinstance(get_role_repository("default"), MongoDBRoleRepository)
 
 
 def test_get_permission_repository() -> None:
-    assert isinstance(get_permission_repository(), MongoDBPermissionRepository)
+    assert isinstance(get_permission_repository("default"), MongoDBPermissionRepository)
 
 
 def test_get_user_role_repository() -> None:
-    assert isinstance(get_user_role_repository(), MongoDBUserRoleRepository)
+    assert isinstance(get_user_role_repository("default"), MongoDBUserRoleRepository)
 
 
 def test_get_user_group_repository() -> None:
-    assert isinstance(get_user_group_repository(), MongoDBUserGroupRepository)
+    assert isinstance(get_user_group_repository("default"), MongoDBUserGroupRepository)
 
 
 def test_get_group_role_repository() -> None:
-    assert isinstance(get_group_role_repository(), MongoDBGroupRoleRepository)
+    assert isinstance(get_group_role_repository("default"), MongoDBGroupRoleRepository)
 
 
 def test_get_constraint_repository() -> None:
-    assert isinstance(get_constraint_repository(), MongoDBConstraintRepository)
+    assert isinstance(get_constraint_repository("default"), MongoDBConstraintRepository)
 
 
 def test_get_access_log_repository() -> None:
-    assert isinstance(get_access_log_repository(), MongoDBAccessLogRepository)
+    assert isinstance(get_access_log_repository("default"), MongoDBAccessLogRepository)
 
 
 def test_get_scope_matcher() -> None:
@@ -77,7 +77,7 @@ def test_get_scope_matcher() -> None:
 
 
 def test_get_constraint_validator() -> None:
-    constraint_repo = get_constraint_repository()
-    user_role_repo = get_user_role_repository()
+    constraint_repo = get_constraint_repository("default")
+    user_role_repo = get_user_role_repository("default")
     validator = get_constraint_validator(constraint_repo, user_role_repo)
     assert isinstance(validator, ConstraintValidator)

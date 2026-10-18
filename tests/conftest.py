@@ -110,6 +110,16 @@ async def init_db(mongo_client: AsyncMongoMockClient) -> None:
             AccessLog,
         ],
     )
+    # mongomock's create_indexes() drops partialFilterExpression, which would turn
+    # the (environment_id, email) index into a plain unique index that rejects
+    # several users without an email. Recreate it the way MongoDB builds it.
+    users = mongo_client.osiki_test[User.get_settings().name]
+    await users.drop_index("environment_id_1_email_1")
+    await users.create_index(
+        [("environment_id", 1), ("email", 1)],
+        unique=True,
+        partialFilterExpression={"email": {"$type": "string"}},
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -128,32 +138,32 @@ async def clean_db(
 
 @pytest.fixture
 def mock_user_role_repository() -> BaseUserRoleRepository:
-    return MockUserRoleRepository()
+    return MockUserRoleRepository("default")
 
 
 @pytest.fixture
 def mock_user_group_repository() -> BaseUserGroupRepository:
-    return MockUserGroupRepository()
+    return MockUserGroupRepository("default")
 
 
 @pytest.fixture
 def mock_group_role_repository() -> BaseGroupRoleRepository:
-    return MockGroupRoleRepository()
+    return MockGroupRoleRepository("default")
 
 
 @pytest.fixture
 def mock_role_repository() -> BaseRoleRepository:
-    return MockRoleRepository()
+    return MockRoleRepository("default")
 
 
 @pytest.fixture
 def mock_permission_repository() -> BasePermissionRepository:
-    return MockPermissionRepository()
+    return MockPermissionRepository("default")
 
 
 @pytest.fixture
 def mock_constraint_repository() -> BaseConstraintRepository:
-    return MockConstraintRepository()
+    return MockConstraintRepository("default")
 
 
 # --- Service Fixtures (for unit tests) ---

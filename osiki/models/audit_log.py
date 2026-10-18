@@ -5,6 +5,8 @@ from beanie import Document
 from pydantic import BaseModel, Field
 from pymongo import DESCENDING, IndexModel
 
+from osiki.models.base import EnvironmentMixin
+
 
 class AuditContext(BaseModel):
     ip_address: str | None = None
@@ -19,7 +21,7 @@ class Changes(BaseModel):
     after: dict[str, Any] | None = None
 
 
-class AuditLog(Document):
+class AuditLog(Document, EnvironmentMixin):
     timestamp: float = Field(default_factory=time.time)
     actor_id: str
     actor_type: str
@@ -32,11 +34,20 @@ class AuditLog(Document):
     class Settings:
         name = "audit_logs"
         indexes = [
-            IndexModel([("timestamp", DESCENDING)]),
-            IndexModel([("actor_id", 1), ("timestamp", DESCENDING)]),
+            IndexModel([("environment_id", 1), ("timestamp", DESCENDING)]),
             IndexModel(
-                [("target_type", 1), ("target_id", 1), ("timestamp", DESCENDING)]
+                [("environment_id", 1), ("actor_id", 1), ("timestamp", DESCENDING)]
             ),
-            IndexModel([("action", 1), ("timestamp", DESCENDING)]),
+            IndexModel(
+                [
+                    ("environment_id", 1),
+                    ("target_type", 1),
+                    ("target_id", 1),
+                    ("timestamp", DESCENDING),
+                ]
+            ),
+            IndexModel(
+                [("environment_id", 1), ("action", 1), ("timestamp", DESCENDING)]
+            ),
             IndexModel([("timestamp", 1)], expireAfterSeconds=63072000),  # 2 years
         ]

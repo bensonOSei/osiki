@@ -10,7 +10,11 @@ from osiki.repositories.constraints.base_constraint_repository import (
 
 
 class MongoDBConstraintRepository(BaseConstraintRepository):
+    def __init__(self, environment_id: str) -> None:
+        self.environment_id = environment_id
+
     async def create(self, constraint: Constraint) -> Constraint:
+        constraint.environment_id = self.environment_id
         await constraint.insert()
         logger.info(
             "Constraint created",
@@ -21,16 +25,25 @@ class MongoDBConstraintRepository(BaseConstraintRepository):
         return constraint
 
     async def get_by_id(self, constraint_id: str) -> Constraint | None:
-        constraint = await Constraint.get(PydanticObjectId(constraint_id))
+        constraint = await Constraint.find_one(
+            {
+                "_id": PydanticObjectId(constraint_id),
+                "environment_id": self.environment_id,
+            }
+        )
         if not constraint:
             logger.debug("Constraint not found", constraint_id=constraint_id)
         return constraint
 
     async def get_active(self) -> list[Constraint]:
-        return await Constraint.find(Constraint.is_active == True).to_list()
+        return await Constraint.find(
+            Constraint.environment_id == self.environment_id,
+            Constraint.is_active == True,
+        ).to_list()
 
     async def get_by_type(self, constraint_type: ConstraintType) -> list[Constraint]:
         return await Constraint.find(
+            Constraint.environment_id == self.environment_id,
             Constraint.type == constraint_type,
             Constraint.is_active == True,
         ).to_list()
@@ -38,6 +51,7 @@ class MongoDBConstraintRepository(BaseConstraintRepository):
     async def get_by_role_id(self, role_id: str) -> list[Constraint]:
         role_oid = PydanticObjectId(role_id)
         return await Constraint.find(
+            Constraint.environment_id == self.environment_id,
             Constraint.is_active == True,
             {
                 "$or": [

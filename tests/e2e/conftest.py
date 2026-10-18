@@ -1,6 +1,6 @@
 """E2E test fixtures with FastAPI TestClient and dependency overrides."""
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +18,7 @@ from osiki.api.dependencies import (
     get_user_repository,
     get_user_role_repository,
 )
+from osiki.api.environment import EnvironmentId
 from osiki.api.exceptions import (
     AuthorizationError,
     ValidationError,
@@ -48,27 +49,43 @@ from tests.mocks.repositories import (
 
 settings = get_settings()
 
-_user_repo = MockUserRepository()
-_group_repo = MockGroupRepository()
-_role_repo = MockRoleRepository()
-_permission_repo = MockPermissionRepository()
-_user_role_repo = MockUserRoleRepository()
-_user_group_repo = MockUserGroupRepository()
-_group_role_repo = MockGroupRoleRepository()
-_constraint_repo = MockConstraintRepository()
-_access_log_repo = MockAccessLogRepository()
+_user_repos: dict[str, MockUserRepository] = {}
+_group_repos: dict[str, MockGroupRepository] = {}
+_role_repos: dict[str, MockRoleRepository] = {}
+_permission_repos: dict[str, MockPermissionRepository] = {}
+_user_role_repos: dict[str, MockUserRoleRepository] = {}
+_user_group_repos: dict[str, MockUserGroupRepository] = {}
+_group_role_repos: dict[str, MockGroupRoleRepository] = {}
+_constraint_repos: dict[str, MockConstraintRepository] = {}
+_access_log_repos: dict[str, MockAccessLogRepository] = {}
+
+
+def _repo_provider[R](
+    store: dict[str, R], factory: Callable[[str], R]
+) -> Callable[[EnvironmentId], R]:
+    """Build a dependency override returning one mock repo per environment."""
+
+    def provide(environment_id: EnvironmentId) -> R:
+        if environment_id not in store:
+            store[environment_id] = factory(environment_id)
+        return store[environment_id]
+
+    return provide
 
 
 def _reset_all_repos() -> None:
-    _user_repo._data.clear()
-    _group_repo._data.clear()
-    _role_repo._data.clear()
-    _permission_repo._data.clear()
-    _user_role_repo._data.clear()
-    _user_group_repo._data.clear()
-    _group_role_repo._data.clear()
-    _constraint_repo._data.clear()
-    _access_log_repo._data.clear()
+    for store in (
+        _user_repos,
+        _group_repos,
+        _role_repos,
+        _permission_repos,
+        _user_role_repos,
+        _user_group_repos,
+        _group_role_repos,
+        _constraint_repos,
+        _access_log_repos,
+    ):
+        store.clear()
 
 
 def _create_test_app() -> FastAPI:
@@ -99,15 +116,33 @@ def _create_test_app() -> FastAPI:
     async def _trigger_internal_error() -> None:
         raise RuntimeError("unexpected failure")
 
-    test_app.dependency_overrides[get_user_repository] = lambda: _user_repo
-    test_app.dependency_overrides[get_group_repository] = lambda: _group_repo
-    test_app.dependency_overrides[get_role_repository] = lambda: _role_repo
-    test_app.dependency_overrides[get_permission_repository] = lambda: _permission_repo
-    test_app.dependency_overrides[get_user_role_repository] = lambda: _user_role_repo
-    test_app.dependency_overrides[get_user_group_repository] = lambda: _user_group_repo
-    test_app.dependency_overrides[get_group_role_repository] = lambda: _group_role_repo
-    test_app.dependency_overrides[get_constraint_repository] = lambda: _constraint_repo
-    test_app.dependency_overrides[get_access_log_repository] = lambda: _access_log_repo
+    test_app.dependency_overrides[get_user_repository] = _repo_provider(
+        _user_repos, MockUserRepository
+    )
+    test_app.dependency_overrides[get_group_repository] = _repo_provider(
+        _group_repos, MockGroupRepository
+    )
+    test_app.dependency_overrides[get_role_repository] = _repo_provider(
+        _role_repos, MockRoleRepository
+    )
+    test_app.dependency_overrides[get_permission_repository] = _repo_provider(
+        _permission_repos, MockPermissionRepository
+    )
+    test_app.dependency_overrides[get_user_role_repository] = _repo_provider(
+        _user_role_repos, MockUserRoleRepository
+    )
+    test_app.dependency_overrides[get_user_group_repository] = _repo_provider(
+        _user_group_repos, MockUserGroupRepository
+    )
+    test_app.dependency_overrides[get_group_role_repository] = _repo_provider(
+        _group_role_repos, MockGroupRoleRepository
+    )
+    test_app.dependency_overrides[get_constraint_repository] = _repo_provider(
+        _constraint_repos, MockConstraintRepository
+    )
+    test_app.dependency_overrides[get_access_log_repository] = _repo_provider(
+        _access_log_repos, MockAccessLogRepository
+    )
     test_app.dependency_overrides[get_scope_matcher] = get_scope_matcher
 
     return test_app

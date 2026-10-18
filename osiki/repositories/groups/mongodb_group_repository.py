@@ -8,19 +8,27 @@ from osiki.repositories.groups.base_group_repository import BaseGroupRepository
 
 
 class MongoDBGroupRepository(BaseGroupRepository):
+    def __init__(self, environment_id: str) -> None:
+        self.environment_id = environment_id
+
     async def create(self, group: Group) -> Group:
+        group.environment_id = self.environment_id
         await group.insert()
         logger.debug("Group created", group_id=str(group.id), name=group.name)
         return group
 
     async def get_by_id(self, group_id: str) -> Group | None:
-        group = await Group.get(PydanticObjectId(group_id))
+        group = await Group.find_one(
+            {"_id": PydanticObjectId(group_id), "environment_id": self.environment_id}
+        )
         if not group:
             logger.debug("Group not found", group_id=group_id)
         return group
 
     async def get_by_name(self, name: str) -> Group | None:
-        return await Group.find_one(Group.name == name)
+        return await Group.find_one(
+            Group.environment_id == self.environment_id, Group.name == name
+        )
 
     async def update(self, group: Group) -> Group:
         group.updated_at = time.time()
@@ -56,5 +64,10 @@ class MongoDBGroupRepository(BaseGroupRepository):
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Group]:
         return (
-            await Group.find(Group.is_active == True).skip(skip).limit(limit).to_list()
+            await Group.find(
+                Group.environment_id == self.environment_id, Group.is_active == True
+            )
+            .skip(skip)
+            .limit(limit)
+            .to_list()
         )

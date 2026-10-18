@@ -8,7 +8,11 @@ from osiki.repositories.permissions.base_permission_repository import (
 
 
 class MongoDBPermissionRepository(BasePermissionRepository):
+    def __init__(self, environment_id: str) -> None:
+        self.environment_id = environment_id
+
     async def create(self, permission: Permission) -> Permission:
+        permission.environment_id = self.environment_id
         await permission.insert()
         logger.debug(
             "Permission created",
@@ -19,7 +23,12 @@ class MongoDBPermissionRepository(BasePermissionRepository):
         return permission
 
     async def get_by_id(self, permission_id: str) -> Permission | None:
-        permission = await Permission.get(PydanticObjectId(permission_id))
+        permission = await Permission.find_one(
+            {
+                "_id": PydanticObjectId(permission_id),
+                "environment_id": self.environment_id,
+            }
+        )
         if not permission:
             logger.debug("Permission not found", permission_id=permission_id)
         return permission
@@ -27,13 +36,15 @@ class MongoDBPermissionRepository(BasePermissionRepository):
     async def get_by_ids(self, permission_ids: list[str]) -> list[Permission]:
         object_ids = [PydanticObjectId(pid) for pid in permission_ids]
         return await Permission.find(
-            {"_id": {"$in": object_ids}, "is_active": True}
+            Permission.environment_id == self.environment_id,
+            {"_id": {"$in": object_ids}, "is_active": True},
         ).to_list()
 
     async def get_by_resource_action(
         self, resource: str, action: str
     ) -> Permission | None:
         return await Permission.find_one(
+            Permission.environment_id == self.environment_id,
             Permission.resource == resource,
             Permission.action == action,
             Permission.is_active == True,
@@ -41,6 +52,7 @@ class MongoDBPermissionRepository(BasePermissionRepository):
 
     async def get_by_resource(self, resource: str) -> list[Permission]:
         return await Permission.find(
+            Permission.environment_id == self.environment_id,
             Permission.resource == resource,
             Permission.is_active == True,
         ).to_list()
@@ -60,7 +72,10 @@ class MongoDBPermissionRepository(BasePermissionRepository):
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Permission]:
         return (
-            await Permission.find(Permission.is_active == True)
+            await Permission.find(
+                Permission.environment_id == self.environment_id,
+                Permission.is_active == True,
+            )
             .skip(skip)
             .limit(limit)
             .to_list()

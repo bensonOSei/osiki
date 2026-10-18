@@ -12,7 +12,7 @@ from osiki.repositories.user_roles.mongodb_user_role_repository import (
 
 
 async def test_create() -> None:
-    repo = MongoDBUserRoleRepository()
+    repo = MongoDBUserRoleRepository("default")
     ur = UserRole(
         user_id=PydanticObjectId(),
         role_id=PydanticObjectId(),
@@ -23,7 +23,7 @@ async def test_create() -> None:
 
 
 async def test_get_user_roles() -> None:
-    repo = MongoDBUserRoleRepository()
+    repo = MongoDBUserRoleRepository("default")
     user_id = PydanticObjectId()
     await repo.create(
         UserRole(user_id=user_id, role_id=PydanticObjectId(), assigned_by="admin")
@@ -36,7 +36,7 @@ async def test_get_user_roles() -> None:
 
 
 async def test_get_users_with_role() -> None:
-    repo = MongoDBUserRoleRepository()
+    repo = MongoDBUserRoleRepository("default")
     role_id = PydanticObjectId()
     await repo.create(
         UserRole(user_id=PydanticObjectId(), role_id=role_id, assigned_by="admin")
@@ -49,7 +49,7 @@ async def test_get_users_with_role() -> None:
 
 
 async def test_get_by_tenant() -> None:
-    repo = MongoDBUserRoleRepository()
+    repo = MongoDBUserRoleRepository("default")
     role_id = PydanticObjectId()
     await repo.create(
         UserRole(
@@ -72,7 +72,7 @@ async def test_get_by_tenant() -> None:
 
 
 async def test_get_by_tenant_with_role_filter() -> None:
-    repo = MongoDBUserRoleRepository()
+    repo = MongoDBUserRoleRepository("default")
     role_id = PydanticObjectId()
     await repo.create(
         UserRole(
@@ -95,7 +95,7 @@ async def test_get_by_tenant_with_role_filter() -> None:
 
 
 async def test_find_assignment() -> None:
-    repo = MongoDBUserRoleRepository()
+    repo = MongoDBUserRoleRepository("default")
     user_id = PydanticObjectId()
     role_id = PydanticObjectId()
     await repo.create(
@@ -111,7 +111,7 @@ async def test_find_assignment() -> None:
 
 
 async def test_revoke() -> None:
-    repo = MongoDBUserRoleRepository()
+    repo = MongoDBUserRoleRepository("default")
     ur = await repo.create(
         UserRole(
             user_id=PydanticObjectId(), role_id=PydanticObjectId(), assigned_by="admin"
@@ -125,13 +125,13 @@ async def test_revoke() -> None:
 
 
 async def test_revoke_not_found() -> None:
-    repo = MongoDBUserRoleRepository()
+    repo = MongoDBUserRoleRepository("default")
     result = await repo.revoke(str(PydanticObjectId()))
     assert result is False
 
 
 async def test_get_expired() -> None:
-    repo = MongoDBUserRoleRepository()
+    repo = MongoDBUserRoleRepository("default")
     now = time.time()
     await repo.create(
         UserRole(
