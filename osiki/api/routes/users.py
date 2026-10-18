@@ -14,9 +14,23 @@ from osiki.schemas.role_assignment import (
     UserRoleAssignmentRequest,
     UserRoleAssignmentResponse,
 )
-from osiki.schemas.user import UserCreate, UserRead, UserUpdate
+from osiki.schemas.user import UserCreate, UserRead, UserUpdate, UserUpsert
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+def _to_read(user: User) -> UserRead:
+    return UserRead(
+        id=str(user.id),
+        external_id=user.external_id,
+        name=user.name,
+        email=user.email,
+        attributes=user.attributes,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        metadata=user.metadata,
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -37,15 +51,19 @@ async def create_user(
         metadata=data.metadata or {},
     )
     created = await user_repo.create(user)
-    return UserRead(
-        id=str(created.id),
-        external_id=created.external_id,
-        email=created.email,
-        is_active=created.is_active,
-        created_at=created.created_at,
-        updated_at=created.updated_at,
-        metadata=created.metadata,
+    return _to_read(created)
+
+
+@router.put("/by-external/{external_id}")
+async def upsert_user(
+    external_id: str,
+    data: UserUpsert,
+    user_repo: UserRepository,
+) -> UserRead:
+    user = await user_repo.upsert_by_external_id(
+        external_id, data.name, data.email, data.attributes
     )
+    return _to_read(user)
 
 
 @router.get("/{user_id}")
@@ -57,15 +75,7 @@ async def get_user(
     if not user:
         raise NotFoundError("User not found", details={"user_id": user_id})
 
-    return UserRead(
-        id=str(user.id),
-        external_id=user.external_id,
-        email=user.email,
-        is_active=user.is_active,
-        created_at=user.created_at,
-        updated_at=user.updated_at,
-        metadata=user.metadata,
-    )
+    return _to_read(user)
 
 
 @router.patch("/{user_id}")
@@ -84,15 +94,7 @@ async def update_user(
         user.metadata = data.metadata
 
     updated = await user_repo.update(user)
-    return UserRead(
-        id=str(updated.id),
-        external_id=updated.external_id,
-        email=updated.email,
-        is_active=updated.is_active,
-        created_at=updated.created_at,
-        updated_at=updated.updated_at,
-        metadata=updated.metadata,
-    )
+    return _to_read(updated)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -114,18 +116,7 @@ async def list_users(
     skip = (page - 1) * page_size
     users = await user_repo.list_active(skip=skip, limit=page_size)
 
-    items = [
-        UserRead(
-            id=str(u.id),
-            external_id=u.external_id,
-            email=u.email,
-            is_active=u.is_active,
-            created_at=u.created_at,
-            updated_at=u.updated_at,
-            metadata=u.metadata,
-        )
-        for u in users
-    ]
+    items = [_to_read(u) for u in users]
 
     # Note: For proper pagination, we'd need a count method on the repository
     # For now, estimate based on returned results

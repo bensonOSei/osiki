@@ -14,6 +14,8 @@ from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
 from osiki.models.role import Role
+from osiki.models.tenant import Tenant
+from osiki.models.tenant_member import TenantMember
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -49,6 +51,8 @@ from tests.mocks import (
     make_group_role,
     make_permission,
     make_role,
+    make_tenant,
+    make_tenant_member,
     make_user,
     make_user_group,
     make_user_role,
@@ -61,6 +65,8 @@ __all__ = [
     "make_group_role",
     "make_permission",
     "make_role",
+    "make_tenant",
+    "make_tenant_member",
     "make_user",
     "make_user_group",
     "make_user_role",
@@ -108,6 +114,8 @@ async def init_db(mongo_client: AsyncMongoMockClient) -> None:
             Constraint,
             AuditLog,
             AccessLog,
+            Tenant,
+            TenantMember,
         ],
     )
     # mongomock's create_indexes() drops partialFilterExpression, which would turn

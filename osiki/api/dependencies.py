@@ -31,6 +31,16 @@ from osiki.repositories.permissions.mongodb_permission_repository import (
 )
 from osiki.repositories.roles.base_role_repository import BaseRoleRepository
 from osiki.repositories.roles.mongodb_role_repository import MongoDBRoleRepository
+from osiki.repositories.tenant_members.base_tenant_member_repository import (
+    BaseTenantMemberRepository,
+)
+from osiki.repositories.tenant_members.mongodb_tenant_member_repository import (
+    MongoDBTenantMemberRepository,
+)
+from osiki.repositories.tenants.base_tenant_repository import BaseTenantRepository
+from osiki.repositories.tenants.mongodb_tenant_repository import (
+    MongoDBTenantRepository,
+)
 from osiki.repositories.user_groups.base_user_group_repository import (
     BaseUserGroupRepository,
 )
@@ -100,6 +110,16 @@ def get_constraint_repository(
 
 def get_access_log_repository(environment_id: EnvironmentId) -> BaseAccessLogRepository:
     return MongoDBAccessLogRepository(environment_id)
+
+
+def get_tenant_repository(environment_id: EnvironmentId) -> BaseTenantRepository:
+    return MongoDBTenantRepository(environment_id)
+
+
+def get_tenant_member_repository(
+    environment_id: EnvironmentId,
+) -> BaseTenantMemberRepository:
+    return MongoDBTenantMemberRepository(environment_id)
 
 
 # Service dependencies
@@ -176,6 +196,10 @@ ConstraintRepository = Annotated[
 ]
 AccessLogRepository = Annotated[
     BaseAccessLogRepository, Depends(get_access_log_repository)
+]
+TenantRepository = Annotated[BaseTenantRepository, Depends(get_tenant_repository)]
+TenantMemberRepository = Annotated[
+    BaseTenantMemberRepository, Depends(get_tenant_member_repository)
 ]
 AuthorizationServiceDep = Annotated[
     BaseAuthorizationService, Depends(get_authorization_service)

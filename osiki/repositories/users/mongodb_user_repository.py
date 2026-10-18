@@ -3,6 +3,7 @@ import time
 from beanie import PydanticObjectId
 from loguru import logger
 
+from osiki.models.base import AttributeValue
 from osiki.models.user import User
 from osiki.repositories.users.base_user_repository import BaseUserRepository
 
@@ -75,3 +76,29 @@ class MongoDBUserRepository(BaseUserRepository):
             .limit(limit)
             .to_list()
         )
+
+    async def upsert_by_external_id(
+        self,
+        external_id: str,
+        name: str | None,
+        email: str | None,
+        attributes: dict[str, AttributeValue] | None,
+    ) -> User:
+        user = await User.find_one(
+            User.environment_id == self.environment_id, User.external_id == external_id
+        )
+        if user is None:
+            user = User(
+                external_id=external_id,
+                name=name,
+                email=email,
+                attributes=attributes or {},
+            )
+            return await self.create(user)
+        if name is not None:
+            user.name = name
+        if email is not None:
+            user.email = email
+        if attributes is not None:
+            user.attributes = attributes
+        return await self.update(user)

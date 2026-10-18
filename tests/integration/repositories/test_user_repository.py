@@ -105,3 +105,33 @@ async def test_list_active() -> None:
 
     result = await repo.list_active()
     assert len(result) == 2
+
+
+async def test_upsert_by_external_id_creates() -> None:
+    repo = MongoDBUserRepository("default")
+    user = await repo.upsert_by_external_id("up-1", "Kofi", "k@test.com", {"a": 1})
+    assert user.id is not None
+    assert user.name == "Kofi"
+    assert user.email == "k@test.com"
+    assert user.attributes == {"a": 1}
+
+
+async def test_upsert_by_external_id_none_leaves_fields_unchanged() -> None:
+    repo = MongoDBUserRepository("default")
+    first = await repo.upsert_by_external_id("up-2", "Kofi", "k2@test.com", {"a": 1})
+    second = await repo.upsert_by_external_id("up-2", None, None, {"a": 2})
+    assert second.id == first.id
+    assert second.name == "Kofi"
+    assert second.email == "k2@test.com"
+    assert second.attributes == {"a": 2}
+    renamed = await repo.upsert_by_external_id("up-2", None, "new@test.com", None)
+    assert renamed.email == "new@test.com"
+    third = await repo.upsert_by_external_id("up-2", "Ama", None, None)
+    assert third.name == "Ama"
+    assert third.attributes == {"a": 2}
+
+
+async def test_upsert_by_external_id_scoped_by_environment() -> None:
+    a = await MongoDBUserRepository("a").upsert_by_external_id("up-3", "A", None, None)
+    b = await MongoDBUserRepository("b").upsert_by_external_id("up-3", "B", None, None)
+    assert a.id != b.id

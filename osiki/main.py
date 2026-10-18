@@ -13,6 +13,7 @@ from osiki.api.routes import (
     health_router,
     permissions_router,
     roles_router,
+    tenants_router,
     users_router,
 )
 from osiki.configs.database import initialize_database
@@ -58,6 +59,7 @@ app.include_router(groups_router, prefix=settings.api_prefix)
 app.include_router(roles_router, prefix=settings.api_prefix)
 app.include_router(permissions_router, prefix=settings.api_prefix)
 app.include_router(constraints_router, prefix=settings.api_prefix)
+app.include_router(tenants_router, prefix=settings.api_prefix)
 app.include_router(authorization_router, prefix=settings.api_prefix)
 
 

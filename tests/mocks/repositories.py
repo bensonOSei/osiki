@@ -3,12 +3,14 @@ import time
 from beanie import PydanticObjectId
 
 from osiki.models.access_log import AccessLog
-from osiki.models.base import EnvironmentMixin
+from osiki.models.base import AttributeValue, EnvironmentMixin
 from osiki.models.constraint import Constraint, ConstraintType
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
 from osiki.models.role import Role
+from osiki.models.tenant import Tenant
+from osiki.models.tenant_member import TenantMember
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -26,6 +28,10 @@ from osiki.repositories.permissions.base_permission_repository import (
     BasePermissionRepository,
 )
 from osiki.repositories.roles.base_role_repository import BaseRoleRepository
+from osiki.repositories.tenant_members.base_tenant_member_repository import (
+    BaseTenantMemberRepository,
+)
+from osiki.repositories.tenants.base_tenant_repository import BaseTenantRepository
 from osiki.repositories.user_groups.base_user_group_repository import (
     BaseUserGroupRepository,
 )
@@ -379,6 +385,87 @@ class MockUserRepository(_EnvironmentBound[User], BaseUserRepository):
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[User]:
         active = [u for u in self._scoped() if u.is_active]
         return active[skip : skip + limit]
+
+    async def upsert_by_external_id(
+        self,
+        external_id: str,
+        name: str | None,
+        email: str | None,
+        attributes: dict[str, AttributeValue] | None,
+    ) -> User:
+        for user in self._scoped():
+            if user.external_id == external_id:
+                if name is not None:
+                    user.name = name
+                if email is not None:
+                    user.email = email
+                if attributes is not None:
+                    user.attributes = attributes
+                user.updated_at = time.time()
+                return user
+        return await self.create(
+            User(
+                external_id=external_id,
+                name=name,
+                email=email,
+                attributes=attributes or {},
+            )
+        )
+
+
+class MockTenantRepository(_EnvironmentBound[Tenant], BaseTenantRepository):
+    async def upsert(
+        self, external_id: str, name: str, attributes: dict[str, AttributeValue]
+    ) -> Tenant:
+        for tenant in self._scoped():
+            if tenant.external_id == external_id:
+                tenant.name = name
+                tenant.attributes = attributes
+                tenant.updated_at = time.time()
+                return tenant
+        tenant = Tenant(external_id=external_id, name=name, attributes=attributes)
+        tenant.id = PydanticObjectId()
+        return self._store(str(tenant.id), tenant)
+
+    async def get_by_external_id(self, external_id: str) -> Tenant | None:
+        for tenant in self._scoped():
+            if tenant.external_id == external_id and tenant.is_active:
+                return tenant
+        return None
+
+    async def get_many(self, external_ids: list[str]) -> list[Tenant]:
+        return [
+            t for t in self._scoped() if t.external_id in external_ids and t.is_active
+        ]
+
+
+class MockTenantMemberRepository(
+    _EnvironmentBound[TenantMember], BaseTenantMemberRepository
+):
+    def _key(self, tenant_id: str, user_id: str) -> str:
+        return f"{tenant_id}\x00{user_id}"
+
+    async def add(self, tenant_id: str, user_id: str) -> None:
+        key = self._key(tenant_id, user_id)
+        if self._get(key) is None:
+            self._store(key, TenantMember(tenant_id=tenant_id, user_id=user_id))
+
+    async def remove(self, tenant_id: str, user_id: str) -> bool:
+        key = self._key(tenant_id, user_id)
+        if self._get(key) is None:
+            return False
+        del self._data[key]
+        return True
+
+    async def is_member(self, tenant_id: str, user_id: str) -> bool:
+        return self._get(self._key(tenant_id, user_id)) is not None
+
+    async def tenants_for_user(self, user_id: str) -> list[str]:
+        return [m.tenant_id for m in self._scoped() if m.user_id == user_id]
+
+    async def members(self, tenant_id: str, skip: int, limit: int) -> list[str]:
+        found = [m.user_id for m in self._scoped() if m.tenant_id == tenant_id]
+        return found[skip : skip + limit]
 
 
 class MockGroupRepository(_EnvironmentBound[Group], BaseGroupRepository):

@@ -14,6 +14,8 @@ from osiki.api.dependencies import (
     get_permission_repository,
     get_role_repository,
     get_scope_matcher,
+    get_tenant_member_repository,
+    get_tenant_repository,
     get_user_group_repository,
     get_user_repository,
     get_user_role_repository,
@@ -32,6 +34,7 @@ from osiki.api.routes import (
     health_router,
     permissions_router,
     roles_router,
+    tenants_router,
     users_router,
 )
 from osiki.configs.settings import get_settings
@@ -42,6 +45,8 @@ from tests.mocks.repositories import (
     MockGroupRoleRepository,
     MockPermissionRepository,
     MockRoleRepository,
+    MockTenantMemberRepository,
+    MockTenantRepository,
     MockUserGroupRepository,
     MockUserRepository,
     MockUserRoleRepository,
@@ -58,6 +63,8 @@ _user_group_repos: dict[str, MockUserGroupRepository] = {}
 _group_role_repos: dict[str, MockGroupRoleRepository] = {}
 _constraint_repos: dict[str, MockConstraintRepository] = {}
 _access_log_repos: dict[str, MockAccessLogRepository] = {}
+_tenant_repos: dict[str, MockTenantRepository] = {}
+_tenant_member_repos: dict[str, MockTenantMemberRepository] = {}
 
 
 def _repo_provider[R](
@@ -84,6 +91,8 @@ def _reset_all_repos() -> None:
         _group_role_repos,
         _constraint_repos,
         _access_log_repos,
+        _tenant_repos,
+        _tenant_member_repos,
     ):
         store.clear()
 
@@ -102,6 +111,7 @@ def _create_test_app() -> FastAPI:
     test_app.include_router(roles_router, prefix=settings.api_prefix)
     test_app.include_router(permissions_router, prefix=settings.api_prefix)
     test_app.include_router(constraints_router, prefix=settings.api_prefix)
+    test_app.include_router(tenants_router, prefix=settings.api_prefix)
     test_app.include_router(authorization_router, prefix=settings.api_prefix)
 
     @test_app.get("/_test/authorization-error")
@@ -142,6 +152,12 @@ def _create_test_app() -> FastAPI:
     )
     test_app.dependency_overrides[get_access_log_repository] = _repo_provider(
         _access_log_repos, MockAccessLogRepository
+    )
+    test_app.dependency_overrides[get_tenant_repository] = _repo_provider(
+        _tenant_repos, MockTenantRepository
+    )
+    test_app.dependency_overrides[get_tenant_member_repository] = _repo_provider(
+        _tenant_member_repos, MockTenantMemberRepository
     )
     test_app.dependency_overrides[get_scope_matcher] = get_scope_matcher
 

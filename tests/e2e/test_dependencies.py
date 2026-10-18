@@ -7,6 +7,8 @@ from osiki.api.dependencies import (
     get_permission_repository,
     get_role_repository,
     get_scope_matcher,
+    get_tenant_member_repository,
+    get_tenant_repository,
     get_user_group_repository,
     get_user_repository,
     get_user_role_repository,
@@ -25,6 +27,12 @@ from osiki.repositories.permissions.mongodb_permission_repository import (
     MongoDBPermissionRepository,
 )
 from osiki.repositories.roles.mongodb_role_repository import MongoDBRoleRepository
+from osiki.repositories.tenant_members.mongodb_tenant_member_repository import (
+    MongoDBTenantMemberRepository,
+)
+from osiki.repositories.tenants.mongodb_tenant_repository import (
+    MongoDBTenantRepository,
+)
 from osiki.repositories.user_groups.mongodb_user_group_repository import (
     MongoDBUserGroupRepository,
 )
@@ -81,3 +89,13 @@ def test_get_constraint_validator() -> None:
     user_role_repo = get_user_role_repository("default")
     validator = get_constraint_validator(constraint_repo, user_role_repo)
     assert isinstance(validator, ConstraintValidator)
+
+
+def test_get_tenant_repository() -> None:
+    assert isinstance(get_tenant_repository("default"), MongoDBTenantRepository)
+
+
+def test_get_tenant_member_repository() -> None:
+    assert isinstance(
+        get_tenant_member_repository("default"), MongoDBTenantMemberRepository
+    )

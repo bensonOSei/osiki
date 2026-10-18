@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 
+from osiki.models.base import AttributeValue
 from osiki.models.user import User
 
 
@@ -27,3 +28,12 @@ class BaseUserRepository(ABC):
 
     @abstractmethod
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[User]: ...
+
+    @abstractmethod
+    async def upsert_by_external_id(
+        self,
+        external_id: str,
+        name: str | None,
+        email: str | None,
+        attributes: dict[str, AttributeValue] | None,
+    ) -> User: ...

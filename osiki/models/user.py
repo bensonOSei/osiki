@@ -1,7 +1,9 @@
 from beanie import Document
+from pydantic import Field
 from pymongo import IndexModel
 
 from osiki.models.base import (
+    AttributeValue,
     EnvironmentMixin,
     MetadataMixin,
     SoftDeleteMixin,
@@ -11,7 +13,9 @@ from osiki.models.base import (
 
 class User(Document, EnvironmentMixin, TimestampMixin, SoftDeleteMixin, MetadataMixin):
     external_id: str
+    name: str | None = None
     email: str | None = None
+    attributes: dict[str, AttributeValue] = Field(default_factory=dict)
 
     class Settings:
         name = "users"

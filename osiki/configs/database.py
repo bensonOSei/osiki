@@ -9,6 +9,8 @@ from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
 from osiki.models.role import Role
+from osiki.models.tenant import Tenant
+from osiki.models.tenant_member import TenantMember
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -30,6 +32,8 @@ async def initialize_database(db_url: str, db_name: str = "osiki") -> None:
             Constraint,
             AuditLog,
             AccessLog,
+            Tenant,
+            TenantMember,
         ],
     )
-    logger.info("Database initialized successfully with 10 document models")
+    logger.info("Database initialized successfully with 12 document models")

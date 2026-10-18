@@ -1,11 +1,13 @@
 from beanie import PydanticObjectId
 
-from osiki.models.base import Scope
+from osiki.models.base import AttributeValue, Scope
 from osiki.models.constraint import Constraint, ConstraintConfig, ConstraintType
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
 from osiki.models.role import Role
+from osiki.models.tenant import Tenant
+from osiki.models.tenant_member import TenantMember
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -19,6 +21,24 @@ def make_user(
     user = User(external_id=external_id, email=email)
     user.id = user_id or PydanticObjectId()
     return user
+
+
+def make_tenant(
+    external_id: str = "tenant-1",
+    name: str = "Tenant",
+    attributes: dict[str, AttributeValue] | None = None,
+) -> Tenant:
+    tenant = Tenant(external_id=external_id, name=name, attributes=attributes or {})
+    tenant.id = PydanticObjectId()
+    return tenant
+
+
+def make_tenant_member(
+    tenant_id: str = "tenant-1", user_id: str = "user-1"
+) -> TenantMember:
+    member = TenantMember(tenant_id=tenant_id, user_id=user_id)
+    member.id = PydanticObjectId()
+    return member
 
 
 def make_role(
