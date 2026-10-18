@@ -259,7 +259,7 @@ Specifically: every engine record scoped to an environment (e.g. `User.external_
 
 Built alongside other projects, no fixed date. Each release is useful on its own.
 
-**M1 — Engine ready for the cloud.** Multi-org/project/environment model, API keys, strict tenancy, rule language and evaluation, snapshot export, change events, async logging. Existing features carried over.
+**M1 — Engine ready for the cloud (open-source engine only).** Environment namespacing, tenants and strict tenancy, grants with conditions (rule language and evaluation), snapshot export with a config version, constraint enforcement on assignment, async/batched access logging. Existing features carried over. Organizations, projects, API-key management and billing belong to the proprietary control plane and are built with M2/M4.
 
 **M2 — Customer zero.** Python SDK (FastAPI first — both Poully and Elite Frames are FastAPI): guard, endpoint discovery, loaders, local evaluation, list filters, user/tenant sync. React SDK (`<Can>`, route guard, hook). Basic dashboard: roles, permissions, endpoint mapping, rules, users/tenants, logs. Poully's offline sync (`GET /sync`) uses the SDK's per-record-type list filter directly (the escape hatch), and the React SDK keeps the last known permissions for offline UI display only — enforcement stays server-side (builder's call). **Done when:** Poully runs on Osiki Cloud with its embedded RBAC code deleted, and Elite Frames has owner / sales / fulfillment roles with record-level rules.
 
