@@ -31,6 +31,46 @@ class TeamRole(BaseModel):
     holders: int = 0
 
 
+class TeamRoleRef(BaseModel):
+    """A role a member holds in the tenant, by id and name."""
+
+    id: str
+    name: str
+    kind: Literal["template", "tenant"]
+
+
+class TeamMember(BaseModel):
+    """A tenant member and the roles assigned to them directly in the tenant."""
+
+    user_id: str
+    name: str | None
+    email: str | None
+    roles: list[TeamRoleRef]
+
+
+class EffectiveSource(BaseModel):
+    """One grant a member effectively holds, and the role it comes from."""
+
+    permission: str
+    condition: str | None
+    role_id: str
+    role_name: str
+    via: Literal["direct", "group"]
+
+
+ViolationKind = Literal[
+    "escalation", "not_assignable", "not_offered", "constraint", "last_manager"
+]
+
+
+class Violation(BaseModel):
+    """A rule a dry-run operation would break."""
+
+    kind: ViolationKind
+    message: str
+    details: dict[str, str]
+
+
 class TeamError(OsikiError):
     """A refusal by the team manager; subclasses pick the HTTP status."""
 
@@ -94,4 +134,16 @@ class LastManager(_TeamConflictError):
         super().__init__(
             "A tenant must keep at least one team manager",
             details={"reason": "last_manager"},
+        )
+
+
+class ConstraintViolated(_TeamConflictError):
+    def __init__(self, constraint_name: str | None, reason: str | None) -> None:
+        super().__init__(
+            "Constraint violated",
+            details={
+                "reason": "constraint",
+                "constraint": constraint_name or "",
+                "detail": reason or "",
+            },
         )

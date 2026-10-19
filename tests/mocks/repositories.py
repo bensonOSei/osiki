@@ -17,6 +17,7 @@ from osiki.models.permission import Permission
 from osiki.models.role import Grant, Role
 from osiki.models.tenant import Tenant
 from osiki.models.tenant_member import TenantMember
+from osiki.models.tenant_team_lock import TenantTeamLock
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -48,6 +49,9 @@ from osiki.repositories.permissions.base_permission_repository import (
 from osiki.repositories.roles.base_role_repository import BaseRoleRepository
 from osiki.repositories.tenant_members.base_tenant_member_repository import (
     BaseTenantMemberRepository,
+)
+from osiki.repositories.tenant_team_locks.base_tenant_team_lock_repository import (
+    BaseTenantTeamLockRepository,
 )
 from osiki.repositories.tenants.base_tenant_repository import BaseTenantRepository
 from osiki.repositories.user_groups.base_user_group_repository import (
@@ -759,6 +763,22 @@ class MockTenantMemberRepository(
     async def members(self, tenant_id: str, skip: int, limit: int) -> list[str]:
         found = [m.user_id for m in self._scoped() if m.tenant_id == tenant_id]
         return found[skip : skip + limit]
+
+
+class MockTenantTeamLockRepository(
+    _EnvironmentBound[TenantTeamLock], BaseTenantTeamLockRepository
+):
+    async def ensure(self, tenant_id: str) -> None:
+        if self._get(tenant_id) is None:
+            self._store(tenant_id, TenantTeamLock(tenant_id=tenant_id))
+
+    async def bump(
+        self, tenant_id: str, *, session: AsyncClientSession | None = None
+    ) -> int:
+        await self.ensure(tenant_id)
+        lock = self._data[tenant_id]
+        lock.version += 1
+        return lock.version
 
 
 class MockGroupRepository(_AssignmentBound[Group], BaseGroupRepository):

@@ -19,6 +19,7 @@ from osiki.models.permission import Permission
 from osiki.models.role import Role
 from osiki.models.tenant import Tenant
 from osiki.models.tenant_member import TenantMember
+from osiki.models.tenant_team_lock import TenantTeamLock
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -154,6 +155,7 @@ async def init_db(mongo_client: AsyncMongoMockClient) -> None:
             AccessLog,
             Tenant,
             TenantMember,
+            TenantTeamLock,
             EnvironmentState,
             DiscoveredEndpoint,
             EndpointMapping,

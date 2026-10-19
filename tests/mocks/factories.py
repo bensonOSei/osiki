@@ -23,6 +23,7 @@ from osiki.models.permission import Permission
 from osiki.models.role import Grant, Role
 from osiki.models.tenant import Tenant
 from osiki.models.tenant_member import TenantMember
+from osiki.models.tenant_team_lock import TenantTeamLock
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -87,6 +88,14 @@ def make_tenant_member(
     member = TenantMember(tenant_id=tenant_id, user_id=user_id)
     member.id = PydanticObjectId()
     return member
+
+
+def make_tenant_team_lock(
+    tenant_id: str = "tenant-1", version: int = 0
+) -> TenantTeamLock:
+    lock = TenantTeamLock(tenant_id=tenant_id, version=version)
+    lock.id = PydanticObjectId()
+    return lock
 
 
 def make_role(

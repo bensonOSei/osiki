@@ -49,6 +49,7 @@ from tests.mocks import (
     MockRoleRepository,
     MockTenantMemberRepository,
     MockTenantRepository,
+    MockTenantTeamLockRepository,
     MockUserGroupRepository,
     MockUserRepository,
     MockUserRoleRepository,
@@ -82,6 +83,7 @@ class Env:
         self.constraints = MockConstraintRepository("default", self.state)
         self.endpoints = MockEndpointRepository("default", self.state)
         self.audit_repo = MockAuditLogRepository("default")
+        self.locks = MockTenantTeamLockRepository("default")
 
     def service(self, actor: Actor = DEVELOPER, tenant: str = TENANT) -> TeamService:
         bundles = BundleBuilder(
@@ -115,6 +117,9 @@ class Env:
             condition_repo=self.conditions,
             user_role_repo=self.user_roles,
             group_role_repo=self.group_roles,
+            user_repo=self.users,
+            member_repo=self.members,
+            lock_repo=self.locks,
             snapshot_builder=snapshots,
             bundle_builder=bundles,
             validator=ConstraintValidator(self.constraints, self.user_roles),

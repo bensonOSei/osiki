@@ -20,6 +20,7 @@ from osiki.api.dependencies import (
     get_snapshot_cache,
     get_tenant_member_repository,
     get_tenant_repository,
+    get_tenant_team_lock_repository,
     get_user_group_repository,
     get_user_repository,
     get_user_role_repository,
@@ -50,6 +51,7 @@ from osiki.api.routes import (
 )
 from osiki.configs.settings import get_settings
 from osiki.services.snapshot_builder.snapshot_builder import SnapshotCache
+from osiki.services.unit_of_work import NullUnitOfWork, get_unit_of_work
 from tests.mocks.repositories import (
     MockAccessLogRepository,
     MockAuditLogRepository,
@@ -63,6 +65,7 @@ from tests.mocks.repositories import (
     MockRoleRepository,
     MockTenantMemberRepository,
     MockTenantRepository,
+    MockTenantTeamLockRepository,
     MockUserGroupRepository,
     MockUserRepository,
     MockUserRoleRepository,
@@ -84,6 +87,7 @@ _audit_log_repos: dict[str, MockAuditLogRepository] = {}
 _tenant_repos: dict[str, MockTenantRepository] = {}
 _tenant_member_repos: dict[str, MockTenantMemberRepository] = {}
 _endpoint_repos: dict[str, MockEndpointRepository] = {}
+_lock_repos: dict[str, MockTenantTeamLockRepository] = {}
 _state_repos: dict[str, MockEnvironmentStateRepository] = {}
 # Replaced per test: the mock state repos restart at version 0, so a cache
 # kept across tests would serve the previous test's snapshot.
@@ -142,6 +146,7 @@ def _reset_all_repos() -> None:
         _tenant_repos,
         _tenant_member_repos,
         _endpoint_repos,
+        _lock_repos,
         _state_repos,
     ):
         store.clear()
@@ -225,7 +230,12 @@ def _create_test_app() -> FastAPI:
     test_app.dependency_overrides[get_endpoint_repository] = _config_repo_provider(
         _endpoint_repos, MockEndpointRepository
     )
+    test_app.dependency_overrides[get_tenant_team_lock_repository] = _repo_provider(
+        _lock_repos, MockTenantTeamLockRepository
+    )
     test_app.dependency_overrides[get_environment_state_repository] = _provide_state
+    # The mock repos ignore sessions: there is no transaction to run.
+    test_app.dependency_overrides[get_unit_of_work] = NullUnitOfWork
     test_app.dependency_overrides[get_snapshot_cache] = _provide_snapshot_cache
 
     return test_app

@@ -21,6 +21,7 @@ from osiki.api.dependencies import (
     get_snapshot_cache,
     get_tenant_member_repository,
     get_tenant_repository,
+    get_tenant_team_lock_repository,
     get_user_group_repository,
     get_user_repository,
     get_user_role_repository,
@@ -50,6 +51,9 @@ from osiki.repositories.permissions.mongodb_permission_repository import (
 from osiki.repositories.roles.mongodb_role_repository import MongoDBRoleRepository
 from osiki.repositories.tenant_members.mongodb_tenant_member_repository import (
     MongoDBTenantMemberRepository,
+)
+from osiki.repositories.tenant_team_locks.mongodb_tenant_team_lock_repository import (
+    MongoDBTenantTeamLockRepository,
 )
 from osiki.repositories.tenants.mongodb_tenant_repository import (
     MongoDBTenantRepository,
@@ -202,6 +206,12 @@ def test_get_tenant_member_repository() -> None:
     )
 
 
+def test_get_tenant_team_lock_repository() -> None:
+    assert isinstance(
+        get_tenant_team_lock_repository("default"), MongoDBTenantTeamLockRepository
+    )
+
+
 def test_get_team_service_wires_the_tenant_and_actor() -> None:
     from osiki.api.actor import Actor
     from osiki.api.dependencies import get_team_service
@@ -232,6 +242,9 @@ def test_get_team_service_wires_the_tenant_and_actor() -> None:
         conditions,
         user_roles,
         get_group_role_repository("default", state),
+        get_user_repository("default", state),
+        get_tenant_member_repository("default", state),
+        get_tenant_team_lock_repository("default"),
         get_audit_log_repository("default"),
         snapshot_builder,
         get_bundle_builder(

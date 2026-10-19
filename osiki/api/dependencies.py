@@ -63,6 +63,12 @@ from osiki.repositories.tenant_members.base_tenant_member_repository import (
 from osiki.repositories.tenant_members.mongodb_tenant_member_repository import (
     MongoDBTenantMemberRepository,
 )
+from osiki.repositories.tenant_team_locks.base_tenant_team_lock_repository import (
+    BaseTenantTeamLockRepository,
+)
+from osiki.repositories.tenant_team_locks.mongodb_tenant_team_lock_repository import (
+    MongoDBTenantTeamLockRepository,
+)
 from osiki.repositories.tenants.base_tenant_repository import BaseTenantRepository
 from osiki.repositories.tenants.mongodb_tenant_repository import (
     MongoDBTenantRepository,
@@ -190,6 +196,12 @@ def get_tenant_member_repository(
     environment_id: EnvironmentId, state: EnvironmentStateRepository
 ) -> BaseTenantMemberRepository:
     return MongoDBTenantMemberRepository(environment_id, state)
+
+
+def get_tenant_team_lock_repository(
+    environment_id: EnvironmentId,
+) -> BaseTenantTeamLockRepository:
+    return MongoDBTenantTeamLockRepository(environment_id)
 
 
 # Service dependencies
@@ -323,6 +335,9 @@ TenantRepository = Annotated[BaseTenantRepository, Depends(get_tenant_repository
 TenantMemberRepository = Annotated[
     BaseTenantMemberRepository, Depends(get_tenant_member_repository)
 ]
+TenantTeamLockRepository = Annotated[
+    BaseTenantTeamLockRepository, Depends(get_tenant_team_lock_repository)
+]
 AuthorizationServiceDep = Annotated[
     BaseAuthorizationService, Depends(get_authorization_service)
 ]
@@ -343,6 +358,9 @@ def get_team_service(
     condition_repository: ConditionRepository,
     user_role_repository: UserRoleRepository,
     group_role_repository: GroupRoleRepository,
+    user_repository: UserRepository,
+    member_repository: TenantMemberRepository,
+    lock_repository: TenantTeamLockRepository,
     audit_repository: AuditLogRepository,
     snapshot_builder: SnapshotBuilderDep,
     bundle_builder: BundleBuilderDep,
@@ -358,6 +376,9 @@ def get_team_service(
         condition_repo=condition_repository,
         user_role_repo=user_role_repository,
         group_role_repo=group_role_repository,
+        user_repo=user_repository,
+        member_repo=member_repository,
+        lock_repo=lock_repository,
         snapshot_builder=snapshot_builder,
         bundle_builder=bundle_builder,
         validator=validator,
