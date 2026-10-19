@@ -8,6 +8,7 @@ import pytest
 from osiki_sdk._decision.models import Snapshot, UserBundle
 from osiki_sdk.client import EngineUnavailable
 from osiki_sdk.config import OsikiConfig
+from osiki_sdk.logs import DecisionLogBatcher
 from osiki_sdk.osiki import Osiki
 from osiki_sdk.store import PolicyStore
 
@@ -64,6 +65,7 @@ class FakeClient:
         self.snapshot_delay = False
         self.bundle_gate: asyncio.Event | None = None
         self.report_gate: asyncio.Event | None = None
+        self.logs_gate: asyncio.Event | None = None
         self.closed = False
 
     def _call(self, name: str, *args: Any) -> None:
@@ -102,6 +104,11 @@ class FakeClient:
         self._call("report_endpoints", endpoints)
         if self.report_gate is not None:
             await self.report_gate.wait()
+
+    async def send_access_logs(self, entries: list[dict[str, Any]]) -> None:
+        if self.logs_gate is not None:
+            await self.logs_gate.wait()
+        self._call("send_access_logs", list(entries))
 
     async def upsert_user(self, user_id: str, **kwargs: Any) -> None:
         self._call("upsert_user", user_id, kwargs)
@@ -148,11 +155,18 @@ def store(fake: FakeClient, clock: ManualClock) -> PolicyStore:
     return PolicyStore(fake, CONFIG, clock=clock)  # type: ignore[arg-type]
 
 
-def make_osiki(fake: FakeClient, clock: ManualClock, **kwargs: Any) -> Osiki:
-    """An Osiki wired to ``fake``: swaps the client and store (the test seam)."""
-    osiki = Osiki(CONFIG, user_id=lambda request: None, **kwargs)
+def make_osiki(
+    fake: FakeClient,
+    clock: ManualClock,
+    config: OsikiConfig = CONFIG,
+    user_id: Any = lambda request: None,
+    **kwargs: Any,
+) -> Osiki:
+    """An Osiki wired to ``fake``: swaps client, store and batcher (the test seam)."""
+    osiki = Osiki(config, user_id=user_id, **kwargs)
     osiki._client = fake  # type: ignore[assignment]
-    osiki._store = PolicyStore(fake, CONFIG, clock=clock)  # type: ignore[arg-type]
+    osiki._store = PolicyStore(fake, config, clock=clock)  # type: ignore[arg-type]
+    osiki._batcher = DecisionLogBatcher(fake, config)  # type: ignore[arg-type]
     return osiki
 
 

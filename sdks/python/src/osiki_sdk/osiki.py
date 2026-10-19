@@ -20,6 +20,7 @@ from osiki_sdk._decision.models import (
 )
 from osiki_sdk.client import EngineClient
 from osiki_sdk.config import OsikiConfig
+from osiki_sdk.logs import DecisionLogBatcher
 from osiki_sdk.records import to_record
 from osiki_sdk.routes import list_routes
 from osiki_sdk.store import PolicyStore
@@ -106,6 +107,7 @@ class Osiki:
         self.tenant_resolver = tenant
         self._client = EngineClient(config, transport=transport)
         self._store = PolicyStore(self._client, config)
+        self._batcher = DecisionLogBatcher(self._client, config)
         self._loaders: dict[str, LoaderFn] = {}
         self._lifecycle_lock = asyncio.Lock()
         self._discovered: weakref.WeakSet[Starlette] = weakref.WeakSet()
@@ -114,6 +116,8 @@ class Osiki:
             weakref.WeakKeyDictionary()
         )
         self._poller: asyncio.Task[None] | None = None
+        # Background discovery tasks, strongly referenced until done.
+        self._tasks: set[asyncio.Task[None]] = set()
         self._closed = False
         self.started = False
         self.users = _Users(self)
@@ -153,22 +157,43 @@ class Osiki:
             self._poller = asyncio.create_task(
                 self._store.run_poller(), name="osiki-poller"
             )
+            self._batcher.start()
             self.started = True
 
     async def aclose(self) -> None:
-        """Stop polling and close the engine client; safe to call twice."""
+        """Stop polling and discovery, flush decision logs and close the client.
+
+        Safe to call twice.
+        """
         async with self._lifecycle_lock:
             if self._closed:
                 return
             self._closed = True
             self.started = False
             poller, self._poller = self._poller, None
-            if poller is not None:
-                poller.cancel()
-                # wait() neither re-raises the poller's cancellation nor
+            pending = {task for task in (poller, *self._tasks) if task is not None}
+            for task in pending:
+                task.cancel()
+            if pending:
+                # wait() neither re-raises the tasks' cancellation nor
                 # swallows one aimed at this task.
-                await asyncio.wait({poller})
+                await asyncio.wait(pending)
+            await self._batcher.stop()
             await self._client.aclose()
+
+    def discover_in_background(self, app: Starlette) -> None:
+        """Schedule ``discover(app)`` without waiting for it (the guard's path)."""
+        if app in self._discovered or app in self._discovering:
+            return
+        task = asyncio.create_task(self._discover_logged(app), name="osiki-discover")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _discover_logged(self, app: Starlette) -> None:
+        try:
+            await self.discover(app)
+        except Exception as exc:
+            logger.warning("osiki endpoint discovery failed: %r", exc)
 
     async def discover(self, app: Starlette) -> None:
         """Report the app's routes to the engine once.
