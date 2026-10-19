@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Query, status
 
 from osiki.api.dependencies import (
+    ConstraintValidatorDep,
     GroupRepository,
     GroupRoleRepository,
     TenantRepository,
+    UserGroupRepository,
 )
-from osiki.api.exceptions import ConflictError, NotFoundError
+from osiki.api.exceptions import ConflictError, NotFoundError, constraint_violation
 from osiki.models.group import Group
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.group import GroupCreate, GroupRead, GroupUpdate
@@ -138,6 +140,8 @@ async def assign_role_to_group(
     group_repo: GroupRepository,
     group_role_repo: GroupRoleRepository,
     tenant_repo: TenantRepository,
+    user_group_repo: UserGroupRepository,
+    validator: ConstraintValidatorDep,
 ) -> GroupRoleAssignmentResponse:
     group = await group_repo.get_by_id(group_id)
     if not group:
@@ -155,6 +159,14 @@ async def assign_role_to_group(
     from osiki.schemas.scope import ScopeSchema
 
     scope = Scope(**(data.scope.model_dump() if data.scope else {}))
+    # Every active member would gain the role: the first violation blocks.
+    for member in await user_group_repo.get_group_members(group_id):
+        result = await validator.validate(
+            str(member.user_id), data.role_id, scope.to_dict()
+        )
+        if not result.valid:
+            raise constraint_violation(result.constraint_name, result.reason)
+
     group_role = GroupRole(
         group_id=PydanticObjectId(group_id),
         role_id=PydanticObjectId(data.role_id),

@@ -1,5 +1,6 @@
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
+from httpx import Response
 
 from tests.e2e.conftest import API
 
@@ -340,3 +341,159 @@ def test_remove_user_from_group_not_found(client: TestClient) -> None:
     fake_group = str(PydanticObjectId())
     response = client.delete(f"{API}/users/{fake_user}/groups/{fake_group}")
     assert response.status_code == 404
+
+
+# --- Constraint enforcement ---
+
+ENV_HEADER = "X-Osiki-Environment"
+
+
+def _constraint(client: TestClient, body: dict, **headers: str) -> None:
+    resp = client.post(f"{API}/constraints", json=body, headers=headers)
+    assert resp.status_code == 201, resp.text
+
+
+def _make_user(client: TestClient, external_id: str, **headers: str) -> str:
+    resp = client.post(
+        f"{API}/users", json={"external_id": external_id}, headers=headers
+    )
+    return str(resp.json()["id"])
+
+
+def _assign(
+    client: TestClient, user_id: str, role_id: str, scope: dict | None = None, **h: str
+) -> Response:
+    body: dict = {"role_id": role_id, "assigned_by": "admin"}
+    if scope:
+        body["scope"] = scope
+    return client.post(f"{API}/users/{user_id}/roles", json=body, headers=h)
+
+
+def test_mutual_exclusion_blocks_direct_assignment(client: TestClient) -> None:
+    initiator, approver = str(PydanticObjectId()), str(PydanticObjectId())
+    _constraint(
+        client,
+        {
+            "name": "no-dual-signing",
+            "type": "mutual_exclusion",
+            "config": {"role_ids": [initiator, approver]},
+        },
+    )
+    user_id = _make_user(client, "ext-1")
+    assert _assign(client, user_id, initiator).status_code == 201
+
+    response = _assign(client, user_id, approver)
+    assert response.status_code == 409
+    assert response.json()["details"] == {
+        "constraint": "no-dual-signing",
+        "reason": "User already has a mutually exclusive role",
+    }
+    # The violating assignment was not written.
+    assert client.delete(f"{API}/users/{user_id}/roles/{approver}").status_code == 404
+
+
+def test_violation_leaves_no_tenant_membership(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    initiator, approver = str(PydanticObjectId()), str(PydanticObjectId())
+    _constraint(
+        client,
+        {
+            "name": "x",
+            "type": "mutual_exclusion",
+            "config": {"role_ids": [initiator, approver]},
+        },
+    )
+    user_id = _make_user(client, "ext-1")
+    assert _assign(client, user_id, initiator).status_code == 201
+
+    response = _assign(client, user_id, approver, {"tenant_id": "t"})
+    assert response.status_code == 409
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == []
+
+
+def test_cardinality_per_tenant_counts_only_this_env(client: TestClient) -> None:
+    role = str(PydanticObjectId())
+    body = {
+        "name": "one-admin",
+        "type": "cardinality",
+        "config": {"role_id": role, "max_assignments": 1, "scope_level": "per_tenant"},
+    }
+    for env in ("a", "b"):
+        _constraint(client, body, **{ENV_HEADER: env})
+        client.put(f"{API}/tenants/t", json={"name": "T"}, headers={ENV_HEADER: env})
+    scope = {"tenant_id": "t"}
+
+    u1 = _make_user(client, "u1", **{ENV_HEADER: "a"})
+    u2 = _make_user(client, "u2", **{ENV_HEADER: "a"})
+    u3 = _make_user(client, "u3", **{ENV_HEADER: "b"})
+
+    assert _assign(client, u1, role, scope, **{ENV_HEADER: "a"}).status_code == 201
+    # Env a is full for tenant t; env b has its own count.
+    blocked = _assign(client, u2, role, scope, **{ENV_HEADER: "a"})
+    assert blocked.status_code == 409
+    assert blocked.json()["details"]["constraint"] == "one-admin"
+    assert _assign(client, u3, role, scope, **{ENV_HEADER: "b"}).status_code == 201
+
+
+def test_prerequisite_blocks_assignment(client: TestClient) -> None:
+    editor, viewer = str(PydanticObjectId()), str(PydanticObjectId())
+    _constraint(
+        client,
+        {
+            "name": "editor-requires-viewer",
+            "type": "prerequisite",
+            "config": {"role_id": editor, "requires_role_id": viewer},
+        },
+    )
+    user_id = _make_user(client, "ext-1")
+
+    response = _assign(client, user_id, editor)
+    assert response.status_code == 409
+    assert response.json()["details"]["reason"] == "Prerequisite role not assigned"
+
+    assert _assign(client, user_id, viewer).status_code == 201
+    assert _assign(client, user_id, editor).status_code == 201
+
+
+def test_mutual_exclusion_blocks_joining_group(client: TestClient) -> None:
+    initiator, approver = str(PydanticObjectId()), str(PydanticObjectId())
+    _constraint(
+        client,
+        {
+            "name": "no-dual-signing",
+            "type": "mutual_exclusion",
+            "config": {"role_ids": [initiator, approver]},
+        },
+    )
+    group_id = client.post(f"{API}/groups", json={"name": "approvers"}).json()["id"]
+    assert (
+        client.post(
+            f"{API}/groups/{group_id}/roles",
+            json={"role_id": approver, "assigned_by": "admin"},
+        ).status_code
+        == 201
+    )
+    user_id = _make_user(client, "ext-1")
+    assert _assign(client, user_id, initiator).status_code == 201
+
+    response = client.post(
+        f"{API}/users/{user_id}/groups",
+        json={"group_id": group_id, "added_by": "admin"},
+    )
+    assert response.status_code == 409
+    assert response.json()["details"]["constraint"] == "no-dual-signing"
+    assert client.delete(f"{API}/users/{user_id}/groups/{group_id}").status_code == 404
+
+
+def test_joining_group_without_violation_succeeds(client: TestClient) -> None:
+    group_id = client.post(f"{API}/groups", json={"name": "g"}).json()["id"]
+    client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={"role_id": str(PydanticObjectId()), "assigned_by": "admin"},
+    )
+    user_id = _make_user(client, "ext-1")
+    response = client.post(
+        f"{API}/users/{user_id}/groups",
+        json={"group_id": group_id, "added_by": "admin"},
+    )
+    assert response.status_code == 201

@@ -250,3 +250,53 @@ def test_revoke_role_from_group_not_found(client: TestClient) -> None:
     fake_role = str(PydanticObjectId())
     response = client.delete(f"{API}/groups/{fake_group}/roles/{fake_role}")
     assert response.status_code == 404
+
+
+def test_mutual_exclusion_blocks_group_role_assignment(client: TestClient) -> None:
+    initiator, approver = str(PydanticObjectId()), str(PydanticObjectId())
+    client.post(
+        f"{API}/constraints",
+        json={
+            "name": "no-dual-signing",
+            "type": "mutual_exclusion",
+            "config": {"role_ids": [initiator, approver]},
+        },
+    )
+    group_id = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+    user_id = client.post(f"{API}/users", json={"external_id": "ext-1"}).json()["id"]
+    client.post(
+        f"{API}/users/{user_id}/groups",
+        json={"group_id": group_id, "added_by": "admin"},
+    )
+    client.post(
+        f"{API}/users/{user_id}/roles",
+        json={"role_id": initiator, "assigned_by": "admin"},
+    )
+
+    response = client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={"role_id": approver, "assigned_by": "admin"},
+    )
+    assert response.status_code == 409
+    assert response.json()["details"]["constraint"] == "no-dual-signing"
+    assert client.delete(f"{API}/groups/{group_id}/roles/{approver}").status_code == 404
+
+
+def test_group_role_assignment_without_members_passes_constraints(
+    client: TestClient,
+) -> None:
+    role = str(PydanticObjectId())
+    client.post(
+        f"{API}/constraints",
+        json={
+            "name": "max",
+            "type": "cardinality",
+            "config": {"role_id": role, "max_assignments": 1, "scope_level": "global"},
+        },
+    )
+    group_id = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+    response = client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={"role_id": role, "assigned_by": "admin"},
+    )
+    assert response.status_code == 201

@@ -2,13 +2,15 @@ from fastapi import APIRouter, Query, status
 
 from osiki.api.dependencies import (
     BundleBuilderDep,
+    ConstraintValidatorDep,
+    GroupRoleRepository,
     TenantMemberRepository,
     TenantRepository,
     UserGroupRepository,
     UserRepository,
     UserRoleRepository,
 )
-from osiki.api.exceptions import ConflictError, NotFoundError
+from osiki.api.exceptions import ConflictError, NotFoundError, constraint_violation
 from osiki.decision.models import UserBundle
 from osiki.models.user import User
 from osiki.schemas.base import PaginatedResponse
@@ -147,6 +149,7 @@ async def assign_role_to_user(
     user_role_repo: UserRoleRepository,
     tenant_repo: TenantRepository,
     member_repo: TenantMemberRepository,
+    validator: ConstraintValidatorDep,
 ) -> UserRoleAssignmentResponse:
     user = await user_repo.get_by_id(user_id)
     if not user:
@@ -163,6 +166,10 @@ async def assign_role_to_user(
     from osiki.schemas.scope import ScopeSchema
 
     scope = Scope(**(data.scope.model_dump() if data.scope else {}))
+    result = await validator.validate(user_id, data.role_id, scope.to_dict())
+    if not result.valid:
+        raise constraint_violation(result.constraint_name, result.reason)
+
     user_role = UserRole(
         user_id=PydanticObjectId(user_id),
         role_id=PydanticObjectId(data.role_id),
@@ -213,10 +220,20 @@ async def add_user_to_group(
     data: UserGroupRequest,
     user_repo: UserRepository,
     user_group_repo: UserGroupRepository,
+    group_role_repo: GroupRoleRepository,
+    validator: ConstraintValidatorDep,
 ) -> UserGroupResponse:
     user = await user_repo.get_by_id(user_id)
     if not user:
         raise NotFoundError("User not found", details={"user_id": user_id})
+
+    # Joining grants every active role of the group: validate each one first.
+    for group_role in await group_role_repo.get_group_roles(data.group_id):
+        result = await validator.validate(
+            user_id, str(group_role.role_id), group_role.scope.to_dict()
+        )
+        if not result.valid:
+            raise constraint_violation(result.constraint_name, result.reason)
 
     from beanie import PydanticObjectId
 
