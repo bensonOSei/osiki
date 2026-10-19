@@ -158,13 +158,29 @@ async def init_db(mongo_client: AsyncMongoMockClient) -> None:
     # mongomock's create_indexes() drops partialFilterExpression, which would turn
     # the (environment_id, email) index into a plain unique index that rejects
     # several users without an email. Recreate it the way MongoDB builds it.
-    users = mongo_client.osiki_test[User.get_settings().name]
-    await users.drop_index("environment_id_1_email_1")
-    await users.create_index(
-        [("environment_id", 1), ("email", 1)],
-        unique=True,
-        partialFilterExpression={"email": {"$type": "string"}},
-    )
+    # The assignment unique indexes are partial on is_active the same way.
+    partial_indexes = [
+        (User, ["environment_id", "email"], {"email": {"$type": "string"}}),
+        (
+            UserRole,
+            ["environment_id", "user_id", "role_id", "scope.tenant_id"],
+            {"is_active": True},
+        ),
+        (
+            GroupRole,
+            ["environment_id", "group_id", "role_id", "scope.tenant_id"],
+            {"is_active": True},
+        ),
+        (UserGroup, ["environment_id", "user_id", "group_id"], {"is_active": True}),
+    ]
+    for model, fields, partial in partial_indexes:
+        collection = mongo_client.osiki_test[model.get_settings().name]
+        await collection.drop_index("_".join(f"{field}_1" for field in fields))
+        await collection.create_index(
+            [(field, 1) for field in fields],
+            unique=True,
+            partialFilterExpression=partial,
+        )
 
 
 @pytest.fixture(autouse=True)

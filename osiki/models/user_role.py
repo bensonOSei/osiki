@@ -25,10 +25,10 @@ class UserRole(Document, EnvironmentMixin, TimestampMixin, SoftDeleteMixin):
                     ("user_id", 1),
                     ("role_id", 1),
                     ("scope.tenant_id", 1),
-                    ("is_active", 1),
                 ],
                 unique=True,
-                sparse=True,
+                # Only active rows are unique: revoked rows may pile up.
+                partialFilterExpression={"is_active": True},
             ),
             IndexModel([("environment_id", 1), ("user_id", 1), ("is_active", 1)]),
             IndexModel([("environment_id", 1), ("role_id", 1), ("is_active", 1)]),
