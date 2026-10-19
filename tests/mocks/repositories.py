@@ -595,6 +595,11 @@ class MockAccessLogRepository(_EnvironmentBound[AccessLog], BaseAccessLogReposit
             access_log.id = PydanticObjectId()
         return self._store(str(access_log.id), access_log)
 
+    async def create_many(self, logs: list[AccessLog]) -> int:
+        for log in logs:
+            await self.create(log)
+        return len(logs)
+
     async def get_by_user(
         self, user_id: str, skip: int = 0, limit: int = 100
     ) -> list[AccessLog]:

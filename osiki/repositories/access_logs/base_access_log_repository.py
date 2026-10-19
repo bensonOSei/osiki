@@ -8,6 +8,9 @@ class BaseAccessLogRepository(ABC):
     async def create(self, access_log: AccessLog) -> AccessLog: ...
 
     @abstractmethod
+    async def create_many(self, logs: list[AccessLog]) -> int: ...
+
+    @abstractmethod
     async def get_by_user(
         self, user_id: str, skip: int = 0, limit: int = 100
     ) -> list[AccessLog]: ...

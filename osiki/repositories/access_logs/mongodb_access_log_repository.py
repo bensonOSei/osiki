@@ -23,6 +23,12 @@ class MongoDBAccessLogRepository(BaseAccessLogRepository):
         )
         return access_log
 
+    async def create_many(self, logs: list[AccessLog]) -> int:
+        for log in logs:
+            log.environment_id = self.environment_id
+        await AccessLog.insert_many(logs)
+        return len(logs)
+
     async def get_by_user(
         self, user_id: str, skip: int = 0, limit: int = 100
     ) -> list[AccessLog]:

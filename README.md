@@ -10,6 +10,8 @@ You send a request like "can user X perform action Y on resource Z?" and Osiki f
 
 **Core authorization check:**
 
+`user_id` is your application's own (external) user id. `record` is optional: send the record being accessed when a grant carries a condition.
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/authorization/check \
   -H "Content-Type: application/json" \
@@ -17,7 +19,8 @@ curl -X POST http://localhost:8000/api/v1/authorization/check \
     "user_id": "abc-123",
     "resource": "invoices",
     "action": "write",
-    "scope": { "tenant_id": "acme-corp" }
+    "scope": { "tenant_id": "acme-corp" },
+    "record": { "team_id": "t-7" }
   }'
 ```
 
@@ -26,11 +29,109 @@ curl -X POST http://localhost:8000/api/v1/authorization/check \
   "allowed": true,
   "matched_permission": "invoices:write",
   "matched_via": "direct",
-  "condition": null,
+  "condition": "own_team",
   "denial_reason": null,
   "cache_hit": false
 }
 ```
+
+`condition` is the key of the named condition that allowed the request, or `null` for an unconditional grant.
+
+## Environments
+
+Every request is scoped to an environment. Send it in the `X-Osiki-Environment` header; when the header is missing the environment is `default`. Environments are fully isolated: users, roles, conditions, tenants and logs in one are invisible to the others. Identifiers are lowercase letters, digits, `-` and `_`.
+
+```bash
+curl http://localhost:8000/api/v1/roles -H "X-Osiki-Environment: staging"
+```
+
+## Tenants and membership
+
+Tenants are identified by your own external id. Upsert one, then add users (by external id) to it. A user who is not a member of a tenant is denied inside that tenant's scope.
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/tenants/acme-corp \
+  -H "Content-Type: application/json" -d '{"name": "Acme Corp"}'
+
+curl -X PUT http://localhost:8000/api/v1/users/by-external/abc-123 \
+  -H "Content-Type: application/json" -d '{"name": "Ama", "attributes": {"team_id": "t-7"}}'
+
+curl -X PUT http://localhost:8000/api/v1/tenants/acme-corp/members/abc-123
+```
+
+Remove a member with `DELETE` on the same path; `GET /tenants/{id}/members` lists them.
+
+## Conditions
+
+A condition is a named rule, written as a JSON expression tree, that a role grant can carry. It is evaluated against the `record` sent with the check, and against the user's attributes. This one allows access when the record belongs to the user's team:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/conditions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "own_team",
+    "name": "Own team",
+    "expression": {
+      "op": "eq",
+      "left": { "ref": "record.team_id" },
+      "right": { "ref": "user.team_id" }
+    }
+  }'
+```
+
+Then grant a permission through that condition when you create the role:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/roles \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "team-member",
+    "grants": [{ "permission_id": "<permission id>", "condition_id": "<condition id>" }]
+  }'
+```
+
+Without a `record`, a conditional grant does not allow. When in doubt, Osiki denies.
+
+## Snapshot, bundle and filter
+
+These endpoints let an SDK decide locally instead of calling `/authorization/check` for every request.
+
+- `GET /snapshot` returns the environment's whole configuration (permissions, roles, conditions, constraints, tenants). It carries an `ETag`; send it back as `If-None-Match` and an unchanged snapshot answers `304 Not Modified`.
+- `GET /snapshot/version` returns just `{"version": n}`, cheap to poll.
+- `GET /users/by-external/{external_id}/bundle` returns one user's attributes, tenants and assignments.
+- `POST /authorization/filter` takes `user_id`, `resource`, `action` and an optional `scope` and returns a list filter: `{"mode": "all"}`, `{"mode": "none"}`, or `{"mode": "filter", "filter": ...}` with a residual expression tree whose leaves carry a `type`. Use it to push the user's access rules into your own database query.
+
+Every decision made locally must match the server's. The fixtures that pin this behaviour, and how an SDK loads them, are described in [conformance/README.md](conformance/README.md).
+
+## Constraints
+
+Constraints are enforced when roles are assigned: directly to a user, to a group, or by adding a user to a group. A violating assignment is rejected with `409 Conflict`, naming the constraint and the reason.
+
+## Access logs
+
+The server records every denial and a sample of successful checks (`ACCESS_LOG_SUCCESS_SAMPLE_RATE`, default `0.1`). Writing happens after the response is sent, so logging never slows or changes a check. SDKs that decide locally report their decisions in batches:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/access-logs/batch \
+  -H "Content-Type: application/json" \
+  -d '{ "entries": [{
+    "timestamp": 1760000000.5, "user_id": "abc-123", "resource": "invoices",
+    "action": "write", "scope": { "tenant_id": "acme-corp" },
+    "allowed": true, "matched_permission": "invoices:write", "latency_ms": 0.2
+  }] }'
+```
+
+Send 1 to 500 entries; the response is `202 {"accepted": n}`. They are stored with `source: "sdk"`.
+
+## Upgrading existing data
+
+If you are upgrading a deployment that already has data, run `scripts/migrate_m1.py` before sending traffic to the new version. It brings existing documents up to the environment-scoped model.
+
+```bash
+poetry run python scripts/migrate_m1.py
+```
+
+It reads `MONGODB_URL` and `MONGODB_DATABASE` from the environment and is safe to run repeatedly.
 
 ## Key concepts
 
@@ -89,7 +190,12 @@ All endpoints live under `/api/v1`. Here's the shape of things:
 | **Groups** | Create, get, update, delete, list. Assign/revoke roles. |
 | **Roles** | Create, get, update, delete, list. |
 | **Permissions** | Create, get, list. |
-| **Authorization** | `POST /authorization/check` — the main event. |
+| **Conditions** | Create, get, update, delete, list. |
+| **Constraints** | Create, get, update, delete, list. |
+| **Tenants** | Upsert, get. Add/remove/list members. |
+| **Authorization** | `POST /authorization/check` — the main event. `POST /authorization/filter` for list filters. |
+| **Snapshot** | `GET /snapshot` (ETag/304), `GET /snapshot/version`, `GET /users/by-external/{id}/bundle`. |
+| **Access logs** | `POST /access-logs/batch` — SDK decision ingest. |
 
 Once the server is running, full interactive docs are at `http://localhost:8000/docs`.
 

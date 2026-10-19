@@ -20,6 +20,9 @@ class AppSettings(BaseSettings):
     cors_allow_headers: list[str] = ["*"]
     cors_allow_credentials: bool = True
 
+    # Access logging: every denial is logged; this fraction of successes is.
+    access_log_success_sample_rate: float = 0.1
+
     # MongoDB
     mongodb_url: str = "mongodb://localhost:27017/osiki"
     mongodb_database: str = "osiki"

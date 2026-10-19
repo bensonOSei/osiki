@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from osiki.api.exceptions import register_exception_handlers
 from osiki.api.middleware import RequestIDMiddleware
 from osiki.api.routes import (
+    access_logs_router,
     authorization_router,
     conditions_router,
     constraints_router,
@@ -65,6 +66,7 @@ app.include_router(constraints_router, prefix=settings.api_prefix)
 app.include_router(tenants_router, prefix=settings.api_prefix)
 app.include_router(authorization_router, prefix=settings.api_prefix)
 app.include_router(snapshot_router, prefix=settings.api_prefix)
+app.include_router(access_logs_router, prefix=settings.api_prefix)
 
 
 @app.get("/")

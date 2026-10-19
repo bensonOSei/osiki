@@ -30,6 +30,7 @@ from osiki.api.exceptions import (
 )
 from osiki.api.middleware import RequestIDMiddleware
 from osiki.api.routes import (
+    access_logs_router,
     authorization_router,
     conditions_router,
     constraints_router,
@@ -152,6 +153,7 @@ def _create_test_app() -> FastAPI:
     test_app.include_router(tenants_router, prefix=settings.api_prefix)
     test_app.include_router(authorization_router, prefix=settings.api_prefix)
     test_app.include_router(snapshot_router, prefix=settings.api_prefix)
+    test_app.include_router(access_logs_router, prefix=settings.api_prefix)
 
     @test_app.get("/_test/authorization-error")
     async def _trigger_authorization_error() -> None:
