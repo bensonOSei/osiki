@@ -46,7 +46,36 @@ def _load(fixture: Path, keys: set[str]) -> dict[str, Any]:
 
 def test_fixtures_exist() -> None:
     assert len(DECISIONS) >= 100
-    assert len(FILTERS) >= 10
+    assert len(FILTERS) >= 25
+
+
+def _leaves(node: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("and", "or"):
+        if key in node:
+            return [leaf for child in node[key] for leaf in _leaves(child)]
+    return [node]
+
+
+def test_filter_fixtures_cover_every_leaf_op_and_type() -> None:
+    leaves = [
+        leaf
+        for fixture in FILTERS
+        if (expected := json.loads(fixture.read_text())["expected"])["filter"]
+        for leaf in _leaves(expected["filter"])
+    ]
+
+    assert all(set(leaf) == {"field", "op", "value", "type"} for leaf in leaves)
+    assert {leaf["op"] for leaf in leaves} == {
+        "eq",
+        "ne",
+        "lt",
+        "lte",
+        "gt",
+        "gte",
+        "in",
+        "nin",
+    }
+    assert {leaf["type"] for leaf in leaves} == {"string", "number", "boolean"}
 
 
 @pytest.mark.parametrize("fixture", DECISIONS, ids=lambda f: f.stem)

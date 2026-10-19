@@ -155,3 +155,21 @@ Residual filter leaves are `{"field", "op", "value", "type"}`. `op` is one of
 `number`, `boolean`). A leaf matches a record only when the field is present,
 non-null, of that type class and satisfies the op. `ne` and `nin` never match
 a missing field.
+
+How residuals are built (each point has a fixture in `filters/`):
+
+- `user` and `tenant` refs are replaced by their values. A missing or `null`
+  one makes that comparison UNKNOWN, which matches no record: after `not` is
+  pushed down, an `or` drops it, an `and` holding it matches nothing, and on
+  its own it gives `none`.
+- A record ref on the right flips the operator: `100 lt record.amount` gives
+  `amount gt 100`.
+- `not` is pushed down to the leaves (De Morgan for `and` / `or`), negating
+  each op: `eq`/`ne`, `lt`/`gte`, `lte`/`gt`. Output trees never contain
+  `not`.
+- `in` gives one `in` leaf per type class present in the list, in order of
+  first appearance, ORed together; `null` elements are dropped.
+- `nin` only comes from `not (x in [...])`. A list of one type class gives one
+  `nin` leaf; a list mixing classes or holding `null` is UNKNOWN. `not (x in
+  [])` holds for every comparable value, so it gives three `nin []` leaves,
+  one per type class (`string`, `number`, `boolean`), ORed together.
