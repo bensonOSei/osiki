@@ -59,6 +59,9 @@ dev = [
     "httpx (>=0.28.1,<0.29.0)",
 ]
 
+[tool.poetry.group.sdk.dependencies]
+osiki-sdk = {path = "sdks/python", develop = true, extras = ["sqlalchemy"]}
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

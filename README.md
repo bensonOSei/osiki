@@ -108,11 +108,17 @@ Without a `record`, a conditional grant does not allow. When in doubt, Osiki den
 These endpoints let an SDK decide locally instead of calling `/authorization/check` for every request.
 
 - `GET /snapshot` returns the environment's authorization configuration: `environment_id`, `version`, the active roles (each with its `parent_id` and its grants as `"resource:action"` strings plus an optional condition key), the conditions (key to rule), and the constraints. It has no separate permission or tenant lists, and no users: a user's tenants and assignments come from the bundle below. It carries an `ETag`; send it back as `If-None-Match` and an unchanged snapshot answers `304 Not Modified`. Responses are `Cache-Control: private` and `Vary: X-Osiki-Environment`.
-- `GET /snapshot/version` returns just `{"version": n}`, cheap to poll.
+- `GET /snapshot/version` returns just `{"version": n, "assignments_version": m}`, cheap to poll.
 - `GET /users/by-external/{external_id}/bundle` returns one user's attributes, tenants and assignments.
 - `POST /authorization/filter` takes `user_id`, `resource`, `action` and an optional `scope` and returns a list filter: `{"mode": "all"}`, `{"mode": "none"}`, or `{"mode": "filter", "filter": ...}` with a residual expression tree whose leaves carry a `type`. Use it to push the user's access rules into your own database query.
 
 Every decision made locally must match the server's. The fixtures that pin this behaviour, and how an SDK loads them, are described in [conformance/README.md](conformance/README.md).
+
+## Python SDK
+
+[`osiki-sdk`](sdks/python/README.md) (import `osiki_sdk`) wraps a FastAPI app in `OsikiGuard`: every route is checked locally against the cached snapshot, and discovered routes are mapped to permissions with `PUT /endpoints/mapping`. It also translates rules into SQLAlchemy and Mongo list filters, syncs users and tenants, and sends decision logs in the background. Start with the dev-environment step in its README (`PUT /settings {"unmapped": "allow"}`), because every environment denies unmapped routes by default.
+
+`tests/e2e/test_sdk_roundtrip.py` runs the SDK in-process against the real engine app (mock repositories): discovery, mapping, a record rule, revocation after one poll, a SQLAlchemy filter and decision-log ingest. Locally, `poetry install` installs the SDK as an editable path dependency (group `sdk`) with its `sqlalchemy` extra; it needs the `sdks/` directory, which a checkout has.
 
 ## Constraints
 
