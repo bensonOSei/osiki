@@ -508,6 +508,8 @@ Plus `test_uncovered_keeps_wanted_order_and_dedupes`.
 
   A tenant that doesn't exist gets 404 on every route.
 
+  Also, outside the team prefix and developer-only (a `tenant_user` actor gets 403): `GET /api/v1/tenants?page&page_size&q=` → `PaginatedResponse[TenantRead]`, plus each tenant's member count. `q` is a case-insensitive prefix match on name or external id. This is for the developer dashboard's list of businesses. Test: `test_list_tenants_developer_only_with_search`.
+
 - [ ] **Step 1: Write failing tests:**
   - the full owner flow (bootstrap, a developer makes `u-owner` the Owner, then as `X-Osiki-Actor: tenant_user:u-owner`):
     1. create Weekend cashier;
