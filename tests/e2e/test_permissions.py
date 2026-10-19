@@ -1,3 +1,4 @@
+import pytest
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
 
@@ -225,3 +226,30 @@ def test_effective_permissions_report_conditions_and_groups(
     assert response.json() == [
         {"permission": "invoices:read", "condition": "own_team", "via": "group"}
     ]
+
+
+# --- Resource and action validation ---
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"resource": "", "action": "read"},
+        {"resource": "docs", "action": ""},
+        {"resource": "docs:x", "action": "read"},
+        {"resource": "docs", "action": "read:all"},
+        {"resource": ":", "action": "read"},
+    ],
+)
+def test_create_permission_rejects_empty_or_colon(
+    client: TestClient, body: dict[str, str]
+) -> None:
+    response = client.post(f"{API}/permissions", json=body)
+    assert response.status_code == 422
+    assert client.get(f"{API}/permissions").json()["items"] == []
+
+
+def test_create_permission_allows_wildcards(client: TestClient) -> None:
+    response = client.post(f"{API}/permissions", json={"resource": "*", "action": "*"})
+    assert response.status_code == 201
+    assert response.json()["permission_string"] == "*:*"

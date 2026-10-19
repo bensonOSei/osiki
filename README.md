@@ -45,6 +45,13 @@ Every request is scoped to an environment. Send it in the `X-Osiki-Environment` 
 curl http://localhost:8000/api/v1/roles -H "X-Osiki-Environment: staging"
 ```
 
+## Identifiers
+
+Two kinds of id appear in the API:
+
+- **External ids**, your own: users and tenants are addressed by them in `POST /authorization/check`, `POST /authorization/filter`, `/tenants/...` (including members) and `/users/by-external/{external_id}` (upsert and bundle).
+- **Internal ids**, the ObjectIds Osiki returns as `id`: `/users/{id}`, `/users/{id}/roles`, `/users/{id}/groups`, `/groups/{id}`, `/groups/{id}/roles` and the role, permission, condition and constraint routes take these. Use `PUT /users/by-external/{external_id}` to get a user's internal `id`.
+
 ## Tenants and membership
 
 Tenants are identified by your own external id. Upsert one, then add users (by external id) to it. A user who is not a member of a tenant is denied inside that tenant's scope.
@@ -100,7 +107,7 @@ Without a `record`, a conditional grant does not allow. When in doubt, Osiki den
 
 These endpoints let an SDK decide locally instead of calling `/authorization/check` for every request.
 
-- `GET /snapshot` returns the environment's whole configuration (permissions, roles, conditions, constraints, tenants). It carries an `ETag`; send it back as `If-None-Match` and an unchanged snapshot answers `304 Not Modified`.
+- `GET /snapshot` returns the environment's authorization configuration: `environment_id`, `version`, the active roles (each with its `parent_id` and its grants as `"resource:action"` strings plus an optional condition key), the conditions (key to rule), and the constraints. It has no separate permission or tenant lists, and no users: a user's tenants and assignments come from the bundle below. It carries an `ETag`; send it back as `If-None-Match` and an unchanged snapshot answers `304 Not Modified`. Responses are `Cache-Control: private` and `Vary: X-Osiki-Environment`.
 - `GET /snapshot/version` returns just `{"version": n}`, cheap to poll.
 - `GET /users/by-external/{external_id}/bundle` returns one user's attributes, tenants and assignments.
 - `POST /authorization/filter` takes `user_id`, `resource`, `action` and an optional `scope` and returns a list filter: `{"mode": "all"}`, `{"mode": "none"}`, or `{"mode": "filter", "filter": ...}` with a residual expression tree whose leaves carry a `type`. Use it to push the user's access rules into your own database query.
@@ -145,12 +152,12 @@ The migration stamps every existing document with the `default` environment, con
 
 ## Key concepts
 
-- **Permissions** are `resource:action` pairs (e.g. `invoices:write`, `reports:read`). Wildcards work too — `invoices:*`, `*:read`, `*:*`.
+- **Permissions** are `resource:action` pairs (e.g. `invoices:write`, `reports:read`). Wildcards work too — `invoices:*`, `*:read`, `*:*`. Neither part may be empty or contain `:`.
 - **Roles** hold collections of permissions and can inherit from parent roles. A role chain like `viewer → editor → admin` means admins get everything editors and viewers have.
 - **Groups** let you assign roles to many users at once. Add a user to the "finance-team" group and they get all roles attached to that group.
-- **Scopes** handle multi-tenancy. A role can be scoped to `{ "tenant_id": "acme-corp", "region": "eu" }` so permissions only apply within that context.
+- **Scopes** handle multi-tenancy. A role can be scoped to `{ "tenant_id": "acme-corp", "region": "eu" }` so permissions only apply within that context. Scope values are strings; custom keys are allowed, but a non-string value is rejected with `422`.
 - **Constraints** enforce business rules — mutual exclusion between roles, cardinality limits, and prerequisite requirements.
-- **Audit logs** track every administrative change. **Access logs** record authorization checks (all denials, sampled successes).
+- **Access logs** record authorization checks (all denials, sampled successes). An audit log model exists, but nothing writes to it yet: administrative changes are not audited in this version.
 
 ## Getting started
 
@@ -196,8 +203,8 @@ All endpoints live under `/api/v1`. Here's the shape of things:
 
 | Resource | Endpoints |
 |---|---|
-| **Users** | Create, get, update, delete, list. Assign/revoke roles. Add/remove from groups. |
-| **Groups** | Create, get, update, delete, list. Assign/revoke roles. |
+| **Users** | Create, get, update, delete, list. Assign/revoke roles (`?tenant_id=` on revoke). Add/remove from groups. Upsert and bundle by external id. |
+| **Groups** | Create, get, update, delete, list. Assign/revoke roles (`?tenant_id=` on revoke). |
 | **Roles** | Create, get, update, delete, list. |
 | **Permissions** | Create, get, list. |
 | **Conditions** | Create, get, update, delete, list. |

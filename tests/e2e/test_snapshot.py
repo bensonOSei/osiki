@@ -140,3 +140,14 @@ def test_snapshot_env_isolated(client: TestClient) -> None:
     assert in_b["environment_id"] == "b"
     assert len(in_a["roles"]) == 1
     assert in_b["roles"] == []
+
+
+def test_snapshot_is_private_and_varies_by_environment(client: TestClient) -> None:
+    response = client.get(f"{API}/snapshot")
+    etag = response.headers["ETag"]
+    cached = client.get(f"{API}/snapshot", headers={"If-None-Match": etag})
+
+    assert (response.status_code, cached.status_code) == (200, 304)
+    for result in (response, cached):
+        assert result.headers["Vary"] == "X-Osiki-Environment"
+        assert result.headers["Cache-Control"] == "private"

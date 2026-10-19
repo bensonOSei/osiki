@@ -1,11 +1,15 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+# One segment of "resource:action": non-empty and colon-free, so the string
+# splits back unambiguously. "*" (wildcard) is allowed.
+PermissionPart = Annotated[str, Field(min_length=1, pattern=r"^[^:]+$")]
 
 
 class PermissionCreate(BaseModel):
-    resource: str
-    action: str
+    resource: PermissionPart
+    action: PermissionPart
     description: str | None = None
     metadata: dict[str, Any] | None = None
 

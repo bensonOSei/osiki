@@ -1,3 +1,4 @@
+import pytest
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -605,3 +606,29 @@ def test_revoke_without_tenant_takes_the_project_wide_one(client: TestClient) ->
     assert _reads_docs(client, "a")
     assert not _reads_docs(client, "b")
     assert client.delete(url).status_code == 404
+
+
+# --- Scope values are strings ---
+
+
+def test_assign_rejects_non_string_scope_extra(client: TestClient) -> None:
+    user_id = _make_user(client, "ext-1")
+    role_id = str(PydanticObjectId())
+
+    rejected = _assign(client, user_id, role_id, {"floor": 3})
+    assert rejected.status_code == 422
+    assert client.delete(f"{API}/users/{user_id}/roles/{role_id}").status_code == 404
+
+    accepted = _assign(client, user_id, role_id, {"floor": "3"})
+    assert accepted.status_code == 201
+    assert accepted.json()["scope"]["floor"] == "3"
+
+
+@pytest.mark.parametrize("scope", [{"floor": 3}, {"floor": ["a"]}, {"tenant_id": 1}])
+def test_check_rejects_non_string_scope(client: TestClient, scope: dict) -> None:
+    _make_user(client, "ext-1")
+    response = client.post(
+        f"{API}/authorization/check",
+        json={"user_id": "ext-1", "resource": "docs", "action": "read", "scope": scope},
+    )
+    assert response.status_code == 422
