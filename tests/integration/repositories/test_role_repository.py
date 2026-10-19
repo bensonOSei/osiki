@@ -390,3 +390,25 @@ async def test_project_role_writes_still_bump_config_version() -> None:
 
     assert await state.get_config_version() == config + 3
     assert await state.get_assignments_version() == assignments
+
+
+async def test_add_and_remove_permission_bump_by_role_kind() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    pid = str(PydanticObjectId())
+    tenant_role = await repo.create(Role(name="perm-tenant", tenant_id="acme"))
+    project_role = await repo.create(Role(name="perm-project"))
+
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+    await repo.add_permission(str(tenant_role.id), pid)
+    await repo.remove_permission(str(tenant_role.id), pid)
+    assert await state.get_config_version() == config
+    assert await state.get_assignments_version() == assignments + 2
+
+    await repo.add_permission(str(project_role.id), pid)
+    await repo.remove_permission(str(project_role.id), pid)
+    assert await state.get_config_version() == config + 2
+    assert await state.get_assignments_version() == assignments + 2

@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from beanie import PydanticObjectId
+from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import DuplicateKeyError
 
 from osiki.api.actor import Actor
@@ -132,7 +133,8 @@ class TeamService:
         for template in await self._role_repo.list_templates():
             permissions = await self._permissions_of(template)
             if all(
-                p is not None and (p.assignable or is_builtin(p)) for p in permissions
+                p is not None and (is_builtin(p) or (p.is_active and p.assignable))
+                for p in permissions
             ):
                 offered.append(template)
         return offered
@@ -173,15 +175,25 @@ class TeamService:
             for role in roles
         ]
 
-    async def _holders(self, role_id: str) -> int:
-        """Active assignments of the role in this tenant, direct and via group."""
-        direct = await self._user_role_repo.get_by_tenant(self._tenant_id, role_id)
+    async def _holders(
+        self, role_id: str, session: AsyncClientSession | None = None
+    ) -> int:
+        """Live assignments of the role in this tenant, direct and via group.
+
+        Expired assignments (``expires_at`` in the past) do not count.
+        """
+        now = time.time()
+        direct = await self._user_role_repo.get_by_tenant(
+            self._tenant_id, role_id, session=session
+        )
         grouped = [
             gr
             for gr in await self._group_role_repo.get_groups_with_role(role_id)
             if gr.scope.tenant_id == self._tenant_id
         ]
-        return len(direct) + len(grouped)
+        return sum(
+            1 for a in [*direct, *grouped] if a.expires_at is None or a.expires_at > now
+        )
 
     # -- writes --------------------------------------------------------------
 
@@ -226,6 +238,8 @@ class TeamService:
         held = await self._held_grants()
         role = await self._own_role(role_id)
         before = _audit_state(role.name, (await self._render([role]))[0].grants)
+        if grants is None and (name is None or name == role.name):
+            return (await self._render([role]))[0]
         new_grants: list[Grant] | None = None
         if grants is not None:
             entries, unique = await self._check_grants(grants)
@@ -259,11 +273,15 @@ class TeamService:
     async def delete_role(self, role_id: str) -> None:
         await self.require_manager()
         role = await self._own_role(role_id)
-        if await self._holders(role_id) > 0:
-            raise RoleInUse(role_id)
         before = _audit_state(role.name, (await self._render([role]))[0].grants)
         async with self._uow.transaction() as session:
-            await self._role_repo.deactivate(role_id, session=session)
+            if await self._holders(role_id, session) > 0:
+                raise RoleInUse(role_id)
+            # Free the name so the tenant can reuse it (the unique name index
+            # also covers inactive roles).
+            role.name = f"{role.name} #deleted-{role_id}"
+            role.is_active = False
+            await self._role_repo.update(role, session=session)
             await self._audit.record(
                 self._actor,
                 "role.delete",
@@ -285,7 +303,8 @@ class TeamService:
         )
         if role is None or role.tenant_id != self._tenant_id or not role.is_active:
             raise NotFoundError("Role not found", details={"role_id": role_id})
-        return role
+        # A copy: a refused write must not leak into the stored document.
+        return role.model_copy(deep=True)
 
     async def _check_grants(
         self, grants: list[GrantRef]

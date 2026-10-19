@@ -160,7 +160,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
                 condition_id=condition_id,
             )
         # Bump even on a no-op: over-bumping costs one rebuild, never staleness.
-        await self._state.bump_config_version()
+        await self._bump(role, None)
         return True
 
     async def remove_permission(
@@ -183,7 +183,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
                 permission_id=permission_id,
                 condition_id=condition_id,
             )
-        await self._state.bump_config_version()
+        await self._bump(role, None)
         return True
 
     async def is_condition_in_use(self, condition_id: str) -> bool:

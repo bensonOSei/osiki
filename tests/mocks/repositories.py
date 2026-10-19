@@ -484,7 +484,7 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         grant = _grant(permission_id, condition_id)
         if grant not in role.grants:
             role.grants.append(grant)
-        await self._bump()
+        await self._bump_for(role)
         return True
 
     async def remove_permission(
@@ -496,7 +496,7 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         grant = _grant(permission_id, condition_id)
         if grant in role.grants:
             role.grants.remove(grant)
-        await self._bump()
+        await self._bump_for(role)
         return True
 
     async def is_condition_in_use(self, condition_id: str) -> bool:

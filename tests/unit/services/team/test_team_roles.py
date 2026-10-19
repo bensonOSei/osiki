@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 from beanie import PydanticObjectId
+from pymongo.errors import DuplicateKeyError
 
 from osiki.api.actor import Actor
 from osiki.api.exceptions import (
@@ -599,12 +600,20 @@ async def test_same_name_in_the_tenant_is_a_conflict(env: Env) -> None:
     assert exc.value.details == {"name": "Cashier"}
 
 
-async def test_name_of_a_deleted_role_stays_taken(env: Env) -> None:
+async def test_name_of_a_deleted_role_can_be_reused(env: Env) -> None:
     role = await env.service().create_role("Cashier", [], None)
     await env.service().delete_role(role.id)
 
-    with pytest.raises(ConflictError):
-        await env.service().create_role("Cashier", [], None)
+    again = await env.service().create_role("Cashier", [], None)
+
+    assert again.id != role.id
+    stored = await env.roles.get_by_id(role.id)
+    assert stored is not None
+    assert (stored.is_active, stored.name) == (False, f"Cashier #deleted-{role.id}")
+    logs = await env.audit_repo.list(TENANT, 0, 10)
+    delete = next(log for log in logs if log.action == "role.delete")
+    assert delete.changes.before is not None
+    assert delete.changes.before["name"] == "Cashier"
 
 
 async def test_rename_to_a_taken_name_is_a_conflict(env: Env) -> None:
@@ -619,13 +628,38 @@ async def test_rename_to_a_taken_name_is_a_conflict(env: Env) -> None:
     assert stored.name == "Waiter"
 
 
-async def test_rename_to_a_deleted_roles_name_is_a_conflict(env: Env) -> None:
+async def test_rename_to_a_deleted_roles_name_succeeds(env: Env) -> None:
     gone = await env.service().create_role("Gone", [], None)
     await env.service().delete_role(gone.id)
     other = await env.service().create_role("Waiter", [], None)
 
+    renamed = await env.service().update_role(other.id, "Gone", None)
+
+    assert renamed.name == "Gone"
+
+
+class _RacingRoles(MockRoleRepository):
+    """Passes the name check, then loses the race on the unique index."""
+
+    async def create(self, role, *, session=None):  # type: ignore[no-untyped-def]
+        raise DuplicateKeyError("E11000")
+
+    async def update(self, role, *, session=None):  # type: ignore[no-untyped-def]
+        raise DuplicateKeyError("E11000")
+
+
+async def test_losing_a_name_race_is_a_conflict(env: Env) -> None:
+    existing = await env.service().create_role("Waiter", [], None)
+    racing = _RacingRoles("default", env.state)
+    racing._data = env.roles._data
+    env.roles = racing
+
     with pytest.raises(ConflictError):
-        await env.service().update_role(other.id, "Gone", None)
+        await env.service().create_role("Cashier", [], None)
+    with pytest.raises(ConflictError):
+        await env.service().update_role(existing.id, "Till", None)
+    stored = await env.roles.get_by_id(existing.id)
+    assert stored is not None and stored.name == "Waiter"
 
 
 async def test_rejected_update_leaves_the_stored_role_untouched(env: Env) -> None:
@@ -914,6 +948,78 @@ async def test_unmarked_permission_existing_role_keeps_working_but_edit_must_dro
     await env.service().update_role(role.id, "Till", None)
     updated = await env.service().update_role(role.id, None, [ref(keep)])
     assert updated.grants == [entry("invoices:write")]
+
+
+async def test_expired_assignment_does_not_block_delete_or_count(env: Env) -> None:
+    role = await env.service().create_role("Cashier", [], None)
+    user = await env.users.create(make_user(external_id="u1"))
+    group = await env.groups.create(make_group("staff"))
+    assert user.id is not None and group.id is not None
+    rid = PydanticObjectId(role.id)
+    scope = Scope(tenant_id=TENANT)
+    direct = await env.user_roles.create(make_user_role(user.id, rid, scope))
+    grouped = await env.group_roles.create(make_group_role(group.id, rid, scope))
+    direct.expires_at = time.time() - 5
+    grouped.expires_at = time.time() - 5
+
+    (listed,) = await env.service().list_roles()
+    assert listed.holders == 0
+    await env.service().delete_role(role.id)
+
+
+async def test_unexpired_assignment_with_future_expiry_still_blocks_delete(
+    env: Env,
+) -> None:
+    role = await env.service().create_role("Cashier", [], None)
+    user = await env.users.create(make_user(external_id="u1"))
+    assert user.id is not None
+    await env.user_roles.create(
+        make_user_role(
+            user.id,
+            PydanticObjectId(role.id),
+            Scope(tenant_id=TENANT),
+            expires_at=time.time() + 3600,
+        )
+    )
+
+    with pytest.raises(RoleInUse):
+        await env.service().delete_role(role.id)
+
+
+async def test_template_with_inactive_assignable_permission_is_not_offered(
+    env: Env,
+) -> None:
+    dead = await env.permission("old", "read", assignable=True, active=False)
+    await env.template("Dead", [dead])
+
+    assert await env.service().list_roles() == []
+
+
+async def test_update_that_changes_nothing_skips_write_bump_and_audit(
+    env: Env,
+) -> None:
+    read = await env.permission("invoices", "read")
+    role = await env.service().create_role("Cashier", [ref(read)], None)
+    version = await env.state.get_assignments_version()
+    logs = await env.audit_repo.count(None)
+
+    same = await env.service().update_role(role.id, None, None)
+    renamed_to_itself = await env.service().update_role(role.id, "Cashier", None)
+
+    assert same == renamed_to_itself == role
+    assert await env.state.get_assignments_version() == version
+    assert await env.audit_repo.count(None) == logs
+
+
+async def test_failed_rename_does_not_touch_the_stored_role(env: Env) -> None:
+    await env.service().create_role("Cashier", [], None)
+    other = await env.service().create_role("Waiter", [], None)
+    stored = await env.roles.get_by_id(other.id)
+
+    with pytest.raises(ConflictError):
+        await env.service().update_role(other.id, "Cashier", None)
+
+    assert stored is not None and stored.name == "Waiter"
 
 
 # --- models ------------------------------------------------------------------------
