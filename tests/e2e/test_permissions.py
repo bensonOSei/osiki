@@ -146,3 +146,33 @@ def test_get_effective_permissions_empty(client: TestClient) -> None:
     response = client.get(f"{API}/permissions/users/{user_id}/effective")
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_effective_permissions_in_tenant_require_membership(
+    client: TestClient,
+) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    user_id = client.post(f"{API}/users", json={"external_id": "ext-1"}).json()["id"]
+    perm = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    ).json()
+    role = client.post(
+        f"{API}/roles", json={"name": "reader", "permission_ids": [perm["id"]]}
+    ).json()
+    client.post(
+        f"{API}/users/{user_id}/roles",
+        json={"role_id": role["id"], "assigned_by": "admin"},
+    )
+    url = f"{API}/permissions/users/{user_id}/effective"
+
+    assert client.get(url).json() == ["docs:read"]
+
+    before = client.get(url, params={"tenant_id": "t"})
+    assert before.status_code == 200
+    assert before.json() == []
+
+    client.put(f"{API}/tenants/t/members/ext-1")
+
+    after = client.get(url, params={"tenant_id": "t"})
+    assert after.status_code == 200
+    assert after.json() == ["docs:read"]

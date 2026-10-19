@@ -3,6 +3,7 @@ from fastapi import APIRouter, Query, status
 from osiki.api.dependencies import (
     PermissionRepository,
     PermissionResolverDep,
+    TenantMemberRepository,
     UserRepository,
 )
 from osiki.api.exceptions import ConflictError, NotFoundError
@@ -108,13 +109,21 @@ async def get_user_effective_permissions(
     user_id: str,
     user_repo: UserRepository,
     permission_resolver: PermissionResolverDep,
+    member_repo: TenantMemberRepository,
     tenant_id: str | None = Query(None),
 ) -> list[str]:
     user = await user_repo.get_by_id(user_id)
     if not user:
         raise NotFoundError("User not found", details={"user_id": user_id})
 
-    scope = {"tenant_id": tenant_id} if tenant_id else None
+    # Same rule as /authorization/check: nothing is effective in a tenant the
+    # user isn't a member of (membership is keyed by external id).
+    if tenant_id is not None and not await member_repo.is_member(
+        tenant_id, user.external_id
+    ):
+        return []
+
+    scope = {"tenant_id": tenant_id} if tenant_id is not None else None
     permissions = await permission_resolver.get_effective_permissions(
         str(user.id), scope
     )
