@@ -15,7 +15,9 @@ def _class_matches(python_type: type, leaf_type: str) -> bool:
         return issubclass(python_type, str)
     if leaf_type == "boolean":
         return issubclass(python_type, bool)
-    return issubclass(python_type, _NUMBERS) and not issubclass(python_type, bool)
+    if leaf_type == "number":
+        return issubclass(python_type, _NUMBERS) and not issubclass(python_type, bool)
+    return False  # an unknown leaf type never matches
 
 
 def _leaf(node: dict[str, Any], model: type[Any]) -> ColumnElement[bool]:
@@ -45,8 +47,10 @@ def _leaf(node: dict[str, Any], model: type[Any]) -> ColumnElement[bool]:
         comparison = column >= value
     elif op == "in":
         comparison = column.in_(value)
-    else:
+    elif op == "nin":
         comparison = column.not_in(value)
+    else:
+        return false()  # an unknown op never matches
     return and_(column.is_not(None), comparison)
 
 

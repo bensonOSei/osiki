@@ -32,8 +32,19 @@ class DecisionLogBatcher:
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
+        # Set once stop() has flushed; record() then drops (until start()).
+        self._stopped = False
+        self.dropped_after_stop = 0
 
     def record(self, entry: dict[str, Any]) -> None:
+        if self._stopped:
+            # Nothing would ever send it: drop, and warn once per stop.
+            if self.dropped_after_stop == 0:
+                logger.warning(
+                    "osiki dropping decision log entries recorded after stop"
+                )
+            self.dropped_after_stop += 1
+            return
         if entry["allowed"] and not random.random() < (
             self._config.log_success_sample_rate
         ):
@@ -46,6 +57,7 @@ class DecisionLogBatcher:
         """Start the background flush loop; safe to call repeatedly."""
         if self._task is None:
             self._stopping = False
+            self._stopped = False
             self._task = asyncio.create_task(self._run(), name="osiki-log-flush")
 
     async def stop(self) -> None:
@@ -56,6 +68,9 @@ class DecisionLogBatcher:
             self._wake.set()
             await task
         await self._flush()
+        if not self._stopped:
+            self._stopped = True
+            self.dropped_after_stop = 0
 
     async def _run(self) -> None:
         while not self._stopping:

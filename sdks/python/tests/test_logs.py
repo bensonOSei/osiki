@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -112,6 +113,7 @@ async def test_flush_failure_dropped(
         await batcher.stop()
     assert "dropped 1 decision log" in caplog.text
     fake.fail.clear()
+    batcher.start()
     batcher.record(entry(2))
     await batcher.stop()
     assert sent(fake) == [[entry(1)], [entry(2)]]  # the failed batch is not retried
@@ -140,3 +142,44 @@ async def test_queue_bounded(fake: FakeClient) -> None:
     [batch] = sent(fake)
     assert len(batch) == 10_000
     assert batch[0] == entry(5) and batch[-1] == entry(10_004)  # oldest dropped
+
+
+async def test_record_after_stop_is_dropped_with_one_warning(
+    fake: FakeClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    batcher = DecisionLogBatcher(fake, QUIET)  # type: ignore[arg-type]
+    batcher.start()
+    batcher.record(entry(1))
+    await batcher.stop()
+    assert sent(fake) == [[entry(1)]]
+    with caplog.at_level(logging.WARNING, logger="osiki_sdk.logs"):
+        for n in range(3):
+            batcher.record(entry(n))
+        await batcher.stop()  # a second stop: nothing queued, nothing sent
+    assert batcher._queue == deque()
+    assert sent(fake) == [[entry(1)]]
+    warnings = [
+        r.getMessage() for r in caplog.records if "after stop" in r.getMessage()
+    ]
+    assert len(warnings) == 1  # at the first drop; later drops only counted
+    assert batcher.dropped_after_stop == 3
+    # Restarting accepts entries again; a later stop warns afresh.
+    batcher.start()
+    batcher.record(entry(7))
+    await batcher.stop()
+    assert sent(fake)[-1] == [entry(7)]
+    with caplog.at_level(logging.WARNING, logger="osiki_sdk.logs"):
+        batcher.record(entry(8))
+    warnings = [
+        r.getMessage() for r in caplog.records if "after stop" in r.getMessage()
+    ]
+    assert len(warnings) == 2
+    assert batcher.dropped_after_stop == 1
+
+
+async def test_record_before_start_is_queued(fake: FakeClient) -> None:
+    batcher = DecisionLogBatcher(fake, QUIET)  # type: ignore[arg-type]
+    batcher.record(entry(1))
+    batcher.start()
+    await batcher.stop()
+    assert sent(fake) == [[entry(1)]]

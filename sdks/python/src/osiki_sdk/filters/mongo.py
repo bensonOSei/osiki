@@ -22,15 +22,21 @@ def _node(node: dict[str, Any]) -> dict[str, Any]:
         return {"$and": [_node(child) for child in node["and"]]}
     if "or" in node:
         return {"$or": [_node(child) for child in node["or"]]}
+    field = str(node["field"])
+    mongo_type = _TYPES.get(str(node.get("type")))
+    mongo_op = _OPS.get(str(node.get("op")))
+    if mongo_type is None or mongo_op is None:
+        # An unknown type or op never matches (``$in: []`` matches nothing).
+        return {field: {"$in": []}}
     # ``$type`` makes a missing, null or wrongly typed field match nothing, so
     # ``ne``/``nin`` never match them and a boolean is never a number. Mongo
     # looks inside arrays for ``$type`` and comparisons, but the leaf contract
     # makes a list-valued field uncomparable, so arrays are excluded outright.
     return {
-        str(node["field"]): {
+        field: {
             "$not": {"$type": "array"},
-            "$type": _TYPES[node["type"]],
-            _OPS[node["op"]]: node["value"],
+            "$type": mongo_type,
+            mongo_op: node["value"],
         }
     }
 

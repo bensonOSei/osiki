@@ -182,12 +182,24 @@ class Osiki:
             await self._client.aclose()
 
     def discover_in_background(self, app: Starlette) -> None:
-        """Schedule ``discover(app)`` without waiting for it (the guard's path)."""
-        if app in self._discovered or app in self._discovering:
+        """Schedule ``discover(app)`` without waiting for it (the guard's path).
+
+        Creates no task when ``discover`` would return at once.
+        """
+        if not self._discovery_due(app):
             return
         task = asyncio.create_task(self._discover_logged(app), name="osiki-discover")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def _discovery_due(self, app: Starlette) -> bool:
+        """Whether ``app`` is unreported, not in flight and not backing off."""
+        if app in self._discovered or app in self._discovering:
+            return False
+        failed_at = self._discover_failed_at.get(app)
+        return failed_at is None or self._store.clock() - failed_at >= max(
+            self.config.poll_interval, _DISCOVER_RETRY_AFTER
+        )
 
     async def _discover_logged(self, app: Starlette) -> None:
         try:
@@ -203,12 +215,7 @@ class Osiki:
         ``max(poll_interval, 30)`` seconds ago; the first call after that
         window retries.
         """
-        if app in self._discovered or app in self._discovering:
-            return
-        failed_at = self._discover_failed_at.get(app)
-        if failed_at is not None and self._store.clock() - failed_at < max(
-            self.config.poll_interval, _DISCOVER_RETRY_AFTER
-        ):
+        if not self._discovery_due(app):
             return
         self._discovering.add(app)
         try:

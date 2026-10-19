@@ -101,14 +101,21 @@ unmapped: in a `deny` environment they answer 403 unless `public_routes` lists
 the mount's (or ASGI endpoint's) path, which makes everything under it public
 for the listed methods.
 
-Close Osiki on shutdown so pending decision logs are sent:
+Start Osiki in your lifespan, so the first snapshot loads before the first
+request (otherwise the first requests pay for it, and answer 503 if the engine
+is down), and close it on shutdown so pending decision logs are sent:
 
 ```python
 @asynccontextmanager
 async def lifespan(app):
+    await osiki.start()
     yield
     await osiki.aclose()
+
+app = FastAPI(lifespan=lifespan)
 ```
+
+Decision logs recorded after `aclose()` are dropped, with one warning.
 
 ## 4. The user resolver is the trust boundary
 
@@ -235,7 +242,18 @@ docs = [] if query is None else await db.invoices.find(query).to_list(None)
 ```
 
 Both keep the rule's type guard: a string never matches a numeric field, and a
-boolean never matches a number.
+boolean never matches a number. A leaf with an operator or type the translator
+does not know matches nothing.
+
+Two places where `check` and a filter can disagree, both failing safe (the
+filter returns fewer rows, never more):
+
+- **Mongo `ObjectId` fields.** `check` sees an `ObjectId` as a string (via
+  `to_record`), but the filter's `$type: "string"` never matches an
+  `ObjectId` field, so a rule over such a field filters out every row. Store
+  the ids the rules compare as strings, or filter that field yourself.
+- **SQL `datetime`/`date` columns.** Rules compare dates as ISO strings, and a
+  string leaf never matches a date column, so such a leaf matches nothing.
 
 SQL string comparisons follow your database's collation. MySQL `_ci`
 collations ignore case and Postgres follows its locale, while the engine
@@ -273,6 +291,7 @@ on their next poll, within `poll_interval` seconds.
 | User unknown to Osiki | `403 unknown_user` |
 | Denied by roles or rules | `403` with `reason` (`no_permission`, `not_tenant_member`, `condition_failed`, `record_required`) |
 | Any error inside the guard, including after `aclose()` | `503 authorization unavailable`; the app is never called |
+| WebSocket connections (and lifespan events) | **not guarded**: they reach the app unchecked; authorize them in the WebSocket handler |
 
 When in doubt, the guard denies. Decisions run locally in well under 1 ms,
 excluding your loader's query. Decision logs are queued and sent in the

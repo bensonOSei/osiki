@@ -140,3 +140,21 @@ def test_untyped_or_non_column_attribute_is_false() -> None:
         node = _leaf(field, "eq", 1, "number")
         clause = to_sqlalchemy(FilterResult(mode="filter", filter=node), model)  # type: ignore[arg-type]
         assert str(clause) == "false"
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        _leaf("amount", "regex", [10], "number"),
+        _leaf("amount", "contains", 10, "number"),
+        _leaf("amount", "eq", 10, "date"),
+        _leaf("amount", "eq", 10, "integer"),
+        _leaf("team_id", "eq", "t1", "text"),
+    ],
+)
+def test_unknown_op_or_type_matches_nothing(
+    session: Session, node: dict[str, Any]
+) -> None:
+    assert _ids(session, node) == set()
+    clause = to_sqlalchemy(FilterResult(mode="filter", filter=node), Invoice)
+    assert str(clause) == "false"

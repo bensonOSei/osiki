@@ -387,3 +387,19 @@ async def test_check_latency_under_1ms(osiki: Osiki) -> None:
     median_ms = statistics.median(samples) * 1000
     print(f"median warm check: {median_ms:.4f} ms")
     assert median_ms < 1.0
+
+
+async def test_discover_in_background_skips_inside_the_failure_window(
+    osiki: Osiki, fake: FakeClient, clock: ManualClock
+) -> None:
+    app = _discover_app()
+    fake.fail.add("report_endpoints")
+    await osiki.discover(app)
+    osiki.discover_in_background(app)
+    assert osiki._tasks == set()  # no task created while backing off
+    clock.now = RETRY_WINDOW
+    fake.fail.clear()
+    osiki.discover_in_background(app)
+    assert len(osiki._tasks) == 1
+    await asyncio.wait(set(osiki._tasks))
+    assert app in osiki._discovered

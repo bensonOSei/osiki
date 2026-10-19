@@ -213,3 +213,23 @@ def test_array_and_embedded_fields_never_match() -> None:
     assert ids(_leaf("ne", 9, "number")) == {7}
     assert ids(_leaf("in", [1, 5], "number")) == {7}
     assert ids(_leaf("eq", True, "boolean")) == set()
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        _leaf("regex", [1], "number"),
+        _leaf("contains", 1, "number"),
+        _leaf("eq", 1, "date"),
+        _leaf("eq", "x", "text"),
+    ],
+)
+def test_unknown_op_or_type_matches_nothing(node: dict[str, Any]) -> None:
+    query = to_mongo(_filter(node))
+    assert query == {"f": {"$in": []}}
+    collection = mongomock.MongoClient().db.c
+    collection.insert_many([{"f": 1}, {"f": "x"}, {"f": [1]}, {"f": None}, {}])
+    assert list(collection.find(query)) == []
+    # Inside an or, it only removes its own branch.
+    either = to_mongo(_filter({"or": [node, _leaf("eq", 1, "number")]}))
+    assert [d["f"] for d in collection.find(either)] == [1]
