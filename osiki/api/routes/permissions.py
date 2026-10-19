@@ -1,16 +1,31 @@
 from fastapi import APIRouter, Query, status
 
 from osiki.api.dependencies import AuthorizationServiceDep, PermissionRepository
-from osiki.api.exceptions import ConflictError, NotFoundError
+from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
 from osiki.models.permission import Permission
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.permission import (
     EffectiveGrantRead,
     PermissionCreate,
     PermissionRead,
+    PermissionUpdate,
 )
+from osiki.services.builtins import RESERVED_PREFIX, is_builtin
 
 router = APIRouter(prefix="/permissions", tags=["permissions"])
+
+
+def _to_read(permission: Permission) -> PermissionRead:
+    return PermissionRead(
+        id=str(permission.id),
+        resource=permission.resource,
+        action=permission.action,
+        description=permission.description,
+        assignable=permission.assignable,
+        is_active=permission.is_active,
+        created_at=permission.created_at,
+        metadata=permission.metadata,
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -18,6 +33,11 @@ async def create_permission(
     data: PermissionCreate,
     permission_repo: PermissionRepository,
 ) -> PermissionRead:
+    if data.resource.startswith(RESERVED_PREFIX):
+        raise ValidationError(
+            f"The resource prefix {RESERVED_PREFIX!r} is reserved for built-ins",
+            details={"resource": data.resource},
+        )
     existing = await permission_repo.get_by_resource_action(data.resource, data.action)
     if existing:
         raise ConflictError(
@@ -31,16 +51,7 @@ async def create_permission(
         description=data.description,
         metadata=data.metadata or {},
     )
-    created = await permission_repo.create(permission)
-    return PermissionRead(
-        id=str(created.id),
-        resource=created.resource,
-        action=created.action,
-        description=created.description,
-        is_active=created.is_active,
-        created_at=created.created_at,
-        metadata=created.metadata,
-    )
+    return _to_read(await permission_repo.create(permission))
 
 
 @router.get("/{permission_id}")
@@ -54,15 +65,30 @@ async def get_permission(
             "Permission not found", details={"permission_id": permission_id}
         )
 
-    return PermissionRead(
-        id=str(permission.id),
-        resource=permission.resource,
-        action=permission.action,
-        description=permission.description,
-        is_active=permission.is_active,
-        created_at=permission.created_at,
-        metadata=permission.metadata,
-    )
+    return _to_read(permission)
+
+
+@router.patch("/{permission_id}")
+async def update_permission(
+    permission_id: str,
+    data: PermissionUpdate,
+    permission_repo: PermissionRepository,
+) -> PermissionRead:
+    permission = await permission_repo.get_by_id(permission_id)
+    if not permission:
+        raise NotFoundError(
+            "Permission not found", details={"permission_id": permission_id}
+        )
+    if data.assignable and is_builtin(permission):
+        raise ValidationError(
+            "Built-in permissions can never be assignable",
+            details={"permission_id": permission_id},
+        )
+    if data.assignable is not None:
+        permission.assignable = data.assignable
+    if data.description is not None:
+        permission.description = data.description
+    return _to_read(await permission_repo.update(permission))
 
 
 @router.delete("/{permission_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -70,6 +96,12 @@ async def delete_permission(
     permission_id: str,
     permission_repo: PermissionRepository,
 ) -> None:
+    permission = await permission_repo.get_by_id(permission_id)
+    if permission is not None and is_builtin(permission):
+        raise ValidationError(
+            "Built-in permissions cannot be deleted",
+            details={"permission_id": permission_id},
+        )
     success = await permission_repo.deactivate(permission_id)
     if not success:
         raise NotFoundError(
@@ -86,18 +118,7 @@ async def list_permissions(
     skip = (page - 1) * page_size
     permissions = await permission_repo.list_active(skip=skip, limit=page_size)
 
-    items = [
-        PermissionRead(
-            id=str(p.id),
-            resource=p.resource,
-            action=p.action,
-            description=p.description,
-            is_active=p.is_active,
-            created_at=p.created_at,
-            metadata=p.metadata,
-        )
-        for p in permissions
-    ]
+    items = [_to_read(p) for p in permissions]
 
     total = len(items) + skip
     return PaginatedResponse.create(items, total, page, page_size)

@@ -17,7 +17,27 @@ class BaseRoleRepository(ABC):
     ) -> Role | None: ...
 
     @abstractmethod
-    async def get_by_name(self, name: str) -> Role | None: ...
+    async def get_by_name(
+        self,
+        name: str,
+        tenant_id: str | None = None,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> Role | None:
+        """The active role named ``name`` among a tenant's roles, or among the
+        project roles when ``tenant_id`` is None."""
+
+    @abstractmethod
+    async def list_tenant(
+        self, tenant_id: str, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        """Every active role owned by the tenant."""
+
+    @abstractmethod
+    async def list_templates(
+        self, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        """Every active project role flagged ``is_template``."""
 
     @abstractmethod
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]: ...
@@ -40,7 +60,8 @@ class BaseRoleRepository(ABC):
     ) -> bool: ...
 
     @abstractmethod
-    async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]: ...
+    async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
+        """Active project roles (tenant-owned roles are excluded)."""
 
     @abstractmethod
     async def add_permission(

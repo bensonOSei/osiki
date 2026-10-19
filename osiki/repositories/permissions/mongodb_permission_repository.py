@@ -1,5 +1,6 @@
 from beanie import PydanticObjectId
 from loguru import logger
+from pymongo.asynchronous.client_session import AsyncClientSession
 
 from osiki.models.permission import Permission
 from osiki.repositories.environment_state.base_environment_state_repository import (
@@ -63,6 +64,14 @@ class MongoDBPermissionRepository(BasePermissionRepository):
             Permission.resource == resource,
             Permission.is_active == True,
         ).to_list()
+
+    async def update(
+        self, permission: Permission, *, session: AsyncClientSession | None = None
+    ) -> Permission:
+        await permission.save(session=session)
+        await self._state.bump_config_version(session=session)
+        logger.debug("Permission updated", permission_id=str(permission.id))
+        return permission
 
     async def deactivate(self, permission_id: str) -> bool:
         permission = await self.get_by_id(permission_id)

@@ -1,7 +1,10 @@
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
 
-from tests.e2e.conftest import API
+from osiki.api.dependencies import get_role_repository
+from osiki.api.routes.roles import _to_read
+from tests.e2e.conftest import API, app
+from tests.mocks import MockRoleRepository, make_role
 
 EXPR = {"op": "eq", "left": {"ref": "record.owner_id"}, "right": {"ref": "user.id"}}
 ENV_HEADER = "X-Osiki-Environment"
@@ -435,3 +438,86 @@ def test_deactivated_condition_422(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+# --- Project roles API vs tenant-owned roles and templates ---
+
+
+def _role_repo() -> MockRoleRepository:
+    repo: MockRoleRepository = app.dependency_overrides[get_role_repository]("default")
+    return repo
+
+
+def _tenant_role(name: str = "Tenant Role", tenant_id: str = "acme") -> str:
+    role = make_role(name=name, tenant_id=tenant_id)
+    _role_repo()._store(str(role.id), role)
+    return str(role.id)
+
+
+def test_project_roles_api_hides_tenant_roles(client: TestClient) -> None:
+    rid = _tenant_role()
+    project = client.post(f"{API}/roles", json={"name": "project"}).json()["id"]
+
+    assert client.get(f"{API}/roles/{rid}").status_code == 404
+    assert client.patch(f"{API}/roles/{rid}", json={"name": "x"}).status_code == 404
+    assert client.delete(f"{API}/roles/{rid}").status_code == 404
+    listed = [r["id"] for r in client.get(f"{API}/roles").json()["items"]]
+    assert listed == [project]
+    # Delete was refused, not just hidden: the role is still active.
+    tenant_role = _role_repo()._get(rid)
+    assert tenant_role is not None and tenant_role.is_active is True
+
+
+def test_tenant_role_cannot_be_a_parent(client: TestClient) -> None:
+    rid = _tenant_role()
+    response = client.post(
+        f"{API}/roles", json={"name": "child", "parent_role_id": rid}
+    )
+    assert response.status_code == 422
+    assert response.json()["details"] == {"parent_role_id": rid}
+
+
+def test_project_and_tenant_role_may_share_a_name(client: TestClient) -> None:
+    _tenant_role(name="Support")
+    assert client.post(f"{API}/roles", json={"name": "Support"}).status_code == 201
+    assert client.post(f"{API}/roles", json={"name": "Support"}).status_code == 409
+
+
+def test_role_read_exposes_template_fields(client: TestClient) -> None:
+    body = client.post(
+        f"{API}/roles", json={"name": "starter", "is_template": True}
+    ).json()
+    assert body["is_template"] is True
+    assert body["tenant_id"] is None
+    assert body["copied_from"] is None
+    plain = client.post(f"{API}/roles", json={"name": "plain"}).json()
+    assert plain["is_template"] is False
+
+
+def test_is_template_is_updatable(client: TestClient) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "starter"}).json()["id"]
+    on = client.patch(f"{API}/roles/{rid}", json={"is_template": True}).json()
+    assert on["is_template"] is True
+    kept = client.patch(f"{API}/roles/{rid}", json={"description": "d"}).json()
+    assert kept["is_template"] is True
+    off = client.patch(f"{API}/roles/{rid}", json={"is_template": False}).json()
+    assert off["is_template"] is False
+
+
+def test_tenant_id_and_copied_from_are_read_only(client: TestClient) -> None:
+    created = client.post(
+        f"{API}/roles",
+        json={"name": "r", "tenant_id": "acme", "copied_from": str(PydanticObjectId())},
+    ).json()
+    assert created["tenant_id"] is None
+    assert created["copied_from"] is None
+    patched = client.patch(
+        f"{API}/roles/{created['id']}", json={"tenant_id": "acme"}
+    ).json()
+    assert patched["tenant_id"] is None
+
+
+def test_tenant_role_copied_from_is_rendered() -> None:
+    source = PydanticObjectId()
+    read = _to_read(make_role(tenant_id="acme", copied_from=source))
+    assert (read.tenant_id, read.copied_from) == ("acme", str(source))

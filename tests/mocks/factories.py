@@ -96,6 +96,10 @@ def make_role(
     parent_role_id: PydanticObjectId | None = None,
     role_id: PydanticObjectId | None = None,
     is_active: bool = True,
+    tenant_id: str | None = None,
+    is_template: bool = False,
+    is_system: bool = False,
+    copied_from: PydanticObjectId | None = None,
 ) -> Role:
     role = Role(
         name=name,
@@ -105,6 +109,10 @@ def make_role(
         ],
         parent_role_id=parent_role_id,
         is_active=is_active,
+        tenant_id=tenant_id,
+        is_template=is_template,
+        is_system=is_system,
+        copied_from=copied_from,
     )
     role.id = role_id or PydanticObjectId()
     return role
@@ -114,8 +122,9 @@ def make_permission(
     resource: str = "resource",
     action: str = "read",
     permission_id: PydanticObjectId | None = None,
+    assignable: bool = False,
 ) -> Permission:
-    perm = Permission(resource=resource, action=action)
+    perm = Permission(resource=resource, action=action, assignable=assignable)
     perm.id = permission_id or PydanticObjectId()
     return perm
 

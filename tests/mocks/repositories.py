@@ -393,11 +393,31 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
     ) -> Role | None:
         return self._get(role_id)
 
-    async def get_by_name(self, name: str) -> Role | None:
+    async def get_by_name(
+        self,
+        name: str,
+        tenant_id: str | None = None,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> Role | None:
         for role in self._scoped():
-            if role.name == name and role.is_active:
+            if role.name == name and role.tenant_id == tenant_id and role.is_active:
                 return role
         return None
+
+    async def list_tenant(
+        self, tenant_id: str, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        return [r for r in self._scoped() if r.tenant_id == tenant_id and r.is_active]
+
+    async def list_templates(
+        self, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        return [
+            r
+            for r in self._scoped()
+            if r.tenant_id is None and r.is_template and r.is_active
+        ]
 
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         return [
@@ -433,7 +453,7 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
-        active = [r for r in self._scoped() if r.is_active]
+        active = [r for r in self._scoped() if r.is_active and r.tenant_id is None]
         return active[skip : skip + limit]
 
     async def add_permission(
@@ -497,6 +517,13 @@ class MockPermissionRepository(_ConfigBound[Permission], BasePermissionRepositor
 
     async def get_by_resource(self, resource: str) -> list[Permission]:
         return [p for p in self._scoped() if p.resource == resource and p.is_active]
+
+    async def update(
+        self, permission: Permission, *, session: AsyncClientSession | None = None
+    ) -> Permission:
+        self._data[str(permission.id)] = permission
+        await self._bump()
+        return permission
 
     async def deactivate(self, permission_id: str) -> bool:
         if self._get(permission_id) is not None:

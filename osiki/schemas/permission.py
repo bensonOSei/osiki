@@ -14,6 +14,11 @@ class PermissionCreate(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+class PermissionUpdate(BaseModel):
+    assignable: bool | None = None
+    description: str | None = None
+
+
 class PermissionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -21,6 +26,7 @@ class PermissionRead(BaseModel):
     resource: str
     action: str
     description: str | None = None
+    assignable: bool
     is_active: bool
     created_at: float
     metadata: dict[str, Any]

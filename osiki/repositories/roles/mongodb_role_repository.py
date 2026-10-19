@@ -38,12 +38,41 @@ class MongoDBRoleRepository(BaseRoleRepository):
             logger.debug("Role not found", role_id=role_id)
         return role
 
-    async def get_by_name(self, name: str) -> Role | None:
+    async def get_by_name(
+        self,
+        name: str,
+        tenant_id: str | None = None,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> Role | None:
         return await Role.find_one(
             Role.environment_id == self.environment_id,
+            {"tenant_id": tenant_id},
             Role.name == name,
             Role.is_active == True,
+            session=session,
         )
+
+    async def list_tenant(
+        self, tenant_id: str, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        return await Role.find(
+            Role.environment_id == self.environment_id,
+            {"tenant_id": tenant_id},
+            Role.is_active == True,
+            session=session,
+        ).to_list()
+
+    async def list_templates(
+        self, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        return await Role.find(
+            Role.environment_id == self.environment_id,
+            {"tenant_id": None},
+            Role.is_template == True,
+            Role.is_active == True,
+            session=session,
+        ).to_list()
 
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         object_ids = [PydanticObjectId(rid) for rid in role_ids]
@@ -93,7 +122,9 @@ class MongoDBRoleRepository(BaseRoleRepository):
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
         return (
             await Role.find(
-                Role.environment_id == self.environment_id, Role.is_active == True
+                Role.environment_id == self.environment_id,
+                {"tenant_id": None},
+                Role.is_active == True,
             )
             .skip(skip)
             .limit(limit)

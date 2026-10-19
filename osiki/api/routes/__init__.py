@@ -4,6 +4,7 @@ from osiki.api.routes.authorization import router as authorization_router
 from osiki.api.routes.conditions import router as conditions_router
 from osiki.api.routes.constraints import router as constraints_router
 from osiki.api.routes.endpoints import router as endpoints_router
+from osiki.api.routes.environment import router as environment_router
 from osiki.api.routes.groups import router as groups_router
 from osiki.api.routes.health import router as health_router
 from osiki.api.routes.permissions import router as permissions_router
@@ -20,6 +21,7 @@ __all__ = [
     "conditions_router",
     "constraints_router",
     "endpoints_router",
+    "environment_router",
     "groups_router",
     "health_router",
     "permissions_router",

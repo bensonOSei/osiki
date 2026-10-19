@@ -100,7 +100,13 @@ class SnapshotBuilder:
         return snapshot
 
     async def _render(self, version: int) -> Snapshot:
-        roles = [r for r in await self._role_repo.get_all_active() if r.is_active]
+        # Tenant-owned roles never reach the snapshot: they are not project
+        # config, and SDK consumers enforce only project roles.
+        roles = [
+            r
+            for r in await self._role_repo.get_all_active()
+            if r.is_active and r.tenant_id is None
+        ]
         conditions = await self._condition_repo.get_all()
         permission_ids = list(
             dict.fromkeys(str(g.permission_id) for r in roles for g in r.grants)

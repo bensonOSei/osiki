@@ -28,11 +28,22 @@ def _to_read(role: Role) -> RoleRead:
             for g in role.grants
         ],
         is_system=role.is_system,
+        is_template=role.is_template,
+        tenant_id=role.tenant_id,
+        copied_from=str(role.copied_from) if role.copied_from else None,
         is_active=role.is_active,
         created_at=role.created_at,
         updated_at=role.updated_at,
         metadata=role.metadata,
     )
+
+
+async def _get_project_role(role_id: str, role_repo: RoleRepository) -> Role:
+    """A project role by id; tenant-owned roles do not exist for this API."""
+    role = await role_repo.get_by_id(role_id)
+    if role is None or role.tenant_id is not None:
+        raise NotFoundError("Role not found", details={"role_id": role_id})
+    return role
 
 
 def _merge_grants(
@@ -81,7 +92,8 @@ async def _validate_references(
                 )
     if parent_role_id is not None:
         _check_object_id(parent_role_id, "parent_role_id")
-        if await role_repo.get_by_id(parent_role_id) is None:
+        parent = await role_repo.get_by_id(parent_role_id)
+        if parent is None or parent.tenant_id is not None:
             raise ValidationError(
                 f"Parent role not found: {parent_role_id}",
                 details={"parent_role_id": parent_role_id},
@@ -146,6 +158,7 @@ async def create_role(
         ),
         grants=_to_grants(grants),
         is_system=data.is_system,
+        is_template=data.is_template,
         metadata=data.metadata or {},
     )
     return _to_read(await role_repo.create(role))
@@ -156,10 +169,7 @@ async def get_role(
     role_id: str,
     role_repo: RoleRepository,
 ) -> RoleRead:
-    role = await role_repo.get_by_id(role_id)
-    if not role:
-        raise NotFoundError("Role not found", details={"role_id": role_id})
-    return _to_read(role)
+    return _to_read(await _get_project_role(role_id, role_repo))
 
 
 @router.patch("/{role_id}")
@@ -170,9 +180,7 @@ async def update_role(
     permission_repo: PermissionRepository,
     condition_repo: ConditionRepository,
 ) -> RoleRead:
-    role = await role_repo.get_by_id(role_id)
-    if not role:
-        raise NotFoundError("Role not found", details={"role_id": role_id})
+    role = await _get_project_role(role_id, role_repo)
 
     replace_grants = data.grants is not None or data.permission_ids is not None
     grants = _merge_grants(data.grants, data.permission_ids)
@@ -191,6 +199,8 @@ async def update_role(
         role.parent_role_id = PydanticObjectId(data.parent_role_id)
     if replace_grants:
         role.grants = _to_grants(grants)
+    if data.is_template is not None:
+        role.is_template = data.is_template
     if data.metadata is not None:
         role.metadata = data.metadata
 
@@ -202,6 +212,7 @@ async def delete_role(
     role_id: str,
     role_repo: RoleRepository,
 ) -> None:
+    await _get_project_role(role_id, role_repo)
     success = await role_repo.deactivate(role_id)
     if not success:
         raise NotFoundError("Role not found", details={"role_id": role_id})

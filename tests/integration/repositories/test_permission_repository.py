@@ -96,3 +96,20 @@ async def test_list_active() -> None:
     await repo.create(Permission(resource="r2", action="a2"))
     result = await repo.list_active()
     assert len(result) >= 2
+
+
+async def test_update_persists_assignable_and_bumps_config_version() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBPermissionRepository("default", state)
+    perm = await repo.create(Permission(resource="upd", action="a"))
+    assert perm.assignable is False
+    before = await state.get_config_version()
+
+    perm.assignable = True
+    perm.description = "changed"
+    await repo.update(perm)
+
+    loaded = await repo.get_by_id(str(perm.id))
+    assert loaded is not None
+    assert (loaded.assignable, loaded.description) == (True, "changed")
+    assert await state.get_config_version() == before + 1

@@ -16,6 +16,7 @@ class RoleCreate(BaseModel):
     # Shorthand for unconditional grants; merged with `grants`.
     permission_ids: list[str] | None = None
     is_system: bool = False
+    is_template: bool = False
     metadata: dict[str, Any] | None = None
 
 
@@ -28,6 +29,9 @@ class RoleRead(BaseModel):
     parent_role_id: str | None = None
     grants: list[GrantSchema]
     is_system: bool
+    is_template: bool
+    tenant_id: str | None = None
+    copied_from: str | None = None
     is_active: bool
     created_at: float
     updated_at: float
@@ -40,4 +44,5 @@ class RoleUpdate(BaseModel):
     parent_role_id: str | None = None
     grants: list[GrantSchema] | None = None
     permission_ids: list[str] | None = None
+    is_template: bool | None = None
     metadata: dict[str, Any] | None = None

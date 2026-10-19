@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 
+from pymongo.asynchronous.client_session import AsyncClientSession
+
 from osiki.models.permission import Permission
 
 
@@ -20,6 +22,11 @@ class BasePermissionRepository(ABC):
 
     @abstractmethod
     async def get_by_resource(self, resource: str) -> list[Permission]: ...
+
+    @abstractmethod
+    async def update(
+        self, permission: Permission, *, session: AsyncClientSession | None = None
+    ) -> Permission: ...
 
     @abstractmethod
     async def deactivate(self, permission_id: str) -> bool: ...
