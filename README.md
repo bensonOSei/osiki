@@ -111,6 +111,8 @@ Every decision made locally must match the server's. The fixtures that pin this 
 
 Constraints are enforced when roles are assigned: directly to a user, to a group, or by adding a user to a group. A violating assignment is rejected with `409 Conflict`, naming the constraint and the reason.
 
+Constraints respect tenant scope. A prerequisite counts only when it is held project-wide or in the same tenant as the new assignment (a project-wide assignment needs a project-wide prerequisite). Mutually exclusive roles may be held in two different tenants, but not in the same tenant, and not when either of them is project-wide.
+
 ## Access logs
 
 The server records every denial and a sample of successful checks (`ACCESS_LOG_SUCCESS_SAMPLE_RATE`, default `0.1`). Writing happens after the response is sent, so logging never slows or changes a check. SDKs that decide locally report their decisions in batches:

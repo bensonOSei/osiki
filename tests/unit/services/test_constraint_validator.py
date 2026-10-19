@@ -1,3 +1,4 @@
+import pytest
 from beanie import PydanticObjectId
 
 from osiki.models.base import Scope
@@ -541,3 +542,84 @@ async def test_cardinality_per_scope_level(
     )
     # PER_SCOPE not implemented, so count=0 and validation passes
     assert result.valid is True
+
+
+# --- Tenant scope ---
+# A held role counts when its scope overlaps the new assignment's. For a
+# prerequisite (a permit) that means held project-wide or in the same tenant;
+# a project-wide assignment needs a project-wide prerequisite. For mutual
+# exclusion (a block) scopes overlap unless both are in different tenants.
+
+PREREQ, TARGET = PydanticObjectId(), PydanticObjectId()
+SCOPE_CASES = [
+    # (held tenant, assigned tenant, prerequisite satisfied, exclusion blocks)
+    ("b", "a", False, False),
+    (None, "a", True, True),
+    ("a", "a", True, True),
+    ("a", None, False, True),
+    (None, None, True, True),
+]
+
+
+async def _hold(repo, user_id: PydanticObjectId, tenant: str | None) -> None:
+    await repo.create(
+        make_user_role(user_id=user_id, role_id=PREREQ, scope=Scope(tenant_id=tenant))
+    )
+
+
+def _scope(tenant: str | None) -> dict[str, str]:
+    return {"tenant_id": tenant} if tenant else {}
+
+
+@pytest.mark.parametrize(("held", "assigned", "satisfied", "_"), SCOPE_CASES)
+async def test_prerequisite_respects_tenant_scope(
+    constraint_validator,
+    mock_constraint_repository,
+    mock_user_role_repository,
+    held: str | None,
+    assigned: str | None,
+    satisfied: bool,
+    _: bool,
+) -> None:
+    user_id = PydanticObjectId()
+    await mock_constraint_repository.create(
+        make_constraint(
+            name="target-requires-prereq",
+            constraint_type=ConstraintType.PREREQUISITE,
+            config=ConstraintConfig(role_id=TARGET, requires_role_id=PREREQ),
+        )
+    )
+    await _hold(mock_user_role_repository, user_id, held)
+
+    result = await constraint_validator.validate(
+        str(user_id), str(TARGET), _scope(assigned)
+    )
+
+    assert result.valid is satisfied
+
+
+@pytest.mark.parametrize(("held", "assigned", "_", "blocks"), SCOPE_CASES)
+async def test_mutual_exclusion_respects_tenant_scope(
+    constraint_validator,
+    mock_constraint_repository,
+    mock_user_role_repository,
+    held: str | None,
+    assigned: str | None,
+    _: bool,
+    blocks: bool,
+) -> None:
+    user_id = PydanticObjectId()
+    await mock_constraint_repository.create(
+        make_constraint(
+            name="exclusive",
+            constraint_type=ConstraintType.MUTUAL_EXCLUSION,
+            config=ConstraintConfig(role_ids=[PREREQ, TARGET]),
+        )
+    )
+    await _hold(mock_user_role_repository, user_id, held)
+
+    result = await constraint_validator.validate(
+        str(user_id), str(TARGET), _scope(assigned)
+    )
+
+    assert result.valid is not blocks
