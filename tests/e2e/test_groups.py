@@ -315,6 +315,7 @@ def _reads_docs(client: TestClient, tenant_id: str) -> bool:
             "scope": {"tenant_id": tenant_id},
         },
     )
+    assert response.status_code == 200
     return bool(response.json()["allowed"])
 
 

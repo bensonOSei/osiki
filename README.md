@@ -50,7 +50,7 @@ curl http://localhost:8000/api/v1/roles -H "X-Osiki-Environment: staging"
 Two kinds of id appear in the API:
 
 - **External ids**, your own: users and tenants are addressed by them in `POST /authorization/check`, `POST /authorization/filter`, `/tenants/...` (including members) and `/users/by-external/{external_id}` (upsert and bundle).
-- **Internal ids**, the ObjectIds Osiki returns as `id`: `/users/{id}`, `/users/{id}/roles`, `/users/{id}/groups`, `/groups/{id}`, `/groups/{id}/roles` and the role, permission, condition and constraint routes take these. Use `PUT /users/by-external/{external_id}` to get a user's internal `id`.
+- **Internal ids**, the ObjectIds Osiki returns as `id`: `/users/{id}`, `/users/{id}/roles`, `/users/{id}/groups`, `/groups/{id}`, `/groups/{id}/roles` and the role, permission, condition and constraint routes take these. The `id` field of any user response (create, get or upsert) is that internal id.
 
 ## Tenants and membership
 
