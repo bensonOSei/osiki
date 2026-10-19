@@ -411,6 +411,75 @@ async def test_public_routes_methods_are_case_insensitive(
     await env.osiki.aclose()
 
 
+def _public_env(fake: FakeClient, clock: ManualClock, *public: tuple[str, str]) -> Env:
+    fake.snapshot = guard_snapshot()
+    config = OsikiConfig(
+        base_url="http://engine", poll_interval=60.0, public_routes=public
+    )
+    return make_env(fake, clock, config=config)
+
+
+async def test_public_mount_by_method(fake: FakeClient, clock: ManualClock) -> None:
+    env = _public_env(fake, clock, ("GET", "/static"))
+    async with env.http:
+        response = await env.http.get("/static/x")
+        assert response.status_code == 200 and response.text == "static"
+        assert (await env.http.head("/static/x")).status_code == 200
+        post = await env.http.post("/static/x", headers=bearer())
+        assert post.status_code == 403 and post.json() == forbidden("unmapped")
+    await env.osiki.aclose()
+
+
+async def test_public_mount_any_method(fake: FakeClient, clock: ManualClock) -> None:
+    env = _public_env(fake, clock, ("*", "/static"))
+    async with env.http:
+        assert (await env.http.get("/static/x")).status_code == 200
+        # Past the guard: the mounted app answers 405 itself.
+        assert (await env.http.post("/static/x")).status_code == 405
+        assert (await env.http.delete("/static/x")).status_code == 405
+        assert (await env.http.options("/static/x")).status_code == 405
+    await env.osiki.aclose()
+
+
+async def test_public_template_any_method(fake: FakeClient, clock: ManualClock) -> None:
+    env = _public_env(fake, clock, ("*", "/invoices"))
+    async with env.http:
+        assert (await env.http.get("/invoices")).status_code == 200
+        assert (await env.http.post("/invoices")).status_code == 200
+        assert (await env.http.options("/invoices")).status_code == 200
+        # Other templates are untouched.
+        assert (await env.http.get("/invoices/1")).status_code == 401
+        mount = await env.http.get("/static/x", headers=bearer())
+        assert mount.status_code == 403 and mount.json() == forbidden("unmapped")
+    await env.osiki.aclose()
+
+
+async def test_public_asgi_class_route_by_path(
+    fake: FakeClient, clock: ManualClock
+) -> None:
+    class Endpoint:
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            await PlainTextResponse("raw")(scope, receive, send)
+
+    fake.snapshot = guard_snapshot()
+    config = OsikiConfig(
+        base_url="http://engine",
+        poll_interval=60.0,
+        public_routes=(("DELETE", "/raw"),),
+    )
+    osiki = make_osiki(fake, clock, config, user_id=resolve_user)
+    app = FastAPI()
+    app.router.routes.append(Route("/raw", Endpoint()))
+    app.add_middleware(OsikiGuard, osiki=osiki)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as http:
+        response = await http.delete("/raw")
+        assert response.status_code == 200 and response.text == "raw"
+        other = await http.post("/raw", headers=bearer())
+        assert other.status_code == 403 and other.json() == forbidden("unmapped")
+    await osiki.aclose()
+
+
 async def test_public_mapping_skips_user_resolution(env: Env) -> None:
     response = await env.http.get("/health", headers={"Authorization": "Bearer boom"})
     assert response.status_code == 200 and response.json() == {"ok": "yes"}

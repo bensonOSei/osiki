@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from fastapi import APIRouter, FastAPI
 from starlette.applications import Starlette
-from starlette.routing import Mount, Route
+from starlette.routing import Host, Mount, Route
 
 from osiki_sdk.routes import Matched, NoMatch, Opaque, list_routes, match_route
 
@@ -137,9 +137,16 @@ def test_match_route_resolves_included_routers_like_list_routes() -> None:
 
 def test_match_route_opaque_for_mounts_and_asgi_endpoints() -> None:
     app = _match_app()
-    assert match_route(app, _scope("GET", "/static/x")) == Opaque()
-    assert match_route(app, _scope("GET", "/static/anything")) == Opaque()
-    assert match_route(app, _scope("DELETE", "/asgi")) == Opaque()
+    # Opaque carries the matched route's own path, for ``public_routes``.
+    assert match_route(app, _scope("GET", "/static/x")) == Opaque("/static")
+    assert match_route(app, _scope("GET", "/static/anything")) == Opaque("/static")
+    assert match_route(app, _scope("DELETE", "/asgi")) == Opaque("/asgi")
+
+
+def test_match_route_host_is_opaque_without_a_path() -> None:
+    app = Starlette(routes=[Host("api.example.com", app=_AsgiEndpoint())])
+    scope = {**_scope("GET", "/x"), "headers": [(b"host", b"api.example.com")]}
+    assert match_route(app, scope) == Opaque(None)
 
 
 def test_match_route_no_match_and_partial() -> None:
@@ -186,7 +193,7 @@ def test_match_route_without_fastapi(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     )
     assert match_route(app, _scope("GET", "/a/1")) == Matched("/a/{x}", {"x": "1"})
-    assert match_route(app, _scope("GET", "/static/x")) == Opaque()
+    assert match_route(app, _scope("GET", "/static/x")) == Opaque("/static")
     assert match_route(app, _scope("GET", "/b")) == NoMatch()
 
 
@@ -200,9 +207,9 @@ def test_match_route_frontend_is_opaque(tmp_path: Any) -> None:
 
     app.frontend("/", directory=tmp_path)
     assert match_route(app, _scope("GET", "/api/ping")) == Matched("/api/ping", {})
-    assert match_route(app, _scope("GET", "/")) == Opaque()
-    assert match_route(app, _scope("GET", "/index.html")) == Opaque()
-    assert match_route(app, _scope("GET", "/app/deep/link")) == Opaque()
+    assert match_route(app, _scope("GET", "/")) == Opaque(None)
+    assert match_route(app, _scope("GET", "/index.html")) == Opaque(None)
+    assert match_route(app, _scope("GET", "/app/deep/link")) == Opaque(None)
     # The app redirects a trailing-slash variant before the frontend sees it.
     assert match_route(app, _scope("GET", "/api/ping/")) == NoMatch()
     # A wrong method on a real route is still the app's 405.
@@ -218,7 +225,7 @@ def test_match_route_frontend_without_redirect_slashes(tmp_path: Any) -> None:
         return None
 
     app.frontend("/", directory=tmp_path)
-    assert match_route(app, _scope("GET", "/api/ping/")) == Opaque()
+    assert match_route(app, _scope("GET", "/api/ping/")) == Opaque(None)
 
 
 def test_match_route_custom_router_default_is_opaque() -> None:
@@ -229,7 +236,7 @@ def test_match_route_custom_router_default_is_opaque() -> None:
         return None
 
     app.router.default = _AsgiEndpoint()
-    assert match_route(app, _scope("GET", "/anything")) == Opaque()
+    assert match_route(app, _scope("GET", "/anything")) == Opaque(None)
     assert match_route(app, _scope("GET", "/api/ping")) == Matched("/api/ping", {})
     assert match_route(app, _scope("GET", "/api/ping/")) == NoMatch()  # redirect
     assert match_route(app, _scope("POST", "/api/ping")) == NoMatch()  # 405

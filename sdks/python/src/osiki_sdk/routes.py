@@ -22,7 +22,15 @@ class Matched:
 @dataclass(frozen=True)
 class Opaque:
     """A full match on something the guard cannot see into (a mount, a host,
-    a sub-app, an ASGI endpoint or a frontend): treated as unmapped."""
+    a sub-app, an ASGI endpoint or a frontend): treated as unmapped.
+
+    ``path`` is the matched route's own path (a mount's prefix such as
+    ``"/static"``, an ASGI endpoint's path), so ``public_routes`` can list
+    it. It is ``None`` for a ``Host`` and for the router's fallbacks
+    (``frontend()`` routes, a custom ``default`` app), which cannot be public.
+    """
+
+    path: str | None
 
 
 @dataclass(frozen=True)
@@ -117,12 +125,12 @@ def _match(app: Starlette, scope: Scope) -> RouteMatch:
         match, child_scope = route.matches(dict(scope))
         if match is Match.FULL:
             if not _is_route(route):
-                return Opaque()
+                return Opaque(getattr(route, "path", None))
             params = child_scope.get("path_params", {})
             return Matched(route.path, {k: str(v) for k, v in params.items()})
         partial = partial or match is Match.PARTIAL
     if not partial and _fallback_is_opaque(app, scope):
-        return Opaque()
+        return Opaque(None)
     return NoMatch()
 
 

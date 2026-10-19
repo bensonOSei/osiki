@@ -21,8 +21,19 @@ Keep production on `deny`. Mark the routes that must work without a user as
 public in code, so they work in every environment, mapped or not:
 
 ```python
-OsikiConfig(..., public_routes=(("POST", "/auth/login"), ("GET", "/health")))
+OsikiConfig(..., public_routes=(
+    ("POST", "/auth/login"),  # a route template
+    ("GET", "/health"),
+    ("GET", "/static"),       # a mount, by its own path: everything under it
+    ("*", "/webhooks/stripe"),  # "*" means any method
+))
 ```
+
+Each entry is `(METHOD, path)`. The path is a route's template, or the path a
+mount (`app.mount("/static", ...)`) or an ASGI-class endpoint was declared
+with. `HEAD` follows `GET`, and `"*"` matches every method. `Host` routes,
+FastAPI `frontend()` routes and a custom router `default` app have no path of
+their own and cannot be listed.
 
 FastAPI's own `/docs`, `/docs/oauth2-redirect`, `/redoc` and `/openapi.json`
 are discovered like any route. In a `deny` environment they answer 403 unless
@@ -79,12 +90,16 @@ matches no route, so it still reaches the app (and an outer `CORSMiddleware`
 answers preflights before the guard sees them). A route that really handles
 `OPTIONS` (`@app.options`, `api_route(methods=[..., "OPTIONS"])`, an ASGI
 endpoint or a mount) is unmapped, because a mapping cannot hold `OPTIONS`. In a
-`deny` environment it answers 403 unless you list `("OPTIONS", template)` in
-`public_routes`.
+`deny` environment it answers 403 unless `public_routes` lists it:
+`("OPTIONS", template)` or `("*", template)` for a route, `("OPTIONS",
+"/static")` or `("*", "/static")` for a mount.
 
 Mounts are opaque: `app.mount(...)`, sub-apps, `Host` routes, ASGI-class
-endpoints, FastAPI `frontend()` routes and a custom router `default` app. The guard cannot see their routes,
-so it always treats them as unmapped; in a `deny` environment they answer 403.
+endpoints, FastAPI `frontend()` routes and a custom router `default` app. The
+guard cannot see their routes and a mapping cannot name them, so they are
+unmapped: in a `deny` environment they answer 403 unless `public_routes` lists
+the mount's (or ASGI endpoint's) path, which makes everything under it public
+for the listed methods.
 
 Close Osiki on shutdown so pending decision logs are sent:
 
@@ -278,7 +293,7 @@ directly:
 | `bundle_ttl` | `60.0` | Seconds a user's bundle stays cached. |
 | `bundle_cache_size` | `10000` | Most bundles cached (LRU). |
 | `read_on_unavailable` | `"deny"` | `GET`/`HEAD` behaviour when a check cannot be decided (no snapshot yet, or engine down and the bundle not cached). |
-| `public_routes` | `()` | `(METHOD, template)` pairs that skip the guard in every environment. |
+| `public_routes` | `()` | `(METHOD, path)` pairs that skip the guard in every environment: a route template or a mount's path; `"*"` is any method. |
 | `log_success_sample_rate` | `0.1` | Share of allowed decisions logged; denials always are. |
 | `log_flush_interval` | `2.0` | Seconds between decision-log sends. |
 | `log_batch_size` | `100` | Pending entries that trigger an early send. |

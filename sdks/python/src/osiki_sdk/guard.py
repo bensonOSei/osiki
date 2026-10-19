@@ -156,7 +156,12 @@ class OsikiGuard:
         template, params = (
             (match.path, match.params) if isinstance(match, Matched) else (None, {})
         )
-        if template is not None and (lookup_method, template) in self._public:
+        # Public in code: a template, or an opaque match by its own path; the
+        # method "*" stands for any method.
+        if match.path is not None and (
+            (lookup_method, match.path) in self._public
+            or ("*", match.path) in self._public
+        ):
             return None
 
         # 4. No snapshot has ever loaded: follow the failure mode.
