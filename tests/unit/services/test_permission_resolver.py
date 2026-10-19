@@ -331,3 +331,50 @@ async def test_get_role_ancestors_nonexistent_initial_role(permission_resolver) 
     nonexistent_role_id = str(PydanticObjectId())
     ancestors = await permission_resolver.get_role_ancestors(nonexistent_role_id)
     assert ancestors == [nonexistent_role_id]
+
+
+async def test_tenant_scoped_assignments_excluded_without_request_scope(
+    permission_resolver,
+    mock_user_role_repository,
+    mock_user_group_repository,
+    mock_group_role_repository,
+    mock_role_repository,
+    mock_permission_repository,
+) -> None:
+    user_id = PydanticObjectId()
+    group_id = PydanticObjectId()
+
+    scoped = make_permission(resource="docs", action="read")
+    scoped_via_group = make_permission(resource="files", action="read")
+    unscoped = make_permission(resource="wiki", action="read")
+    for perm in (scoped, scoped_via_group, unscoped):
+        await mock_permission_repository.create(perm)
+
+    scoped_role = make_role(name="scoped", permission_ids=[scoped.id])
+    group_role = make_role(name="group-scoped", permission_ids=[scoped_via_group.id])
+    open_role = make_role(name="open", permission_ids=[unscoped.id])
+    for role in (scoped_role, group_role, open_role):
+        await mock_role_repository.create(role)
+
+    await mock_user_role_repository.create(
+        make_user_role(
+            user_id=user_id, role_id=scoped_role.id, scope=Scope(tenant_id="t")
+        )
+    )
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user_id, role_id=open_role.id)
+    )
+    await mock_user_group_repository.create(
+        make_user_group(user_id=user_id, group_id=group_id)
+    )
+    await mock_group_role_repository.create(
+        make_group_role(
+            group_id=group_id, role_id=group_role.id, scope=Scope(tenant_id="t")
+        )
+    )
+
+    for request_scope in (None, {}):
+        permissions = await permission_resolver.get_effective_permissions(
+            str(user_id), scope=request_scope
+        )
+        assert permissions == {"wiki:read"}

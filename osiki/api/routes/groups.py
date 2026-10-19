@@ -1,6 +1,10 @@
 from fastapi import APIRouter, Query, status
 
-from osiki.api.dependencies import GroupRepository, GroupRoleRepository
+from osiki.api.dependencies import (
+    GroupRepository,
+    GroupRoleRepository,
+    TenantRepository,
+)
 from osiki.api.exceptions import ConflictError, NotFoundError
 from osiki.models.group import Group
 from osiki.schemas.base import PaginatedResponse
@@ -133,10 +137,16 @@ async def assign_role_to_group(
     data: GroupRoleAssignmentRequest,
     group_repo: GroupRepository,
     group_role_repo: GroupRoleRepository,
+    tenant_repo: TenantRepository,
 ) -> GroupRoleAssignmentResponse:
     group = await group_repo.get_by_id(group_id)
     if not group:
         raise NotFoundError("Group not found", details={"group_id": group_id})
+
+    # A group isn't a user, so a tenant-scoped group role adds no membership.
+    tenant_id = data.scope.tenant_id if data.scope else None
+    if tenant_id is not None and not await tenant_repo.get_by_external_id(tenant_id):
+        raise NotFoundError("Tenant not found", details={"tenant_id": tenant_id})
 
     from beanie import PydanticObjectId
 

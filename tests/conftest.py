@@ -29,12 +29,16 @@ from osiki.repositories.permissions.base_permission_repository import (
     BasePermissionRepository,
 )
 from osiki.repositories.roles.base_role_repository import BaseRoleRepository
+from osiki.repositories.tenant_members.base_tenant_member_repository import (
+    BaseTenantMemberRepository,
+)
 from osiki.repositories.user_groups.base_user_group_repository import (
     BaseUserGroupRepository,
 )
 from osiki.repositories.user_roles.base_user_role_repository import (
     BaseUserRoleRepository,
 )
+from osiki.repositories.users.base_user_repository import BaseUserRepository
 from osiki.services.authorization.authorization_service import AuthorizationService
 from osiki.services.constraint_validator.constraint_validator import ConstraintValidator
 from osiki.services.permission_resolver.permission_resolver import PermissionResolver
@@ -44,7 +48,9 @@ from tests.mocks import (
     MockGroupRoleRepository,
     MockPermissionRepository,
     MockRoleRepository,
+    MockTenantMemberRepository,
     MockUserGroupRepository,
+    MockUserRepository,
     MockUserRoleRepository,
     make_constraint,
     make_group,
@@ -74,7 +80,9 @@ __all__ = [
     "MockGroupRoleRepository",
     "MockPermissionRepository",
     "MockRoleRepository",
+    "MockTenantMemberRepository",
     "MockUserGroupRepository",
+    "MockUserRepository",
     "MockUserRoleRepository",
 ]
 
@@ -174,6 +182,16 @@ def mock_constraint_repository() -> BaseConstraintRepository:
     return MockConstraintRepository("default")
 
 
+@pytest.fixture
+def mock_user_repository() -> BaseUserRepository:
+    return MockUserRepository("default")
+
+
+@pytest.fixture
+def mock_tenant_member_repository() -> BaseTenantMemberRepository:
+    return MockTenantMemberRepository("default")
+
+
 # --- Service Fixtures (for unit tests) ---
 
 
@@ -213,5 +231,13 @@ def constraint_validator(
 
 
 @pytest.fixture
-def authorization_service(permission_resolver) -> AuthorizationService:
-    return AuthorizationService(permission_resolver=permission_resolver)
+def authorization_service(
+    permission_resolver,
+    mock_user_repository,
+    mock_tenant_member_repository,
+) -> AuthorizationService:
+    return AuthorizationService(
+        permission_resolver=permission_resolver,
+        user_repository=mock_user_repository,
+        tenant_member_repository=mock_tenant_member_repository,
+    )

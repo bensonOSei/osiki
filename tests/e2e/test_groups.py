@@ -167,6 +167,7 @@ def test_assign_role_to_group(client: TestClient) -> None:
 
 
 def test_assign_role_to_group_with_scope(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t1", json={"name": "T1"})
     group_resp = client.post(f"{API}/groups", json={"name": "eng"})
     group_id = group_resp.json()["id"]
     role_id = str(PydanticObjectId())
@@ -183,6 +184,42 @@ def test_assign_role_to_group_with_scope(client: TestClient) -> None:
     data = response.json()
     assert data["scope"]["tenant_id"] == "t1"
     assert data["scope"]["region"] == "us-east"
+
+
+def test_group_tenant_scoped_assignment_adds_no_membership(
+    client: TestClient,
+) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    group_id = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+
+    response = client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={
+            "role_id": str(PydanticObjectId()),
+            "assigned_by": "admin",
+            "scope": {"tenant_id": "t"},
+        },
+    )
+    assert response.status_code == 201
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == []
+
+
+def test_group_tenant_scoped_assignment_unknown_tenant_404(
+    client: TestClient,
+) -> None:
+    group_id = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+    role_id = str(PydanticObjectId())
+
+    response = client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={
+            "role_id": role_id,
+            "assigned_by": "admin",
+            "scope": {"tenant_id": "missing"},
+        },
+    )
+    assert response.status_code == 404
+    assert client.delete(f"{API}/groups/{group_id}/roles/{role_id}").status_code == 404
 
 
 def test_assign_role_to_nonexistent_group(client: TestClient) -> None:

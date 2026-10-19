@@ -171,8 +171,16 @@ def get_authorization_service(
     permission_resolver: Annotated[
         BasePermissionResolver, Depends(get_permission_resolver)
     ],
+    user_repository: Annotated[BaseUserRepository, Depends(get_user_repository)],
+    tenant_member_repository: Annotated[
+        BaseTenantMemberRepository, Depends(get_tenant_member_repository)
+    ],
 ) -> BaseAuthorizationService:
-    return AuthorizationService(permission_resolver=permission_resolver)
+    return AuthorizationService(
+        permission_resolver=permission_resolver,
+        user_repository=user_repository,
+        tenant_member_repository=tenant_member_repository,
+    )
 
 
 # Type aliases for dependency injection

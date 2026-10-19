@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Query, status
 
 from osiki.api.dependencies import (
+    TenantMemberRepository,
+    TenantRepository,
     UserGroupRepository,
     UserRepository,
     UserRoleRepository,
@@ -130,10 +132,16 @@ async def assign_role_to_user(
     data: UserRoleAssignmentRequest,
     user_repo: UserRepository,
     user_role_repo: UserRoleRepository,
+    tenant_repo: TenantRepository,
+    member_repo: TenantMemberRepository,
 ) -> UserRoleAssignmentResponse:
     user = await user_repo.get_by_id(user_id)
     if not user:
         raise NotFoundError("User not found", details={"user_id": user_id})
+
+    tenant_id = data.scope.tenant_id if data.scope else None
+    if tenant_id is not None and not await tenant_repo.get_by_external_id(tenant_id):
+        raise NotFoundError("Tenant not found", details={"tenant_id": tenant_id})
 
     from beanie import PydanticObjectId
 
@@ -151,6 +159,9 @@ async def assign_role_to_user(
         assignment_reason=data.assignment_reason,
     )
     created = await user_role_repo.create(user_role)
+    if tenant_id is not None:
+        # A tenant-scoped role makes the user a member of that tenant.
+        await member_repo.add(tenant_id, user.external_id)
 
     return UserRoleAssignmentResponse(
         id=str(created.id),

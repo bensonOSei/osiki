@@ -1,10 +1,10 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from osiki.schemas.scope import ScopeSchema
 
 
 class AuthorizationRequest(BaseModel):
-    user_id: str
+    user_id: str = Field(description="The user's external id.")
     resource: str
     action: str
     scope: ScopeSchema | None = None

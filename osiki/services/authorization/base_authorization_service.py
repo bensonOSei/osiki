@@ -19,4 +19,10 @@ class BaseAuthorizationService(ABC):
         resource: str,
         action: str,
         scope: dict[str, str] | None = None,
-    ) -> AuthorizationResult: ...
+    ) -> AuthorizationResult:
+        """Decide whether a user may perform action on resource within scope.
+
+        user_id is the user's EXTERNAL id. Denial reasons: "unknown_user",
+        "not_tenant_member" (scope names a tenant the user isn't a member of)
+        and "no_permission".
+        """

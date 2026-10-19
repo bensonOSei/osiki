@@ -1,5 +1,9 @@
 from loguru import logger
 
+from osiki.repositories.tenant_members.base_tenant_member_repository import (
+    BaseTenantMemberRepository,
+)
+from osiki.repositories.users.base_user_repository import BaseUserRepository
 from osiki.services.authorization.base_authorization_service import (
     AuthorizationResult,
     BaseAuthorizationService,
@@ -10,8 +14,27 @@ from osiki.services.permission_resolver.base_permission_resolver import (
 
 
 class AuthorizationService(BaseAuthorizationService):
-    def __init__(self, permission_resolver: BasePermissionResolver) -> None:
+    def __init__(
+        self,
+        permission_resolver: BasePermissionResolver,
+        user_repository: BaseUserRepository,
+        tenant_member_repository: BaseTenantMemberRepository,
+    ) -> None:
         self._permission_resolver = permission_resolver
+        self._user_repo = user_repository
+        self._tenant_member_repo = tenant_member_repository
+
+    def _deny(
+        self, user_id: str, resource: str, action: str, reason: str
+    ) -> AuthorizationResult:
+        logger.info(
+            "Authorization denied",
+            user_id=user_id,
+            resource=resource,
+            action=action,
+            reason=reason,
+        )
+        return AuthorizationResult(allowed=False, denial_reason=reason)
 
     async def authorize(
         self,
@@ -27,8 +50,18 @@ class AuthorizationService(BaseAuthorizationService):
             action=action,
             scope=scope,
         )
+        user = await self._user_repo.get_by_external_id(user_id)
+        if user is None or not user.is_active:
+            return self._deny(user_id, resource, action, "unknown_user")
+
+        if scope and "tenant_id" in scope:
+            if not await self._tenant_member_repo.is_member(
+                scope["tenant_id"], user_id
+            ):
+                return self._deny(user_id, resource, action, "not_tenant_member")
+
         permissions = await self._permission_resolver.get_effective_permissions(
-            user_id, scope
+            str(user.id), scope
         )
 
         required_permission = f"{resource}:{action}"
@@ -65,14 +98,4 @@ class AuthorizationService(BaseAuthorizationService):
                     matched_permission=wildcard,
                 )
 
-        logger.info(
-            "Authorization denied",
-            user_id=user_id,
-            resource=resource,
-            action=action,
-            reason="no_permission",
-        )
-        return AuthorizationResult(
-            allowed=False,
-            denial_reason="no_permission",
-        )
+        return self._deny(user_id, resource, action, "no_permission")

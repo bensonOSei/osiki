@@ -178,6 +178,7 @@ def test_assign_role_to_user(client: TestClient) -> None:
 
 
 def test_assign_role_to_user_with_scope(client: TestClient) -> None:
+    client.put(f"{API}/tenants/tenant-1", json={"name": "Tenant 1"})
     user_resp = client.post(f"{API}/users", json={"external_id": "user-1"})
     user_id = user_resp.json()["id"]
     role_id = str(PydanticObjectId())
@@ -192,6 +193,57 @@ def test_assign_role_to_user_with_scope(client: TestClient) -> None:
     )
     assert response.status_code == 201
     assert response.json()["scope"]["tenant_id"] == "tenant-1"
+
+
+def test_tenant_scoped_assignment_adds_membership(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    user_resp = client.post(f"{API}/users", json={"external_id": "ext-1"})
+    user_id = user_resp.json()["id"]
+
+    response = client.post(
+        f"{API}/users/{user_id}/roles",
+        json={
+            "role_id": str(PydanticObjectId()),
+            "assigned_by": "admin",
+            "scope": {"tenant_id": "t"},
+        },
+    )
+    assert response.status_code == 201
+
+    members = client.get(f"{API}/tenants/t/members").json()["items"]
+    assert members == ["ext-1"]
+
+
+def test_unscoped_assignment_adds_no_membership(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    user_resp = client.post(f"{API}/users", json={"external_id": "ext-1"})
+    user_id = user_resp.json()["id"]
+
+    response = client.post(
+        f"{API}/users/{user_id}/roles",
+        json={"role_id": str(PydanticObjectId()), "assigned_by": "admin"},
+    )
+    assert response.status_code == 201
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == []
+
+
+def test_tenant_scoped_assignment_unknown_tenant_404(client: TestClient) -> None:
+    user_resp = client.post(f"{API}/users", json={"external_id": "ext-1"})
+    user_id = user_resp.json()["id"]
+    role_id = str(PydanticObjectId())
+
+    response = client.post(
+        f"{API}/users/{user_id}/roles",
+        json={
+            "role_id": role_id,
+            "assigned_by": "admin",
+            "scope": {"tenant_id": "missing"},
+        },
+    )
+    assert response.status_code == 404
+    assert client.get(f"{API}/tenants/missing/members").json()["items"] == []
+    # No assignment was created, so there is nothing to revoke.
+    assert client.delete(f"{API}/users/{user_id}/roles/{role_id}").status_code == 404
 
 
 def test_assign_role_to_nonexistent_user(client: TestClient) -> None:

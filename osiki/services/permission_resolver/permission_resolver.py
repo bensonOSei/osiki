@@ -77,16 +77,17 @@ class PermissionResolver(BasePermissionResolver):
             *[(a.role_id, a.scope.to_dict()) for a in group_assignments],
         ]
 
-        if scope:
-            all_assignments = [
-                (role_id, user_scope)
-                for role_id, user_scope in all_assignments
-                if self._scope_matcher.matches(user_scope, scope)
-            ]
-            logger.trace(
-                "Filtered assignments by scope",
-                remaining_count=len(all_assignments),
-            )
+        # Always filter: an empty request scope must not match tenant-scoped
+        # assignments.
+        all_assignments = [
+            (role_id, user_scope)
+            for role_id, user_scope in all_assignments
+            if self._scope_matcher.matches(user_scope, scope or {})
+        ]
+        logger.trace(
+            "Filtered assignments by scope",
+            remaining_count=len(all_assignments),
+        )
 
         for role_id, _ in all_assignments:
             ancestor_ids = await self.get_role_ancestors(str(role_id))
