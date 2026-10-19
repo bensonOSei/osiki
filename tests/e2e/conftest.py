@@ -37,6 +37,7 @@ from osiki.api.routes import (
     health_router,
     permissions_router,
     roles_router,
+    snapshot_router,
     tenants_router,
     users_router,
 )
@@ -150,6 +151,7 @@ def _create_test_app() -> FastAPI:
     test_app.include_router(constraints_router, prefix=settings.api_prefix)
     test_app.include_router(tenants_router, prefix=settings.api_prefix)
     test_app.include_router(authorization_router, prefix=settings.api_prefix)
+    test_app.include_router(snapshot_router, prefix=settings.api_prefix)
 
     @test_app.get("/_test/authorization-error")
     async def _trigger_authorization_error() -> None:

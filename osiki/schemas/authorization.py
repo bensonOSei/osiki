@@ -25,3 +25,10 @@ class AuthorizationResponse(BaseModel):
     condition: str | None = None
     denial_reason: str | None = None
     cache_hit: bool = False
+
+
+class FilterRequest(BaseModel):
+    user_id: str = Field(description="The user's external id.")
+    resource: str
+    action: str
+    scope: ScopeSchema | None = None

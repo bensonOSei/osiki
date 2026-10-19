@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from osiki.decision.models import EffectiveGrant
+from osiki.decision.models import EffectiveGrant, FilterResult
 
 
 class AuthorizationResult(BaseModel):
@@ -37,3 +37,16 @@ class BaseAuthorizationService(ABC):
         self, user_id: str, scope: dict[str, str] | None = None
     ) -> list[EffectiveGrant] | None:
         """The grants the user (EXTERNAL id) holds in scope; None if unknown."""
+
+    @abstractmethod
+    async def filter(
+        self,
+        user_id: str,
+        resource: str,
+        action: str,
+        scope: dict[str, str] | None = None,
+    ) -> FilterResult:
+        """The records the user (EXTERNAL id) may action on resource in scope.
+
+        An unknown user gets ``none``.
+        """

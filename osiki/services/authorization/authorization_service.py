@@ -3,8 +3,8 @@ from typing import Any
 
 from loguru import logger
 
-from osiki.decision.decide import decide, effective_grants
-from osiki.decision.models import DecisionRequest, EffectiveGrant
+from osiki.decision.decide import decide, effective_grants, list_filter
+from osiki.decision.models import DecisionRequest, EffectiveGrant, FilterResult
 from osiki.services.authorization.base_authorization_service import (
     AuthorizationResult,
     BaseAuthorizationService,
@@ -73,3 +73,16 @@ class AuthorizationService(BaseAuthorizationService):
             return None
         snapshot = await self._snapshot_builder.build()
         return effective_grants(snapshot, bundle, scope or {}, time.time())
+
+    async def filter(
+        self,
+        user_id: str,
+        resource: str,
+        action: str,
+        scope: dict[str, str] | None = None,
+    ) -> FilterResult:
+        bundle = await self._bundle_builder.build(user_id)
+        if bundle is None:
+            return FilterResult(mode="none")
+        snapshot = await self._snapshot_builder.build()
+        return list_filter(snapshot, bundle, resource, action, scope or {}, time.time())

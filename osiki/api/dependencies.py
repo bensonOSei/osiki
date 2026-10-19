@@ -270,6 +270,8 @@ TenantMemberRepository = Annotated[
 AuthorizationServiceDep = Annotated[
     BaseAuthorizationService, Depends(get_authorization_service)
 ]
+SnapshotBuilderDep = Annotated[SnapshotBuilder, Depends(get_snapshot_builder)]
+BundleBuilderDep = Annotated[BundleBuilder, Depends(get_bundle_builder)]
 ConstraintValidatorDep = Annotated[
     BaseConstraintValidator, Depends(get_constraint_validator)
 ]

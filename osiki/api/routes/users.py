@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query, status
 
 from osiki.api.dependencies import (
+    BundleBuilderDep,
     TenantMemberRepository,
     TenantRepository,
     UserGroupRepository,
@@ -8,6 +9,7 @@ from osiki.api.dependencies import (
     UserRoleRepository,
 )
 from osiki.api.exceptions import ConflictError, NotFoundError
+from osiki.decision.models import UserBundle
 from osiki.models.user import User
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.role_assignment import (
@@ -66,6 +68,17 @@ async def upsert_user(
         external_id, data.name, data.email, data.attributes
     )
     return _to_read(user)
+
+
+@router.get("/by-external/{external_id}/bundle")
+async def get_user_bundle(
+    external_id: str,
+    bundle_builder: BundleBuilderDep,
+) -> UserBundle:
+    bundle = await bundle_builder.build(external_id)
+    if bundle is None:
+        raise NotFoundError("User not found", details={"external_id": external_id})
+    return bundle
 
 
 @router.get("/{user_id}")
