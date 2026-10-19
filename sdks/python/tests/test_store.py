@@ -1,9 +1,11 @@
 import asyncio
 import logging
+from typing import Any
 
 import pytest
 from conftest import CONFIG, FakeClient, ManualClock, make_bundle, make_snapshot
 
+from osiki_sdk.client import EngineUnavailable
 from osiki_sdk.store import PolicyStore
 
 
@@ -161,3 +163,101 @@ async def test_poll_error_keeps_last_snapshot(
     assert store.snapshot is good
     assert store.available is True
     assert "osiki poll failed" in caplog.text
+
+
+async def test_concurrent_cold_fetches_share_one_call(
+    store: PolicyStore, fake: FakeClient
+) -> None:
+    fake.bundle_gate = asyncio.Event()
+    waiters = [asyncio.create_task(store.get_bundle("u1")) for _ in range(20)]
+    await asyncio.sleep(0)
+    fake.bundle_gate.set()
+    assert await asyncio.gather(*waiters) == [None] * 20
+    assert fake.count("get_bundle") == 1
+    # Done: the next miss after expiry fetches again.
+    assert store._inflight == {}
+
+
+async def test_concurrent_cold_fetch_failure_reaches_every_waiter(
+    store: PolicyStore, fake: FakeClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate = asyncio.Event()
+    calls: list[str] = []
+
+    async def failing(user_id: str) -> Any:
+        calls.append(user_id)
+        await gate.wait()
+        raise EngineUnavailable("down")
+
+    monkeypatch.setattr(fake, "get_bundle", failing)
+    waiters = [asyncio.create_task(store.get_bundle("kofi")) for _ in range(5)]
+    await asyncio.sleep(0)
+    gate.set()
+    results = await asyncio.gather(*waiters, return_exceptions=True)
+    assert all(isinstance(r, EngineUnavailable) for r in results)
+    assert calls == ["kofi"]
+    monkeypatch.undo()
+    assert await store.get_bundle("kofi") == make_bundle()
+
+
+async def test_cancelled_waiter_does_not_cancel_the_shared_fetch(
+    store: PolicyStore, fake: FakeClient
+) -> None:
+    fake.bundle_gate = asyncio.Event()
+    first = asyncio.create_task(store.get_bundle("kofi"))
+    second = asyncio.create_task(store.get_bundle("kofi"))
+    await asyncio.sleep(0)
+    second.cancel()
+    await asyncio.sleep(0)
+    fake.bundle_gate.set()
+    assert await first == make_bundle()
+    assert second.cancelled()
+    assert fake.count("get_bundle") == 1
+
+
+async def test_cancelled_fetcher_still_answers_waiters(
+    store: PolicyStore, fake: FakeClient
+) -> None:
+    fake.bundle_gate = asyncio.Event()
+    first = asyncio.create_task(store.get_bundle("kofi"))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(store.get_bundle("kofi"))
+    await asyncio.sleep(0)
+    first.cancel()
+    await asyncio.sleep(0)
+    fake.bundle_gate.set()
+    assert await second == make_bundle()
+    assert first.cancelled()
+    assert fake.count("get_bundle") == 1
+
+
+async def test_shared_fetch_racing_an_invalidation_is_not_cached(
+    store: PolicyStore, fake: FakeClient
+) -> None:
+    fake.bundle_gate = asyncio.Event()
+    waiters = [asyncio.create_task(store.get_bundle("kofi")) for _ in range(3)]
+    await asyncio.sleep(0)
+    store.invalidate_user("kofi")
+    # A caller after the invalidation never joins the stale fetch.
+    later = asyncio.create_task(store.get_bundle("kofi"))
+    while fake.count("get_bundle") < 2:
+        await asyncio.sleep(0)
+    fake.bundle_gate.set()
+    assert await asyncio.gather(*waiters, later) == [make_bundle()] * 4
+    assert store._inflight == {}
+    await store.get_bundle("kofi")  # the later fetch was cached
+    assert fake.count("get_bundle") == 2
+
+
+async def test_clear_bundles_drops_in_flight_fetches(
+    store: PolicyStore, fake: FakeClient
+) -> None:
+    fake.bundle_gate = asyncio.Event()
+    first = asyncio.create_task(store.get_bundle("kofi"))
+    await asyncio.sleep(0)
+    store.clear_bundles()
+    second = asyncio.create_task(store.get_bundle("kofi"))
+    await asyncio.sleep(0)
+    fake.bundle_gate.set()
+    await asyncio.gather(first, second)
+    assert fake.count("get_bundle") == 2

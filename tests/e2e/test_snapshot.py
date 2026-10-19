@@ -178,6 +178,26 @@ def test_assignment_writes_bump_assignments_version(client: TestClient) -> None:
     assert client.get(f"{API}/snapshot/version").json()["version"] == config_before
 
 
+def test_noop_upserts_do_not_bump_assignments_version(client: TestClient) -> None:
+    user = {"name": "Kofi", "email": "k@test.com", "attributes": {"team": "t1"}}
+    tenant = {"name": "Acme", "attributes": {"plan": "pro"}}
+    assert client.put(f"{API}/users/by-external/kofi", json=user).status_code == 200
+    assert client.put(f"{API}/tenants/acme", json=tenant).status_code == 200
+    before = _assignments_version(client)
+
+    assert client.put(f"{API}/users/by-external/kofi", json=user).status_code == 200
+    assert client.put(f"{API}/users/by-external/kofi", json={}).status_code == 200
+    assert client.put(f"{API}/tenants/acme", json=tenant).status_code == 200
+    assert _assignments_version(client) == before
+
+    changed = {**user, "attributes": {"team": "t2"}}
+    client.put(f"{API}/users/by-external/kofi", json=changed)
+    after_user = _assignments_version(client)
+    assert after_user > before
+    client.put(f"{API}/tenants/acme", json={**tenant, "name": "Acme Ltd"})
+    assert _assignments_version(client) > after_user
+
+
 def test_failed_assignment_writes_do_not_bump(client: TestClient) -> None:
     fake = "507f1f77bcf86cd799439011"
     before = _assignments_version(client)

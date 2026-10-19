@@ -105,10 +105,15 @@ class MongoDBUserRepository(BaseUserRepository):
                 attributes=attributes or {},
             )
             return await self.create(user)
-        if name is not None:
-            user.name = name
-        if email is not None:
-            user.email = email
-        if attributes is not None:
-            user.attributes = attributes
+        changed = False
+        if name is not None and name != user.name:
+            user.name, changed = name, True
+        if email is not None and email != user.email:
+            user.email, changed = email, True
+        if attributes is not None and attributes != user.attributes:
+            user.attributes, changed = attributes, True
+        if not changed:
+            # A no-op sync must not bump the version: that flushes every
+            # SDK's bundle cache.
+            return user
         return await self.update(user)

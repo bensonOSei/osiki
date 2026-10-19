@@ -238,3 +238,56 @@ async def test_settings_read_the_stored_policy() -> None:
 
     assert (await State("stored").get_settings()).unmapped == "allow"
     assert await State("stored").get_assignments_version() == 0
+
+
+async def test_noop_upserts_do_not_bump() -> None:
+    state = State(ENV)
+    users = MongoDBUserRepository(ENV, state)
+    tenants = MongoDBTenantRepository(ENV, state)
+    user = await users.upsert_by_external_id("u1", "Kofi", "k@test.com", {"a": 1})
+    tenant = await tenants.upsert("acme", "Acme", {"plan": "pro"})
+    before = await state.get_assignments_version()
+
+    same_user = await users.upsert_by_external_id(
+        "u1", "Kofi", "k@test.com", {"a": 1}
+    )
+    await users.upsert_by_external_id("u1", None, None, None)
+    await users.upsert_by_external_id("u1", "Kofi", None, None)
+    same_tenant = await tenants.upsert("acme", "Acme", {"plan": "pro"})
+
+    assert await state.get_assignments_version() == before
+    assert same_user.id == user.id and same_user.updated_at == user.updated_at
+    assert same_tenant.id == tenant.id
+    assert same_tenant.updated_at == tenant.updated_at
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda s: MongoDBUserRepository(ENV, s).upsert_by_external_id(
+            "u1", "Ama", None, None
+        ),
+        lambda s: MongoDBUserRepository(ENV, s).upsert_by_external_id(
+            "u1", None, "new@test.com", None
+        ),
+        lambda s: MongoDBUserRepository(ENV, s).upsert_by_external_id(
+            "u1", None, None, {"a": 2}
+        ),
+        lambda s: MongoDBTenantRepository(ENV, s).upsert("acme", "Acme Ltd", {}),
+        lambda s: MongoDBTenantRepository(ENV, s).upsert(
+            "acme", "Acme", {"plan": "free"}
+        ),
+    ],
+    ids=["user-name", "user-email", "user-attributes", "tenant-name", "tenant-attrs"],
+)
+async def test_changed_upserts_still_bump(change: Write) -> None:
+    state = State(ENV)
+    await MongoDBUserRepository(ENV, state).upsert_by_external_id(
+        "u1", "Kofi", "k@test.com", {"a": 1}
+    )
+    await MongoDBTenantRepository(ENV, state).upsert("acme", "Acme", {"plan": "pro"})
+    before = await state.get_assignments_version()
+
+    await change(state)
+
+    assert await state.get_assignments_version() > before

@@ -76,12 +76,15 @@ async def test_check_allows_via_cached_snapshot_and_bundle(
     osiki: Osiki, fake: FakeClient
 ) -> None:
     await osiki.start()
+    # Let the poller's first poll (which clears every bundle) land first.
+    while fake.count("get_versions") == 0:
+        await asyncio.sleep(0)
     first = await osiki.check("kofi", "invoices", "read")
     assert first.allowed is True and first.matched_permission == "invoices:read"
-    calls = len(fake.calls)
+    # The poller (poll_interval=0) keeps calling get_versions meanwhile.
     second = await osiki.check("kofi", "invoices", "read")
     assert second == first
-    assert len(fake.calls) == calls
+    assert fake.count("get_bundle") == 1 and fake.count("get_snapshot") == 1
 
 
 async def test_check_denies_without_permission(osiki: Osiki) -> None:

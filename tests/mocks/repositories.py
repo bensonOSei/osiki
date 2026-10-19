@@ -577,6 +577,12 @@ class MockUserRepository(_AssignmentBound[User], BaseUserRepository):
     ) -> User:
         for user in self._scoped():
             if user.external_id == external_id:
+                if (
+                    (name is None or name == user.name)
+                    and (email is None or email == user.email)
+                    and (attributes is None or attributes == user.attributes)
+                ):
+                    return user
                 if name is not None:
                     user.name = name
                 if email is not None:
@@ -602,6 +608,8 @@ class MockTenantRepository(_AssignmentBound[Tenant], BaseTenantRepository):
     ) -> Tenant:
         for tenant in self._scoped():
             if tenant.external_id == external_id:
+                if tenant.name == name and tenant.attributes == attributes:
+                    return tenant
                 tenant.name = name
                 tenant.attributes = attributes
                 tenant.updated_at = time.time()

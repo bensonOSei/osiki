@@ -36,6 +36,10 @@ class MongoDBTenantRepository(BaseTenantRepository):
             await self._state.bump_assignments_version()
             logger.debug("Tenant created", external_id=external_id)
             return tenant
+        if tenant.name == name and tenant.attributes == attributes:
+            # A no-op sync must not bump the version: that flushes every
+            # SDK's bundle cache.
+            return tenant
         tenant.name = name
         tenant.attributes = attributes
         tenant.updated_at = time.time()
