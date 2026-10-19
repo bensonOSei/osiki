@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 
+from pymongo.asynchronous.client_session import AsyncClientSession
+
 from osiki.decision.models import EnvironmentSettings
 
 
@@ -9,7 +11,9 @@ class BaseEnvironmentStateRepository(ABC):
         """The environment's config version; 0 when never bumped."""
 
     @abstractmethod
-    async def bump_config_version(self) -> int:
+    async def bump_config_version(
+        self, *, session: AsyncClientSession | None = None
+    ) -> int:
         """Atomically increment the config version and return the new value."""
 
     @abstractmethod
@@ -17,7 +21,9 @@ class BaseEnvironmentStateRepository(ABC):
         """The environment's assignments version; 0 when never bumped."""
 
     @abstractmethod
-    async def bump_assignments_version(self) -> int:
+    async def bump_assignments_version(
+        self, *, session: AsyncClientSession | None = None
+    ) -> int:
         """Atomically increment the assignments version; return the new value."""
 
     @abstractmethod

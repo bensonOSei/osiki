@@ -2,6 +2,7 @@ import time
 
 from beanie import PydanticObjectId
 from loguru import logger
+from pymongo.asynchronous.client_session import AsyncClientSession
 
 from osiki.models.base import AttributeValue, attributes_equal
 from osiki.models.user import User
@@ -18,10 +19,12 @@ class MongoDBUserRepository(BaseUserRepository):
         self.environment_id = environment_id
         self._state = state
 
-    async def create(self, user: User) -> User:
+    async def create(
+        self, user: User, *, session: AsyncClientSession | None = None
+    ) -> User:
         user.environment_id = self.environment_id
-        await user.insert()
-        await self._state.bump_assignments_version()
+        await user.insert(session=session)
+        await self._state.bump_assignments_version(session=session)
         logger.debug("User created", user_id=str(user.id), external_id=user.external_id)
         return user
 
@@ -46,10 +49,12 @@ class MongoDBUserRepository(BaseUserRepository):
             User.environment_id == self.environment_id, User.email == email
         )
 
-    async def update(self, user: User) -> User:
+    async def update(
+        self, user: User, *, session: AsyncClientSession | None = None
+    ) -> User:
         user.updated_at = time.time()
-        await user.save()
-        await self._state.bump_assignments_version()
+        await user.save(session=session)
+        await self._state.bump_assignments_version(session=session)
         logger.debug("User updated", user_id=str(user.id))
         return user
 
@@ -93,9 +98,13 @@ class MongoDBUserRepository(BaseUserRepository):
         name: str | None,
         email: str | None,
         attributes: dict[str, AttributeValue] | None,
+        *,
+        session: AsyncClientSession | None = None,
     ) -> User:
         user = await User.find_one(
-            User.environment_id == self.environment_id, User.external_id == external_id
+            User.environment_id == self.environment_id,
+            User.external_id == external_id,
+            session=session,
         )
         if user is None:
             user = User(
@@ -104,7 +113,7 @@ class MongoDBUserRepository(BaseUserRepository):
                 email=email,
                 attributes=attributes or {},
             )
-            return await self.create(user)
+            return await self.create(user, session=session)
         changed = False
         if name is not None and name != user.name:
             user.name, changed = name, True
@@ -116,4 +125,4 @@ class MongoDBUserRepository(BaseUserRepository):
             # A no-op sync must not bump the version: that flushes every
             # SDK's bundle cache.
             return user
-        return await self.update(user)
+        return await self.update(user, session=session)

@@ -118,14 +118,18 @@ class MockEnvironmentStateRepository(BaseEnvironmentStateRepository):
     async def get_config_version(self) -> int:
         return self._version
 
-    async def bump_config_version(self) -> int:
+    async def bump_config_version(
+        self, *, session: AsyncClientSession | None = None
+    ) -> int:
         self._version += 1
         return self._version
 
     async def get_assignments_version(self) -> int:
         return self._assignments_version
 
-    async def bump_assignments_version(self) -> int:
+    async def bump_assignments_version(
+        self, *, session: AsyncClientSession | None = None
+    ) -> int:
         self._assignments_version += 1
         return self._assignments_version
 
@@ -200,17 +204,23 @@ def _grant(permission_id: str, condition_id: str | None) -> Grant:
 
 
 class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository):
-    async def create(self, user_role: UserRole) -> UserRole:
+    async def create(
+        self, user_role: UserRole, *, session: AsyncClientSession | None = None
+    ) -> UserRole:
         if user_role.id is None:
             user_role.id = PydanticObjectId()
         self._store(str(user_role.id), user_role)
         await self._bump()
         return user_role
 
-    async def get_by_id(self, user_role_id: str) -> UserRole | None:
+    async def get_by_id(
+        self, user_role_id: str, *, session: AsyncClientSession | None = None
+    ) -> UserRole | None:
         return self._get(user_role_id)
 
-    async def get_user_roles(self, user_id: str) -> list[UserRole]:
+    async def get_user_roles(
+        self, user_id: str, *, session: AsyncClientSession | None = None
+    ) -> list[UserRole]:
         return [
             ur for ur in self._scoped() if str(ur.user_id) == user_id and ur.is_active
         ]
@@ -221,7 +231,11 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
         ]
 
     async def get_by_tenant(
-        self, tenant_id: str, role_id: str | None = None
+        self,
+        tenant_id: str,
+        role_id: str | None = None,
+        *,
+        session: AsyncClientSession | None = None,
     ) -> list[UserRole]:
         result = []
         for ur in self._scoped():
@@ -231,7 +245,12 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
         return result
 
     async def find_assignment(
-        self, user_id: str, role_id: str, tenant_id: str | None = None
+        self,
+        user_id: str,
+        role_id: str,
+        tenant_id: str | None = None,
+        *,
+        session: AsyncClientSession | None = None,
     ) -> UserRole | None:
         for ur in self._scoped():
             if (
@@ -243,7 +262,9 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
                     return ur
         return None
 
-    async def revoke(self, user_role_id: str) -> bool:
+    async def revoke(
+        self, user_role_id: str, *, session: AsyncClientSession | None = None
+    ) -> bool:
         if self._get(user_role_id) is not None:
             self._data[user_role_id].is_active = False
             await self._bump()
@@ -358,14 +379,18 @@ class MockGroupRoleRepository(_AssignmentBound[GroupRole], BaseGroupRoleReposito
 
 
 class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
-    async def create(self, role: Role) -> Role:
+    async def create(
+        self, role: Role, *, session: AsyncClientSession | None = None
+    ) -> Role:
         if role.id is None:
             role.id = PydanticObjectId()
         self._store(str(role.id), role)
         await self._bump()
         return role
 
-    async def get_by_id(self, role_id: str) -> Role | None:
+    async def get_by_id(
+        self, role_id: str, *, session: AsyncClientSession | None = None
+    ) -> Role | None:
         return self._get(role_id)
 
     async def get_by_name(self, name: str) -> Role | None:
@@ -389,13 +414,17 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
             if role.parent_role_id and str(role.parent_role_id) == parent_role_id
         ]
 
-    async def update(self, role: Role) -> Role:
+    async def update(
+        self, role: Role, *, session: AsyncClientSession | None = None
+    ) -> Role:
         role.updated_at = time.time()
         self._data[str(role.id)] = role
         await self._bump()
         return role
 
-    async def deactivate(self, role_id: str) -> bool:
+    async def deactivate(
+        self, role_id: str, *, session: AsyncClientSession | None = None
+    ) -> bool:
         role = self._get(role_id)
         if role is None or role.is_system:
             return False
@@ -527,7 +556,9 @@ class MockConstraintRepository(_ConfigBound[Constraint], BaseConstraintRepositor
 
 
 class MockUserRepository(_AssignmentBound[User], BaseUserRepository):
-    async def create(self, user: User) -> User:
+    async def create(
+        self, user: User, *, session: AsyncClientSession | None = None
+    ) -> User:
         if user.id is None:
             user.id = PydanticObjectId()
         self._store(str(user.id), user)
@@ -549,7 +580,9 @@ class MockUserRepository(_AssignmentBound[User], BaseUserRepository):
                 return user
         return None
 
-    async def update(self, user: User) -> User:
+    async def update(
+        self, user: User, *, session: AsyncClientSession | None = None
+    ) -> User:
         user.updated_at = time.time()
         self._data[str(user.id)] = user
         await self._bump()
@@ -579,6 +612,8 @@ class MockUserRepository(_AssignmentBound[User], BaseUserRepository):
         name: str | None,
         email: str | None,
         attributes: dict[str, AttributeValue] | None,
+        *,
+        session: AsyncClientSession | None = None,
     ) -> User:
         for user in self._scoped():
             if user.external_id == external_id:
@@ -649,13 +684,17 @@ class MockTenantMemberRepository(
     def _key(self, tenant_id: str, user_id: str) -> str:
         return f"{tenant_id}\x00{user_id}"
 
-    async def add(self, tenant_id: str, user_id: str) -> None:
+    async def add(
+        self, tenant_id: str, user_id: str, *, session: AsyncClientSession | None = None
+    ) -> None:
         key = self._key(tenant_id, user_id)
         if self._get(key) is None:
             self._store(key, TenantMember(tenant_id=tenant_id, user_id=user_id))
             await self._bump()
 
-    async def remove(self, tenant_id: str, user_id: str) -> bool:
+    async def remove(
+        self, tenant_id: str, user_id: str, *, session: AsyncClientSession | None = None
+    ) -> bool:
         key = self._key(tenant_id, user_id)
         if self._get(key) is None:
             return False
@@ -663,7 +702,9 @@ class MockTenantMemberRepository(
         await self._bump()
         return True
 
-    async def is_member(self, tenant_id: str, user_id: str) -> bool:
+    async def is_member(
+        self, tenant_id: str, user_id: str, *, session: AsyncClientSession | None = None
+    ) -> bool:
         return self._get(self._key(tenant_id, user_id)) is not None
 
     async def tenants_for_user(self, user_id: str) -> list[str]:

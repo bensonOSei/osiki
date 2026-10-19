@@ -93,6 +93,7 @@ from osiki.services.snapshot_builder.snapshot_builder import (
     SnapshotBuilder,
     SnapshotCache,
 )
+from osiki.services.unit_of_work import UnitOfWork, get_unit_of_work
 
 
 # Repository dependencies
@@ -317,3 +318,4 @@ BundleBuilderDep = Annotated[BundleBuilder, Depends(get_bundle_builder)]
 ConstraintValidatorDep = Annotated[
     BaseConstraintValidator, Depends(get_constraint_validator)
 ]
+UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]

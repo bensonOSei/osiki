@@ -1,3 +1,5 @@
+from pymongo.asynchronous.client_session import AsyncClientSession
+
 from osiki.models.tenant_member import TenantMember
 from osiki.repositories.environment_state.base_environment_state_repository import (
     BaseEnvironmentStateRepository,
@@ -14,31 +16,40 @@ class MongoDBTenantMemberRepository(BaseTenantMemberRepository):
         self.environment_id = environment_id
         self._state = state
 
-    async def _find(self, tenant_id: str, user_id: str) -> TenantMember | None:
+    async def _find(
+        self, tenant_id: str, user_id: str, session: AsyncClientSession | None
+    ) -> TenantMember | None:
         return await TenantMember.find_one(
             TenantMember.environment_id == self.environment_id,
             TenantMember.tenant_id == tenant_id,
             TenantMember.user_id == user_id,
+            session=session,
         )
 
-    async def add(self, tenant_id: str, user_id: str) -> None:
-        if await self._find(tenant_id, user_id) is not None:
+    async def add(
+        self, tenant_id: str, user_id: str, *, session: AsyncClientSession | None = None
+    ) -> None:
+        if await self._find(tenant_id, user_id, session) is not None:
             return
         await TenantMember(
             environment_id=self.environment_id, tenant_id=tenant_id, user_id=user_id
-        ).insert()
-        await self._state.bump_assignments_version()
+        ).insert(session=session)
+        await self._state.bump_assignments_version(session=session)
 
-    async def remove(self, tenant_id: str, user_id: str) -> bool:
-        member = await self._find(tenant_id, user_id)
+    async def remove(
+        self, tenant_id: str, user_id: str, *, session: AsyncClientSession | None = None
+    ) -> bool:
+        member = await self._find(tenant_id, user_id, session)
         if member is None:
             return False
-        await member.delete()
-        await self._state.bump_assignments_version()
+        await member.delete(session=session)
+        await self._state.bump_assignments_version(session=session)
         return True
 
-    async def is_member(self, tenant_id: str, user_id: str) -> bool:
-        return await self._find(tenant_id, user_id) is not None
+    async def is_member(
+        self, tenant_id: str, user_id: str, *, session: AsyncClientSession | None = None
+    ) -> bool:
+        return await self._find(tenant_id, user_id, session) is not None
 
     async def tenants_for_user(self, user_id: str) -> list[str]:
         rows = await TenantMember.find(

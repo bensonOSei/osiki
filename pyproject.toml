@@ -66,9 +66,13 @@ osiki-sdk = {path = "sdks/python", develop = true, extras = ["sqlalchemy"]}
 asyncio_mode = "auto"
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "realmongo: needs a real replica-set MongoDB (OSIKI_TEST_MONGO_URL); run via make test-realmongo",
+]
 
 [tool.coverage.run]
 omit = [
+    "tests/realmongo/*",
     "osiki/main.py",
     "osiki/configs/*",
     "osiki/api/routes/health.py",

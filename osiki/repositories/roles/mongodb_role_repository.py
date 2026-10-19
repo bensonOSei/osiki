@@ -2,6 +2,7 @@ import time
 
 from beanie import PydanticObjectId
 from loguru import logger
+from pymongo.asynchronous.client_session import AsyncClientSession
 
 from osiki.models.role import Grant, Role
 from osiki.repositories.environment_state.base_environment_state_repository import (
@@ -17,16 +18,21 @@ class MongoDBRoleRepository(BaseRoleRepository):
         self.environment_id = environment_id
         self._state = state
 
-    async def create(self, role: Role) -> Role:
+    async def create(
+        self, role: Role, *, session: AsyncClientSession | None = None
+    ) -> Role:
         role.environment_id = self.environment_id
-        await role.insert()
-        await self._state.bump_config_version()
+        await role.insert(session=session)
+        await self._state.bump_config_version(session=session)
         logger.debug("Role created", role_id=str(role.id), name=role.name)
         return role
 
-    async def get_by_id(self, role_id: str) -> Role | None:
+    async def get_by_id(
+        self, role_id: str, *, session: AsyncClientSession | None = None
+    ) -> Role | None:
         role = await Role.find_one(
-            {"_id": PydanticObjectId(role_id), "environment_id": self.environment_id}
+            {"_id": PydanticObjectId(role_id), "environment_id": self.environment_id},
+            session=session,
         )
         if not role:
             logger.debug("Role not found", role_id=role_id)
@@ -58,15 +64,19 @@ class MongoDBRoleRepository(BaseRoleRepository):
             Role.is_active == True,
         ).to_list()
 
-    async def update(self, role: Role) -> Role:
+    async def update(
+        self, role: Role, *, session: AsyncClientSession | None = None
+    ) -> Role:
         role.updated_at = time.time()
-        await role.save()
-        await self._state.bump_config_version()
+        await role.save(session=session)
+        await self._state.bump_config_version(session=session)
         logger.debug("Role updated", role_id=str(role.id))
         return role
 
-    async def deactivate(self, role_id: str) -> bool:
-        role = await self.get_by_id(role_id)
+    async def deactivate(
+        self, role_id: str, *, session: AsyncClientSession | None = None
+    ) -> bool:
+        role = await self.get_by_id(role_id, session=session)
         if not role:
             logger.warning("Attempted to deactivate non-existent role", role_id=role_id)
             return False
@@ -75,8 +85,8 @@ class MongoDBRoleRepository(BaseRoleRepository):
             return False
         role.is_active = False
         role.updated_at = time.time()
-        await role.save()
-        await self._state.bump_config_version()
+        await role.save(session=session)
+        await self._state.bump_config_version(session=session)
         logger.info("Role deactivated", role_id=role_id)
         return True
 
