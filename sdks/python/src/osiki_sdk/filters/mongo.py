@@ -23,9 +23,12 @@ def _node(node: dict[str, Any]) -> dict[str, Any]:
     if "or" in node:
         return {"$or": [_node(child) for child in node["or"]]}
     # ``$type`` makes a missing, null or wrongly typed field match nothing, so
-    # ``ne``/``nin`` never match them and a boolean is never a number.
+    # ``ne``/``nin`` never match them and a boolean is never a number. Mongo
+    # looks inside arrays for ``$type`` and comparisons, but the leaf contract
+    # makes a list-valued field uncomparable, so arrays are excluded outright.
     return {
         str(node["field"]): {
+            "$not": {"$type": "array"},
             "$type": _TYPES[node["type"]],
             _OPS[node["op"]]: node["value"],
         }

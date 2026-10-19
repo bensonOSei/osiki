@@ -15,6 +15,7 @@ FILTERS = sorted(
     (Path(__file__).resolve().parents[3] / "conformance" / "filters").glob("*.json")
 )
 MISSING = object()
+ARRAY = {"$type": "array"}
 
 
 def _filter(node: dict[str, Any]) -> FilterResult:
@@ -44,14 +45,14 @@ def test_leaf_exact_dict(
     op: str, mongo_op: str, type_: str, mongo_type: str, value: Any
 ) -> None:
     assert to_mongo(_filter(_leaf(op, value, type_))) == {
-        "f": {"$type": mongo_type, mongo_op: value}
+        "f": {"$not": ARRAY, "$type": mongo_type, mongo_op: value}
     }
 
 
 @pytest.mark.parametrize(("op", "mongo_op"), [("in", "$in"), ("nin", "$nin")])
 def test_list_ops_exact_dict(op: str, mongo_op: str) -> None:
     assert to_mongo(_filter(_leaf(op, [1, 2], "number"))) == {
-        "f": {"$type": "number", mongo_op: [1, 2]}
+        "f": {"$not": ARRAY, "$type": "number", mongo_op: [1, 2]}
     }
 
 
@@ -65,11 +66,11 @@ def test_and_or_nesting() -> None:
     a, b = _leaf("eq", "x", "string"), _leaf("gt", 1, "number")
     assert to_mongo(_filter({"and": [a, {"or": [a, b]}]})) == {
         "$and": [
-            {"f": {"$type": "string", "$eq": "x"}},
+            {"f": {"$not": ARRAY, "$type": "string", "$eq": "x"}},
             {
                 "$or": [
-                    {"f": {"$type": "string", "$eq": "x"}},
-                    {"f": {"$type": "number", "$gt": 1}},
+                    {"f": {"$not": ARRAY, "$type": "string", "$eq": "x"}},
+                    {"f": {"$not": ARRAY, "$type": "number", "$gt": 1}},
                 ]
             },
         ]
@@ -78,7 +79,10 @@ def test_and_or_nesting() -> None:
 
 # --- Review Focus 5: behaviour against the leaf contract -------------------
 
-POOL: list[Any] = [MISSING, None, "a", "b", "t1", "1", 0, 1, 2, 100, 2.5, True, False]
+POOL: list[Any] = [
+    *[MISSING, None, "a", "b", "t1", "1", 0, 1, 2, 100, 2.5, True, False],
+    *[["a"], [1, "a"], [], [True], {"x": 1}],
+]
 
 
 def _cls(value: Any) -> str | None:
@@ -180,3 +184,32 @@ def test_type_guard_cases_explicit() -> None:
     assert ids(_leaf("eq", "1", "string")) == {3}
     assert ids(_leaf("ne", 5, "number")) == {1, 6}
     assert ids(_leaf("nin", [9], "number")) == {1, 6}
+
+
+def test_array_and_embedded_fields_never_match() -> None:
+    coll = mongomock.MongoClient().db.c
+    coll.insert_many(
+        [
+            {"_id": 1, "f": ["x", "y"]},
+            {"_id": 2, "f": ["y", 5]},
+            {"_id": 3, "f": [1, True]},
+            {"_id": 4, "f": []},
+            {"_id": 5, "f": {"x": 1}},
+            {"_id": 6, "f": "x"},
+            {"_id": 7, "f": 1},
+        ]
+    )
+
+    def ids(node: dict[str, Any]) -> set[int]:
+        query = to_mongo(_filter(node))
+        assert query is not None
+        return {d["_id"] for d in coll.find(query)}
+
+    assert ids(_leaf("eq", "x", "string")) == {6}
+    assert ids(_leaf("ne", "z", "string")) == {6}
+    assert ids(_leaf("nin", ["x"], "string")) == set()
+    assert ids(_leaf("in", ["x", "y"], "string")) == {6}
+    assert ids(_leaf("eq", 1, "number")) == {7}
+    assert ids(_leaf("ne", 9, "number")) == {7}
+    assert ids(_leaf("in", [1, 5], "number")) == {7}
+    assert ids(_leaf("eq", True, "boolean")) == set()
