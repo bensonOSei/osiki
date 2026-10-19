@@ -217,3 +217,20 @@ async def test_sync_calls() -> None:
 async def test_default_client_without_transport() -> None:
     client = EngineClient(OsikiConfig(base_url="http://engine/"))
     await client.aclose()
+
+
+@pytest.mark.parametrize("body", [b"<html>gateway</html>", b"[]", b'{"version": 1}'])
+async def test_2xx_bad_body_raises_engine_error(body: bytes) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    client = make_client(handler)
+    for call in (
+        client.get_versions(),
+        client.get_snapshot(None),
+        client.get_bundle("u1"),
+    ):
+        with pytest.raises(EngineError) as info:
+            await call
+        assert info.value.status == 200
+    await client.aclose()

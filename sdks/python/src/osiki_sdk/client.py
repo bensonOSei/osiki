@@ -1,9 +1,11 @@
 """Async HTTP client for the Osiki engine."""
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 from urllib.parse import quote
 
 import httpx
+from pydantic import ValidationError
 
 from osiki_sdk._decision.models import Snapshot, UserBundle
 from osiki_sdk.config import OsikiConfig
@@ -11,6 +13,8 @@ from osiki_sdk.config import OsikiConfig
 _API = "/api/v1"
 _ENDPOINT_CHUNK = 1000
 _LOG_CHUNK = 500
+
+T = TypeVar("T")
 
 
 class EngineUnavailable(Exception):  # noqa: N818
@@ -24,6 +28,14 @@ class EngineError(Exception):
         super().__init__(f"engine returned {status}: {body!r}")
         self.status = status
         self.body = body
+
+
+def _parse(response: httpx.Response, parse: Callable[[Any], T]) -> T:
+    """Parse a 2xx body; any malformed body becomes EngineError."""
+    try:
+        return parse(response.json())
+    except (ValueError, KeyError, TypeError, ValidationError) as exc:
+        raise EngineError(response.status_code, response.text) from exc
 
 
 def _seg(value: str) -> str:
@@ -79,11 +91,14 @@ class EngineClient:
         )
         if response.status_code == 304:
             return None, etag
-        return Snapshot.model_validate(response.json()), response.headers.get("ETag")
+        snapshot = _parse(response, Snapshot.model_validate)
+        return snapshot, response.headers.get("ETag")
 
     async def get_versions(self) -> tuple[int, int]:
-        data = (await self._request("GET", "/snapshot/version")).json()
-        return int(data["version"]), int(data["assignments_version"])
+        response = await self._request("GET", "/snapshot/version")
+        return _parse(
+            response, lambda d: (int(d["version"]), int(d["assignments_version"]))
+        )
 
     async def get_bundle(self, user_id: str) -> UserBundle | None:
         response = await self._request(
@@ -91,7 +106,7 @@ class EngineClient:
         )
         if response.status_code == 404:
             return None
-        return UserBundle.model_validate(response.json())
+        return _parse(response, UserBundle.model_validate)
 
     async def report_endpoints(self, endpoints: list[tuple[str, str]]) -> None:
         for start in range(0, len(endpoints), _ENDPOINT_CHUNK):
