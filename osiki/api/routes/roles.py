@@ -11,6 +11,7 @@ from osiki.models.role import Grant, Role
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.role import GrantSchema, RoleCreate, RoleRead, RoleUpdate
 from osiki.services.builtins import BUILTIN_TEAM_MANAGE, is_owner_template
+from osiki.services.roles.validation import validate_references
 
 router = APIRouter(prefix="/roles", tags=["roles"])
 
@@ -61,44 +62,6 @@ def _merge_grants(
             seen.add(key)
             unique.append(grant)
     return unique
-
-
-def _check_object_id(value: str, field: str) -> None:
-    if not PydanticObjectId.is_valid(value):
-        raise ValidationError(f"Invalid {field}: {value}", details={field: value})
-
-
-async def _validate_references(
-    grants: list[GrantSchema],
-    parent_role_id: str | None,
-    role_repo: RoleRepository,
-    permission_repo: PermissionRepository,
-    condition_repo: ConditionRepository,
-) -> None:
-    """Every permission, condition and parent must exist in this environment."""
-    for grant in grants:
-        _check_object_id(grant.permission_id, "permission_id")
-        if await permission_repo.get_by_id(grant.permission_id) is None:
-            raise ValidationError(
-                f"Permission not found: {grant.permission_id}",
-                details={"permission_id": grant.permission_id},
-            )
-        if grant.condition_id is not None:
-            _check_object_id(grant.condition_id, "condition_id")
-            condition = await condition_repo.get_by_id(grant.condition_id)
-            if condition is None or not condition.is_active:
-                raise ValidationError(
-                    f"Condition not found: {grant.condition_id}",
-                    details={"condition_id": grant.condition_id},
-                )
-    if parent_role_id is not None:
-        _check_object_id(parent_role_id, "parent_role_id")
-        parent = await role_repo.get_by_id(parent_role_id)
-        if parent is None or parent.tenant_id is not None:
-            raise ValidationError(
-                f"Parent role not found: {parent_role_id}",
-                details={"parent_role_id": parent_role_id},
-            )
 
 
 async def _reject_parent_cycle(
@@ -178,7 +141,7 @@ async def create_role(
         )
 
     grants = _merge_grants(data.grants, data.permission_ids)
-    await _validate_references(
+    await validate_references(
         grants, data.parent_role_id, role_repo, permission_repo, condition_repo
     )
 
@@ -216,7 +179,7 @@ async def update_role(
 
     replace_grants = data.grants is not None or data.permission_ids is not None
     grants = _merge_grants(data.grants, data.permission_ids)
-    await _validate_references(
+    await validate_references(
         grants, data.parent_role_id, role_repo, permission_repo, condition_repo
     )
 

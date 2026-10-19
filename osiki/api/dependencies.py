@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from osiki.api.actor import ActorDep
 from osiki.api.environment import EnvironmentId
 from osiki.repositories.access_logs.base_access_log_repository import (
     BaseAccessLogRepository,
@@ -80,6 +81,7 @@ from osiki.repositories.user_roles.mongodb_user_role_repository import (
 )
 from osiki.repositories.users.base_user_repository import BaseUserRepository
 from osiki.repositories.users.mongodb_user_repository import MongoDBUserRepository
+from osiki.services.audit.audit_writer import AuditWriter
 from osiki.services.authorization.authorization_service import AuthorizationService
 from osiki.services.authorization.base_authorization_service import (
     BaseAuthorizationService,
@@ -93,6 +95,7 @@ from osiki.services.snapshot_builder.snapshot_builder import (
     SnapshotBuilder,
     SnapshotCache,
 )
+from osiki.services.team.team_service import TeamService
 from osiki.services.unit_of_work import UnitOfWork, get_unit_of_work
 
 
@@ -329,3 +332,38 @@ ConstraintValidatorDep = Annotated[
     BaseConstraintValidator, Depends(get_constraint_validator)
 ]
 UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
+
+
+def get_team_service(
+    tenant_id: str,
+    actor: ActorDep,
+    environment_id: EnvironmentId,
+    role_repository: RoleRepository,
+    permission_repository: PermissionRepository,
+    condition_repository: ConditionRepository,
+    user_role_repository: UserRoleRepository,
+    group_role_repository: GroupRoleRepository,
+    audit_repository: AuditLogRepository,
+    snapshot_builder: SnapshotBuilderDep,
+    bundle_builder: BundleBuilderDep,
+    validator: ConstraintValidatorDep,
+    uow: UnitOfWorkDep,
+) -> TeamService:
+    return TeamService(
+        environment_id,
+        tenant_id,
+        actor,
+        role_repo=role_repository,
+        permission_repo=permission_repository,
+        condition_repo=condition_repository,
+        user_role_repo=user_role_repository,
+        group_role_repo=group_role_repository,
+        snapshot_builder=snapshot_builder,
+        bundle_builder=bundle_builder,
+        validator=validator,
+        uow=uow,
+        audit=AuditWriter(audit_repository),
+    )
+
+
+TeamServiceDep = Annotated[TeamService, Depends(get_team_service)]

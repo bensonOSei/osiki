@@ -380,6 +380,13 @@ class MockGroupRoleRepository(_AssignmentBound[GroupRole], BaseGroupRoleReposito
 
 
 class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
+    async def _bump_for(self, role: Role) -> None:
+        # Mirrors the real repository: tenant roles move the assignments version.
+        if role.tenant_id is None:
+            await self._bump()
+        else:
+            await self._state.bump_assignments_version()
+
     async def create(
         self, role: Role, *, session: AsyncClientSession | None = None
     ) -> Role:
@@ -392,7 +399,7 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         if role.id is None:
             role.id = PydanticObjectId()
         self._store(str(role.id), role)
-        await self._bump()
+        await self._bump_for(role)
         return role
 
     async def get_by_id(
@@ -444,9 +451,14 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
     async def update(
         self, role: Role, *, session: AsyncClientSession | None = None
     ) -> Role:
+        if any(
+            r.name == role.name and r.tenant_id == role.tenant_id and r.id != role.id
+            for r in self._scoped()
+        ):
+            raise DuplicateKeyError("E11000 duplicate key: role name")
         role.updated_at = time.time()
         self._data[str(role.id)] = role
-        await self._bump()
+        await self._bump_for(role)
         return role
 
     async def deactivate(
@@ -456,7 +468,7 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         if role is None or role.is_system:
             return False
         role.is_active = False
-        await self._bump()
+        await self._bump_for(role)
         return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:

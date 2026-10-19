@@ -357,3 +357,36 @@ async def test_role_tenant_fields_round_trip() -> None:
     loaded = await repo.get_by_id(str(created.id))
     assert loaded is not None
     assert (loaded.tenant_id, loaded.copied_from) == ("acme", source)
+
+
+async def test_tenant_role_writes_bump_assignments_not_config_version() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+
+    role = await repo.create(Role(name="bump-tenant", tenant_id="acme"))
+    role.name = "bump-tenant-2"
+    await repo.update(role)
+    await repo.deactivate(str(role.id))
+
+    assert await state.get_config_version() == config
+    assert await state.get_assignments_version() == assignments + 3
+
+
+async def test_project_role_writes_still_bump_config_version() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+
+    role = await repo.create(Role(name="bump-project"))
+    await repo.update(role)
+    await repo.deactivate(str(role.id))
+
+    assert await state.get_config_version() == config + 3
+    assert await state.get_assignments_version() == assignments

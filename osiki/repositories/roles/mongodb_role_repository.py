@@ -18,12 +18,20 @@ class MongoDBRoleRepository(BaseRoleRepository):
         self.environment_id = environment_id
         self._state = state
 
+    async def _bump(self, role: Role, session: AsyncClientSession | None) -> None:
+        """Tenant roles never enter the snapshot, so their writes move the
+        assignments version instead of the config version."""
+        if role.tenant_id is None:
+            await self._state.bump_config_version(session=session)
+        else:
+            await self._state.bump_assignments_version(session=session)
+
     async def create(
         self, role: Role, *, session: AsyncClientSession | None = None
     ) -> Role:
         role.environment_id = self.environment_id
         await role.insert(session=session)
-        await self._state.bump_config_version(session=session)
+        await self._bump(role, session)
         logger.debug("Role created", role_id=str(role.id), name=role.name)
         return role
 
@@ -98,7 +106,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
     ) -> Role:
         role.updated_at = time.time()
         await role.save(session=session)
-        await self._state.bump_config_version(session=session)
+        await self._bump(role, session)
         logger.debug("Role updated", role_id=str(role.id))
         return role
 
@@ -115,7 +123,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
         role.is_active = False
         role.updated_at = time.time()
         await role.save(session=session)
-        await self._state.bump_config_version(session=session)
+        await self._bump(role, session)
         logger.info("Role deactivated", role_id=role_id)
         return True
 

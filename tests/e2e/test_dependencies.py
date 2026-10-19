@@ -200,3 +200,55 @@ def test_get_tenant_member_repository() -> None:
     assert isinstance(
         get_tenant_member_repository("default", _state()), MongoDBTenantMemberRepository
     )
+
+
+def test_get_team_service_wires_the_tenant_and_actor() -> None:
+    from osiki.api.actor import Actor
+    from osiki.api.dependencies import get_team_service
+    from osiki.services.team.team_service import TeamService
+    from osiki.services.unit_of_work import NullUnitOfWork
+
+    state = _state()
+    roles = get_role_repository("default", state)
+    permissions = get_permission_repository("default", state)
+    conditions = get_condition_repository("default", state)
+    user_roles = get_user_role_repository("default", state)
+    snapshot_builder = get_snapshot_builder(
+        "default",
+        state,
+        roles,
+        permissions,
+        conditions,
+        get_constraint_repository("default", state),
+        get_endpoint_repository("default", state),
+        get_snapshot_cache(),
+    )
+    service = get_team_service(
+        "acme",
+        Actor(type="developer", id="dev"),
+        "default",
+        roles,
+        permissions,
+        conditions,
+        user_roles,
+        get_group_role_repository("default", state),
+        get_audit_log_repository("default"),
+        snapshot_builder,
+        get_bundle_builder(
+            get_user_repository("default", state),
+            user_roles,
+            get_user_group_repository("default", state),
+            get_group_repository("default", state),
+            get_group_role_repository("default", state),
+            get_tenant_member_repository("default", state),
+            get_tenant_repository("default", state),
+            roles,
+            permissions,
+            conditions,
+        ),
+        get_constraint_validator(
+            get_constraint_repository("default", state), user_roles
+        ),
+        NullUnitOfWork(),
+    )
+    assert isinstance(service, TeamService)
