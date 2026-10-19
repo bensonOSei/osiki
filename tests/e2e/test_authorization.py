@@ -96,6 +96,7 @@ def test_tenant_scoped_grant_only_applies_in_its_tenant(client: TestClient) -> N
     client.put(f"{API}/tenants/t", json={"name": "T"})
     client.put(f"{API}/tenants/u", json={"name": "U"})
     user_id = _user(client, "user-1")
+    client.put(f"{API}/tenants/t/members/user-1")
     _grant(client, user_id, "documents", "read", scope={"tenant_id": "t"})
     client.put(f"{API}/tenants/u/members/user-1")
 
@@ -176,6 +177,7 @@ def _conditional_setup(client: TestClient) -> dict[str, str]:
     user_id = client.put(
         f"{API}/users/by-external/user-1", json={"attributes": {"team_id": "t1"}}
     ).json()["id"]
+    client.put(f"{API}/tenants/acme/members/user-1")
     response = client.post(
         f"{API}/users/{user_id}/roles",
         json={

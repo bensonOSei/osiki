@@ -44,6 +44,7 @@ def _user_with_role(
     user_id = client.put(
         f"{API}/users/by-external/user-1", json={"attributes": attributes or {}}
     ).json()["id"]
+    client.put(f"{API}/tenants/acme/members/user-1")
     response = client.post(
         f"{API}/users/{user_id}/roles",
         json={

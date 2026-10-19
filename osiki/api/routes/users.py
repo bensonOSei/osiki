@@ -156,8 +156,19 @@ async def assign_role_to_user(
         raise NotFoundError("User not found", details={"user_id": user_id})
 
     tenant_id = data.scope.tenant_id if data.scope else None
-    if tenant_id is not None and not await tenant_repo.get_by_external_id(tenant_id):
-        raise NotFoundError("Tenant not found", details={"tenant_id": tenant_id})
+    if tenant_id is not None:
+        if not await tenant_repo.get_by_external_id(tenant_id):
+            raise NotFoundError("Tenant not found", details={"tenant_id": tenant_id})
+        # Membership is managed explicitly; an assignment never creates one,
+        # so revoking the assignment can never leave a stray membership.
+        if not await member_repo.is_member(tenant_id, user.external_id):
+            raise ConflictError(
+                "User is not a member of this tenant",
+                details={
+                    "tenant_id": tenant_id,
+                    "hint": "add tenant membership first",
+                },
+            )
 
     from beanie import PydanticObjectId
 
@@ -179,9 +190,6 @@ async def assign_role_to_user(
         assignment_reason=data.assignment_reason,
     )
     created = await user_role_repo.create(user_role)
-    if tenant_id is not None:
-        # A tenant-scoped role makes the user a member of that tenant.
-        await member_repo.add(tenant_id, user.external_id)
 
     return UserRoleAssignmentResponse(
         id=str(created.id),

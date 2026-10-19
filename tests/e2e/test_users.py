@@ -182,6 +182,7 @@ def test_assign_role_to_user_with_scope(client: TestClient) -> None:
     client.put(f"{API}/tenants/tenant-1", json={"name": "Tenant 1"})
     user_resp = client.post(f"{API}/users", json={"external_id": "user-1"})
     user_id = user_resp.json()["id"]
+    client.put(f"{API}/tenants/tenant-1/members/user-1")
     role_id = str(PydanticObjectId())
 
     response = client.post(
@@ -196,10 +197,31 @@ def test_assign_role_to_user_with_scope(client: TestClient) -> None:
     assert response.json()["scope"]["tenant_id"] == "tenant-1"
 
 
-def test_tenant_scoped_assignment_adds_membership(client: TestClient) -> None:
+def test_tenant_scoped_assignment_requires_membership(client: TestClient) -> None:
     client.put(f"{API}/tenants/t", json={"name": "T"})
     user_resp = client.post(f"{API}/users", json={"external_id": "ext-1"})
     user_id = user_resp.json()["id"]
+    role_id = str(PydanticObjectId())
+
+    response = client.post(
+        f"{API}/users/{user_id}/roles",
+        json={"role_id": role_id, "assigned_by": "admin", "scope": {"tenant_id": "t"}},
+    )
+    assert response.status_code == 409
+    body = response.json()
+    assert body["message"] == "User is not a member of this tenant"
+    assert body["details"] == {"tenant_id": "t", "hint": "add tenant membership first"}
+    # Nothing was written: no membership and no assignment.
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == []
+    revoke = client.delete(f"{API}/users/{user_id}/roles/{role_id}?tenant_id=t")
+    assert revoke.status_code == 404
+
+
+def test_tenant_scoped_assignment_after_membership(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    user_resp = client.post(f"{API}/users", json={"external_id": "ext-1"})
+    user_id = user_resp.json()["id"]
+    assert client.put(f"{API}/tenants/t/members/ext-1").status_code == 204
 
     response = client.post(
         f"{API}/users/{user_id}/roles",
@@ -210,9 +232,8 @@ def test_tenant_scoped_assignment_adds_membership(client: TestClient) -> None:
         },
     )
     assert response.status_code == 201
-
-    members = client.get(f"{API}/tenants/t/members").json()["items"]
-    assert members == ["ext-1"]
+    assert response.json()["scope"]["tenant_id"] == "t"
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == ["ext-1"]
 
 
 def test_unscoped_assignment_adds_no_membership(client: TestClient) -> None:
@@ -392,7 +413,7 @@ def test_mutual_exclusion_blocks_direct_assignment(client: TestClient) -> None:
     assert client.delete(f"{API}/users/{user_id}/roles/{approver}").status_code == 404
 
 
-def test_violation_leaves_no_tenant_membership(client: TestClient) -> None:
+def test_constraint_checked_for_tenant_member(client: TestClient) -> None:
     client.put(f"{API}/tenants/t", json={"name": "T"})
     initiator, approver = str(PydanticObjectId()), str(PydanticObjectId())
     _constraint(
@@ -404,11 +425,13 @@ def test_violation_leaves_no_tenant_membership(client: TestClient) -> None:
         },
     )
     user_id = _make_user(client, "ext-1")
+    client.put(f"{API}/tenants/t/members/ext-1")
     assert _assign(client, user_id, initiator).status_code == 201
 
     response = _assign(client, user_id, approver, {"tenant_id": "t"})
     assert response.status_code == 409
-    assert client.get(f"{API}/tenants/t/members").json()["items"] == []
+    assert response.json()["details"]["constraint"] == "x"
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == ["ext-1"]
 
 
 def test_cardinality_per_tenant_counts_only_this_env(client: TestClient) -> None:
@@ -426,6 +449,8 @@ def test_cardinality_per_tenant_counts_only_this_env(client: TestClient) -> None
     u1 = _make_user(client, "u1", **{ENV_HEADER: "a"})
     u2 = _make_user(client, "u2", **{ENV_HEADER: "a"})
     u3 = _make_user(client, "u3", **{ENV_HEADER: "b"})
+    for env, external_id in (("a", "u1"), ("a", "u2"), ("b", "u3")):
+        client.put(f"{API}/tenants/t/members/{external_id}", headers={ENV_HEADER: env})
 
     assert _assign(client, u1, role, scope, **{ENV_HEADER: "a"}).status_code == 201
     # Env a is full for tenant t; env b has its own count.
