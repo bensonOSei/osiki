@@ -112,6 +112,8 @@ def test_rejects_257_nodes() -> None:
         ({**OWN_TEAM, "extra": 1}, "$"),
         ({"op": "eq", "left": {"ref": "record.a"}}, "$"),
         (_cmp("like", {"ref": "record.a"}, {"value": "x"}), "$.op"),
+        ({"op": ["eq"], "left": {"ref": "record.a"}, "right": {"value": 1}}, "$.op"),
+        ({"op": {"eq": 1}, "left": {"ref": "record.a"}, "right": {"value": 1}}, "$.op"),
         (_cmp("eq", "record.a", {"value": "x"}), "$.left"),
         (_cmp("eq", {}, {"value": "x"}), "$.left"),
         (_cmp("eq", {"ref": "record.a", "value": 1}, {"value": "x"}), "$.left"),

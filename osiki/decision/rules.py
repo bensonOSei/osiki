@@ -26,11 +26,14 @@ References:
 Evaluation is three-valued (TRUE / FALSE / UNKNOWN) and deny-safe:
     * A ref that is missing (absent key, absent record or tenant) or ``None``
       makes its Compare UNKNOWN. A ``null`` literal behaves the same way.
-    * Values fall into type classes: bool, number (int and float, compared
-      numerically, NaN excluded) and string. Anything else (lists outside the
-      right side of ``in``, mappings, NaN, other objects) is uncomparable.
-      Comparing across classes or with an uncomparable value is UNKNOWN, so
-      ``True`` never equals ``1`` and ``"1"`` never equals ``1``.
+    * Values fall into type classes: "boolean", "number" (int and float,
+      compared numerically, NaN excluded) and "string". Anything else (lists
+      outside the right side of ``in``, mappings, NaN, other objects) is
+      uncomparable. Comparing across classes or with an uncomparable value is
+      UNKNOWN, so ``True`` never equals ``1`` and ``"1"`` never equals ``1``.
+    * Callers must pass JSON-native values in records and in the user and
+      tenant mappings. ``datetime``, ``ObjectId``, ``Decimal`` and similar
+      objects are uncomparable, so any Compare that touches them always denies.
     * Ordering ops are defined for numbers and strings (code point order);
       ordering booleans is UNKNOWN.
     * ``x in [v1, ..., vn]`` is the Kleene OR of ``x eq vi``: TRUE if some
@@ -45,13 +48,17 @@ Residual filters:
     ``residualize`` substitutes the ``user`` / ``tenant`` refs, folds constants,
     pushes ``not`` down to the leaves and returns ``True`` (all records),
     ``False`` (none) or a tree of ``{"and": [...]}``, ``{"or": [...]}`` and
-    ``{"field", "op", "value"}`` leaves with op in eq/ne/lt/lte/gt/gte/in/nin.
-    A record matches the tree exactly when ``evaluate`` would return ``True``,
-    provided SDKs translate each leaf as: the field is present, non-null and of
-    the same type class as the value (the list's elements for ``in`` / ``nin``),
-    and the comparison holds. In particular ``ne`` and ``nin`` mean "field
-    present, comparable and ...", never "missing or ...". ``nin`` lists are
-    always of a single type class (or empty: "field present and comparable").
+    ``{"field", "op", "value", "type"}`` leaves, where ``op`` is one of
+    eq/ne/lt/lte/gt/gte/in/nin and ``type`` is "string", "number" or "boolean":
+    the type class of ``value`` (for ``in`` / ``nin``, the single class shared
+    by every list element).
+
+    Translator contract: a leaf matches a record only when the field is
+    present, non-null, of the leaf's ``type`` class (a boolean is never a
+    number, NaN is never a number) and satisfies ``op`` / ``value``. So ``ne``
+    and ``nin`` mean "present, of this type, and ...", never "missing or ...".
+    Under that contract a record matches the tree exactly when ``evaluate``
+    would return ``True``.
 """
 
 import math
@@ -67,6 +74,7 @@ MAX_NODES = 256
 
 type FilterNode = dict[str, Any]
 
+_TYPE_CLASSES = ("string", "number", "boolean")
 _REF_PATTERN = re.compile(r"(record|user|tenant)\.[A-Za-z_][A-Za-z0-9_]{0,63}")
 _LOGICAL_KEYS = ("and", "or")
 _COMPARE_KEYS = {"op", "left", "right"}
@@ -160,7 +168,7 @@ def _validate_node(node: Any, at: str, depth: int, node_count: list[int]) -> Non
 
 def _validate_compare(node: Mapping[str, Any], at: str) -> None:
     op = node["op"]
-    if op not in _VALID_OPS:
+    if not isinstance(op, str) or op not in _VALID_OPS:
         raise RuleError(f"{at}.op", f"unknown operator {op!r}")
     left = _validate_operand(node["left"], f"{at}.left")
     right = _validate_operand(node["right"], f"{at}.right")
@@ -270,7 +278,7 @@ def _resolve(operand: Mapping[str, Any], ctx: RuleContext) -> Any:
 def _type_class(value: Any) -> str | None:
     """Return the comparison class of ``value``, or ``None`` if uncomparable."""
     if isinstance(value, bool):
-        return "bool"
+        return "boolean"
     if isinstance(value, int) or (isinstance(value, float) and not math.isnan(value)):
         return "number"
     if isinstance(value, str):
@@ -284,7 +292,7 @@ def _compare(op: str, left: Any, right: Any) -> Tri:
     left_class = _type_class(left)
     if left_class is None or left_class != _type_class(right):
         return Tri.UNKNOWN
-    if op in _ORDERING_OPS and left_class == "bool":
+    if op in _ORDERING_OPS and left_class == "boolean":
         return Tri.UNKNOWN
     return Tri.TRUE if _OPS[op](left, right) else Tri.FALSE
 
@@ -364,22 +372,42 @@ def _residual_compare(
         return _membership_leaf(field, value, negate)
 
     value_class = _type_class(value)
-    if value_class is None or (op in _ORDERING_OPS and value_class == "bool"):
+    if value_class is None or (op in _ORDERING_OPS and value_class == "boolean"):
         return Tri.UNKNOWN
-    return {"field": field, "op": _NEGATED_OP[op] if negate else op, "value": value}
+    op = _NEGATED_OP[op] if negate else op
+    return {"field": field, "op": op, "value": value, "type": value_class}
 
 
 def _membership_leaf(field: str, items: Any, negate: bool) -> FilterNode | Tri:
     if not isinstance(items, list):
         return Tri.UNKNOWN
-    classes = {_type_class(item) for item in items}
     if negate:
-        # NOT IN is TRUE only when every element is comparable with the field
-        # value, so a list mixing type classes (or holding nulls) never matches.
-        if None in classes or len(classes) > 1:
-            return Tri.UNKNOWN
-        return {"field": field, "op": "nin", "value": list(items)}
-    comparable = [item for item in items if _type_class(item) is not None]
-    if not comparable:
-        return Tri.FALSE
-    return {"field": field, "op": "in", "value": comparable}
+        return _not_in_leaf(field, items)
+    by_class: dict[str, list[Any]] = {}
+    for item in items:
+        item_class = _type_class(item)
+        if item_class is not None:  # null / uncomparable elements never match
+            by_class.setdefault(item_class, []).append(item)
+    leaves: list[FilterNode | Tri] = [
+        {"field": field, "op": "in", "value": values, "type": item_class}
+        for item_class, values in by_class.items()
+    ]
+    return _fold_or(leaves)
+
+
+def _not_in_leaf(field: str, items: list[Any]) -> FilterNode | Tri:
+    classes = {_type_class(item) for item in items}
+    if not classes:
+        # NOT IN [] holds for every comparable value, whatever its class.
+        return _fold_or(
+            [
+                {"field": field, "op": "nin", "value": [], "type": item_class}
+                for item_class in _TYPE_CLASSES
+            ]
+        )
+    # NOT IN is TRUE only when every element is comparable with the field
+    # value, so a list mixing type classes (or holding nulls) never matches.
+    if None in classes or len(classes) > 1:
+        return Tri.UNKNOWN
+    (item_class,) = classes
+    return {"field": field, "op": "nin", "value": list(items), "type": item_class}
