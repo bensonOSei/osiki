@@ -69,10 +69,18 @@ permission, or mark it public:
 
 Requests are matched by route template, never by raw path: `/invoices/42`
 matches `DELETE /invoices/{invoice_id}`. Included routers match with their
-full prefixed template. `HEAD` follows the `GET` mapping. `OPTIONS` (CORS
-preflight) always reaches the app. A path no route takes also reaches the app,
-which answers 404, 405 or a trailing-slash redirect (the redirected request is
-checked again). WebSocket and lifespan traffic is not guarded.
+full prefixed template. `HEAD` follows the `GET` mapping. A path no route
+takes reaches the app, which answers 404, 405 or a trailing-slash redirect
+(the redirected request is checked again). WebSocket and lifespan traffic is
+not guarded.
+
+`OPTIONS` gets no special treatment. A CORS preflight to an ordinary route
+matches no route, so it still reaches the app (and an outer `CORSMiddleware`
+answers preflights before the guard sees them). A route that really handles
+`OPTIONS` (`@app.options`, `api_route(methods=[..., "OPTIONS"])`, an ASGI
+endpoint or a mount) is unmapped, because a mapping cannot hold `OPTIONS`. In a
+`deny` environment it answers 403 unless you list `("OPTIONS", template)` in
+`public_routes`.
 
 Mounts are opaque: `app.mount(...)`, sub-apps, `Host` routes, ASGI-class
 endpoints, FastAPI `frontend()` routes and a custom router `default` app. The guard cannot see their routes,
@@ -236,7 +244,8 @@ on their next poll, within `poll_interval` seconds.
 | No snapshot has ever loaded (cold start, engine down): a write | `503 authorization unavailable` |
 | No snapshot has ever loaded: `GET`/`HEAD` | `read_on_unavailable`: `"deny"` (503, the default) or `"allow"` |
 | Engine down after a snapshot loaded | keeps deciding from the cached snapshot and bundles |
-| A user's bundle cannot be fetched | `503 authorization unavailable` |
+| Engine down and the user's bundle is not cached | the route's `on_unavailable` if set; else `read_on_unavailable` for `GET`/`HEAD`; else `503 authorization unavailable`. An allow calls the app without a decision log |
+| The engine answers the bundle fetch unexpectedly (`EngineError`) | `503 authorization unavailable` |
 | Unmapped route or mount | `deny` env: `403 unmapped`; `allow` env: passes, one warning per route |
 | No user, or the resolver raises | `401 unauthenticated` |
 | User unknown to Osiki | `403 unknown_user` |
@@ -261,15 +270,17 @@ directly:
 | `poll_interval` | `2.0` | Seconds between version polls; revocations apply within this. |
 | `bundle_ttl` | `60.0` | Seconds a user's bundle stays cached. |
 | `bundle_cache_size` | `10000` | Most bundles cached (LRU). |
-| `read_on_unavailable` | `"deny"` | `GET`/`HEAD` behaviour before any snapshot has loaded. |
+| `read_on_unavailable` | `"deny"` | `GET`/`HEAD` behaviour when a check cannot be decided (no snapshot yet, or engine down and the bundle not cached). |
 | `public_routes` | `()` | `(METHOD, template)` pairs that skip the guard in every environment. |
 | `log_success_sample_rate` | `0.1` | Share of allowed decisions logged; denials always are. |
 | `log_flush_interval` | `2.0` | Seconds between decision-log sends. |
 | `log_batch_size` | `100` | Pending entries that trigger an early send. |
 | `request_timeout` | `2.0` | Seconds per engine request. |
 
-A mapping can also set `on_unavailable`. The guard cannot apply it yet: before
-the first snapshot loads, no mapping is known, so the defaults above decide.
+A mapping can also set `on_unavailable` (`"deny"` or `"allow"`). It overrides
+`read_on_unavailable` and the write default when the engine is down and the
+caller's bundle is not cached. Before the first snapshot loads no mapping is
+known, so the defaults above decide.
 
 ## Development
 

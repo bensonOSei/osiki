@@ -13,7 +13,7 @@ from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 import osiki_sdk
-from osiki_sdk import Osiki, OsikiConfig, OsikiGuard
+from osiki_sdk import EngineError, Osiki, OsikiConfig, OsikiGuard
 from osiki_sdk._decision.models import Snapshot
 
 GUARD_CONFIG = OsikiConfig(
@@ -306,11 +306,54 @@ async def test_head_follows_get_mapping(env: Env) -> None:
     assert env.logged()[-1]["denial_reason"] == "unknown_user"
 
 
-async def test_options_passes_through(env: Env) -> None:
-    response = await env.http.options("/invoices")
-    assert response.status_code == 200 and response.json() == {"allow": "GET, POST"}
+async def test_options_preflight_to_ordinary_route_reaches_app(env: Env) -> None:
+    # No route takes OPTIONS here (Starlette's PARTIAL): the app answers itself.
     unrouted = await env.http.options("/invoices/1")
     assert unrouted.status_code == 405  # the app's answer, never a 500
+    assert env.logged() == []
+
+
+async def test_explicit_options_handler_is_unmapped(env: Env) -> None:
+    response = await env.http.options("/invoices")
+    assert response.status_code == 403 and response.json() == forbidden("unmapped")
+    mount = await env.http.options("/static/x")
+    assert mount.status_code == 403 and mount.json() == forbidden("unmapped")
+
+
+async def test_explicit_options_handler_public_in_code(
+    fake: FakeClient, clock: ManualClock
+) -> None:
+    fake.snapshot = guard_snapshot()
+    config = OsikiConfig(
+        base_url="http://engine",
+        poll_interval=60.0,
+        public_routes=(("OPTIONS", "/invoices"),),
+    )
+    env = make_env(fake, clock, config=config)
+    async with env.http:
+        response = await env.http.options("/invoices")
+        assert response.status_code == 200
+        assert response.json() == {"allow": "GET, POST"}
+    await env.osiki.aclose()
+
+
+async def test_options_to_asgi_class_route_is_unmapped(
+    fake: FakeClient, clock: ManualClock
+) -> None:
+    class Endpoint:
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            await PlainTextResponse("raw")(scope, receive, send)  # pragma: no cover
+
+    fake.snapshot = guard_snapshot()
+    osiki = make_osiki(fake, clock, GUARD_CONFIG, user_id=resolve_user)
+    app = FastAPI()
+    app.router.routes.append(Route("/raw", Endpoint()))
+    app.add_middleware(OsikiGuard, osiki=osiki)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as http:
+        response = await http.options("/raw", headers=bearer())
+    assert response.status_code == 403 and response.json() == forbidden("unmapped")
+    await osiki.aclose()
 
 
 async def test_unknown_path_falls_through_to_404(env: Env) -> None:
@@ -570,10 +613,97 @@ async def test_cold_start_write_503_read_default_503_read_allow_when_configured(
     await env.osiki.aclose()
 
 
-async def test_bundle_fetch_failure_503(env: Env) -> None:
-    env.fake.fail.add("get_bundle")
-    response = await env.http.get("/invoices", headers=bearer())
-    assert response.status_code == 503 and response.json() == UNAVAILABLE
+def _unavailable_env(fake: FakeClient, read_on_unavailable: str = "deny") -> Env:
+    endpoints = [
+        {"method": "GET", "path": "/invoices", "permission": "invoices:list"},
+        {
+            "method": "GET",
+            "path": "/invoices/{invoice_id}",
+            "permission": "invoices:read",
+            "on_unavailable": "deny",
+        },
+        {
+            "method": "POST",
+            "path": "/invoices",
+            "permission": "invoices:create",
+            "on_unavailable": "allow",
+        },
+        {
+            "method": "DELETE",
+            "path": "/invoices/{invoice_id}",
+            "permission": "invoices:delete",
+        },
+    ]
+    fake.snapshot = guard_snapshot(endpoints=endpoints)
+    config = OsikiConfig(
+        base_url="http://engine",
+        poll_interval=60.0,
+        read_on_unavailable=read_on_unavailable,  # type: ignore[arg-type]
+        log_success_sample_rate=1.0,
+        log_flush_interval=60.0,
+    )
+    return make_env(fake, ManualClock(), config=config)
+
+
+async def test_bundle_fetch_unavailable_read_follows_read_on_unavailable(
+    fake: FakeClient,
+) -> None:
+    fake.fail.add("get_bundle")
+    allow = _unavailable_env(fake, "allow")
+    async with allow.http:
+        response = await allow.http.get("/invoices", headers=bearer())
+        assert response.status_code == 200 and response.json() == ["1", "2"]
+        head = await allow.http.head("/invoices", headers=bearer())
+        assert head.status_code == 405  # passed the guard; FastAPI has no HEAD
+    assert allow.logged() == []  # no decision was made
+    await allow.osiki.aclose()
+
+    deny = _unavailable_env(fake)
+    async with deny.http:
+        response = await deny.http.get("/invoices", headers=bearer())
+        assert response.status_code == 503 and response.json() == UNAVAILABLE
+    await deny.osiki.aclose()
+
+
+async def test_bundle_fetch_unavailable_mapping_on_unavailable_wins(
+    fake: FakeClient,
+) -> None:
+    fake.fail.add("get_bundle")
+    env = _unavailable_env(fake, "allow")
+    async with env.http:
+        write = await env.http.post("/invoices", headers=bearer())
+        assert write.status_code == 200 and write.json() == {"created": "3"}
+        read = await env.http.get("/invoices/1", headers=bearer())
+        assert read.status_code == 503 and read.json() == UNAVAILABLE
+    assert env.logged() == []
+    await env.osiki.aclose()
+
+
+async def test_bundle_fetch_unavailable_write_without_policy_503(
+    fake: FakeClient,
+) -> None:
+    fake.fail.add("get_bundle")
+    env = _unavailable_env(fake, "allow")
+    async with env.http:
+        response = await env.http.delete("/invoices/1", headers=bearer())
+        assert response.status_code == 503 and response.json() == UNAVAILABLE
+    await env.osiki.aclose()
+
+
+async def test_bundle_fetch_engine_error_503(
+    fake: FakeClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(user_id: str) -> Any:
+        raise EngineError(400, "bad")
+
+    monkeypatch.setattr(fake, "get_bundle", broken)
+    env = _unavailable_env(fake, "allow")
+    async with env.http:
+        read = await env.http.get("/invoices", headers=bearer())
+        assert read.status_code == 503 and read.json() == UNAVAILABLE
+        write = await env.http.post("/invoices", headers=bearer())
+        assert write.status_code == 503
+    await env.osiki.aclose()
 
 
 async def test_guard_internal_error_returns_503(

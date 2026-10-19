@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from osiki_sdk._decision.models import EndpointEntry, Snapshot
+from osiki_sdk.client import EngineUnavailable
 from osiki_sdk.osiki import Osiki
 from osiki_sdk.routes import Matched, NoMatch, match_route
 
@@ -109,6 +110,22 @@ class OsikiGuard:
         else:
             logger.warning("osiki allowed unmapped route %s %s", method, template)
 
+    def _when_unavailable(
+        self, lookup_method: str, entry: EndpointEntry | None
+    ) -> Response | None:
+        """Apply the failure mode when a check cannot be decided (spec §5.3).
+
+        The mapping's ``on_unavailable`` wins; otherwise reads follow
+        ``read_on_unavailable`` and everything else is denied.
+        """
+        if entry is not None and entry.on_unavailable is not None:
+            policy = entry.on_unavailable
+        elif lookup_method in _READ_METHODS:
+            policy = self.osiki.config.read_on_unavailable
+        else:
+            policy = "deny"
+        return None if policy == "allow" else _unavailable()
+
     async def _authorize(self, scope: Scope) -> Response | None:
         """The response that ends the request, or ``None`` to call the app."""
         osiki = self.osiki
@@ -117,10 +134,10 @@ class OsikiGuard:
         app = scope["app"]
         osiki.discover_in_background(app)
 
-        # 2. CORS preflights belong to the app.
+        # 2. No method is special-cased: a CORS preflight to an ordinary route
+        # matches no route (the app answers it), and an explicit OPTIONS
+        # handler is unmapped unless listed in ``public_routes``.
         method: str = scope["method"]
-        if method == "OPTIONS":
-            return None
         lookup_method = "GET" if method == "HEAD" else method
 
         # 3. Route matching by template.
@@ -136,11 +153,7 @@ class OsikiGuard:
         # 4. No snapshot has ever loaded: follow the failure mode.
         snapshot = osiki._store.snapshot
         if snapshot is None:
-            if lookup_method in _READ_METHODS:
-                policy = osiki.config.read_on_unavailable
-            else:
-                policy = "deny"
-            return None if policy == "allow" else _unavailable()
+            return self._when_unavailable(lookup_method, None)
 
         # 5-7. The endpoint mapping.
         entry = None
@@ -204,9 +217,15 @@ class OsikiGuard:
         # 11. Decide locally (a missing bundle is "unknown_user").
         resource, _, action = entry.permission.partition(":")
         started = time.perf_counter()
-        decision = await osiki.check(
-            user_id, resource, action, tenant=tenant, record=record
-        )
+        try:
+            decision = await osiki.check(
+                user_id, resource, action, tenant=tenant, record=record
+            )
+        except EngineUnavailable as exc:
+            # The engine is down and this user's bundle is not cached: no
+            # decision was made, so nothing is logged.
+            logger.warning("osiki could not fetch a bundle: %r", exc)
+            return self._when_unavailable(lookup_method, entry)
         latency_ms = (time.perf_counter() - started) * 1000
 
         # 12. Log the decision; the batcher never blocks.
