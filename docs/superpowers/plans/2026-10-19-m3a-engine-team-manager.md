@@ -87,6 +87,7 @@ Prior work: `docs/superpowers/plans/2026-10-19-m2a-python-sdk.md`, `conformance/
   - `BaseAuditLogRepository.list(tenant_id: str | None, skip: int, limit: int, session: AsyncClientSession | None = None) -> list[AuditLog]`, newest first. `tenant_id=None` returns every entry.
   - `AuditWriter(repo).record(actor: Actor, action: str, target_type: str, target_id: str, *, tenant_id: str | None, before: dict | None, after: dict | None, session=None) -> AuditLog`.
   - `GET /api/v1/audit-logs?tenant_id=&page=&page_size=` → `PaginatedResponse[AuditLogRead]`.
+  - `POST /api/v1/audit-logs` with `{action, target_type, target_id, tenant_id?, before?, after?}` → 201 `AuditLogRead`, recorded with the header actor. It lets a front door log its own events (invites) in the same trail. A front door must never let outside callers reach it.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -112,6 +113,11 @@ async def test_record_writes_top_level_tenant_and_actor():
     assert entry.changes.after == {"name": "Cashier"}
 
 # tests/e2e/test_audit_logs.py
+def test_post_records_with_header_actor(client):
+    r = client.post("/api/v1/audit-logs", headers={"X-Osiki-Actor": "tenant_user:u1"},
+                    json={"action": "invite.create", "target_type": "invite", "target_id": "i1", "tenant_id": "t1"})
+    assert r.status_code == 201 and r.json()["actor_id"] == "u1"
+
 def test_list_filters_by_tenant_newest_first(client, seed_audit):  # seeds t1 x2, t2 x1
     body = client.get("/api/v1/audit-logs", params={"tenant_id": "t1"}).json()
     assert [i["tenant_id"] for i in body["items"]] == ["t1", "t1"]
@@ -227,7 +233,7 @@ async def test_failure_rolls_back_role_and_audit(realmongo_env):
   - `async def ensure_builtins(permission_repo, role_repo) -> Builtins`, where `Builtins(team_manage_permission_id: str, owner_role_id: str)`. It is idempotent and never duplicates.
   - `PUT /api/v1/environment/bootstrap` → `200 {"team_manage_permission_id": …, "owner_role_id": …}`.
   - `is_builtin(permission: Permission) -> bool` (resource starts with `osiki.`).
-  - The migration `scripts/migrate_m3.py --mongodb-url … --database …` drops the old `environment_id_1_name_1` index if present, then lets Beanie create the new indexes. It is idempotent.
+  - The migration `scripts/migrate_m3.py [--mongodb-url …] [--database …]` (defaults from `AppSettings`, so `python scripts/migrate_m3.py` works inside the engine image, which copies the repo) drops the old `environment_id_1_name_1` index if present, then lets Beanie create the new indexes. It is idempotent.
 
 - [ ] **Step 1: Write failing tests**
 
