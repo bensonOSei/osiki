@@ -63,6 +63,7 @@ class FakeClient:
         self.fail: set[str] = set()
         self.snapshot_delay = False
         self.bundle_gate: asyncio.Event | None = None
+        self.report_gate: asyncio.Event | None = None
         self.closed = False
 
     def _call(self, name: str, *args: Any) -> None:
@@ -99,6 +100,8 @@ class FakeClient:
     async def report_endpoints(self, endpoints: list[tuple[str, str]]) -> None:
         await asyncio.sleep(0)  # yield, so concurrent discovers interleave
         self._call("report_endpoints", endpoints)
+        if self.report_gate is not None:
+            await self.report_gate.wait()
 
     async def upsert_user(self, user_id: str, **kwargs: Any) -> None:
         self._call("upsert_user", user_id, kwargs)

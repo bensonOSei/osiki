@@ -265,9 +265,7 @@ async def test_start_after_aclose_raises(fake: FakeClient, clock: ManualClock) -
         await osiki.start()
 
 
-async def test_discover_idempotent_and_retries_after_failure(
-    osiki: Osiki, fake: FakeClient, caplog: pytest.LogCaptureFixture
-) -> None:
+def _discover_app() -> FastAPI:
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 
     @app.get("/invoices/{invoice_id}")
@@ -278,13 +276,29 @@ async def test_discover_idempotent_and_retries_after_failure(
     async def create_invoice() -> None:
         return None
 
+    return app
+
+
+# max(poll_interval=0, 30) for CONFIG.
+RETRY_WINDOW = 30.0
+
+
+async def test_discover_idempotent_and_retries_after_failure(
+    osiki: Osiki,
+    fake: FakeClient,
+    clock: ManualClock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app = _discover_app()
     fake.fail.add("report_endpoints")
     with caplog.at_level(logging.WARNING, logger="osiki_sdk.osiki"):
         await osiki.discover(app)
     assert "endpoint discovery failed" in caplog.text
     fake.fail.clear()
-    await osiki.discover(app)
-    await osiki.discover(app)
+    clock.now = RETRY_WINDOW
+    await osiki.discover(app)  # retries after the window, and succeeds
+    clock.now = 10 * RETRY_WINDOW
+    await osiki.discover(app)  # recorded: no further call
     reports = [call for call in fake.calls if call[0] == "report_endpoints"]
     expected = [("GET", "/invoices/{invoice_id}"), ("POST", "/invoices")]
     assert reports == [("report_endpoints", expected)] * 2
@@ -292,6 +306,70 @@ async def test_discover_idempotent_and_retries_after_failure(
     other = FastAPI()
     await asyncio.gather(*(osiki.discover(other) for _ in range(10)))
     assert fake.count("report_endpoints") == 3
+
+
+async def test_discover_failure_backs_off_until_window(
+    osiki: Osiki, fake: FakeClient, clock: ManualClock
+) -> None:
+    app = _discover_app()
+    fake.fail.add("report_endpoints")
+    await asyncio.gather(*(osiki.discover(app) for _ in range(10)))
+    for _ in range(10):
+        await osiki.discover(app)
+    clock.now = RETRY_WINDOW - 0.1
+    await osiki.discover(app)
+    assert fake.count("report_endpoints") == 1
+
+    clock.now = RETRY_WINDOW
+    await osiki.discover(app)  # window over: retries, fails, backs off again
+    await osiki.discover(app)
+    assert fake.count("report_endpoints") == 2
+
+    fake.fail.clear()
+    clock.now = 2 * RETRY_WINDOW
+    await osiki.discover(app)
+    assert app in osiki._discovered
+    clock.now = 100 * RETRY_WINDOW
+    await osiki.discover(app)
+    assert fake.count("report_endpoints") == 3
+
+
+async def test_discover_window_follows_longer_poll_interval(
+    fake: FakeClient, clock: ManualClock
+) -> None:
+    osiki = Osiki(
+        dataclasses.replace(CONFIG, poll_interval=45.0), user_id=lambda r: None
+    )
+    await osiki._client.aclose()
+    osiki._client = fake  # type: ignore[assignment]
+    osiki._store = PolicyStore(fake, osiki.config, clock=clock)  # type: ignore
+    app = _discover_app()
+    fake.fail.add("report_endpoints")
+    await osiki.discover(app)
+    clock.now = 44.0
+    await osiki.discover(app)
+    assert fake.count("report_endpoints") == 1
+    clock.now = 45.0
+    await osiki.discover(app)
+    assert fake.count("report_endpoints") == 2
+    await osiki.aclose()
+
+
+async def test_discover_in_flight_returns_without_waiting(
+    osiki: Osiki, fake: FakeClient
+) -> None:
+    app = _discover_app()
+    fake.report_gate = asyncio.Event()
+    first = asyncio.create_task(osiki.discover(app))
+    while fake.count("report_endpoints") == 0:
+        await asyncio.sleep(0)
+    # The report is blocked on the gate; a second caller must not wait on it.
+    await asyncio.wait_for(osiki.discover(app), timeout=1.0)
+    assert not first.done()
+    fake.report_gate.set()
+    await first
+    assert app in osiki._discovered
+    assert fake.count("report_endpoints") == 1
 
 
 @pytest.mark.perf

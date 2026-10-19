@@ -30,6 +30,9 @@ UserResolver = Callable[[Request], str | None | Awaitable[str | None]]
 TenantResolver = Callable[[Request], str | None | Awaitable[str | None]]
 LoaderFn = Callable[[str], Awaitable[Any | None]]
 
+# Minimum seconds between endpoint reports for an app whose last report failed.
+_DISCOVER_RETRY_AFTER = 30.0
+
 
 class OsikiUnavailable(Exception):  # noqa: N818
     """No snapshot has ever loaded, so no local decision can be made."""
@@ -105,8 +108,11 @@ class Osiki:
         self._store = PolicyStore(self._client, config)
         self._loaders: dict[str, LoaderFn] = {}
         self._lifecycle_lock = asyncio.Lock()
-        self._discover_lock = asyncio.Lock()
         self._discovered: weakref.WeakSet[Starlette] = weakref.WeakSet()
+        self._discovering: weakref.WeakSet[Starlette] = weakref.WeakSet()
+        self._discover_failed_at: weakref.WeakKeyDictionary[Starlette, float] = (
+            weakref.WeakKeyDictionary()
+        )
         self._poller: asyncio.Task[None] | None = None
         self._closed = False
         self.started = False
@@ -165,18 +171,31 @@ class Osiki:
             await self._client.aclose()
 
     async def discover(self, app: Starlette) -> None:
-        """Report the app's routes to the engine once; a failure retries later."""
-        if app in self._discovered:
+        """Report the app's routes to the engine once.
+
+        Returns at once when the app is already reported, a report for it is
+        in flight, or its last report failed less than
+        ``max(poll_interval, 30)`` seconds ago; the first call after that
+        window retries.
+        """
+        if app in self._discovered or app in self._discovering:
             return
-        async with self._discover_lock:
-            if app in self._discovered:
-                return
-            try:
-                await self._client.report_endpoints(list_routes(app))
-            except Exception as exc:
-                logger.warning("osiki endpoint discovery failed: %r", exc)
-                return
+        failed_at = self._discover_failed_at.get(app)
+        if failed_at is not None and self._store.clock() - failed_at < max(
+            self.config.poll_interval, _DISCOVER_RETRY_AFTER
+        ):
+            return
+        self._discovering.add(app)
+        try:
+            await self._client.report_endpoints(list_routes(app))
+        except Exception as exc:
+            logger.warning("osiki endpoint discovery failed: %r", exc)
+            self._discover_failed_at[app] = self._store.clock()
+        else:
             self._discovered.add(app)
+            self._discover_failed_at.pop(app, None)
+        finally:
+            self._discovering.discard(app)
 
     # Decisions ---------------------------------------------------------------
 

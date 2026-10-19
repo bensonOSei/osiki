@@ -30,7 +30,7 @@ class PolicyStore:
     ) -> None:
         self._client = client
         self._config = config
-        self._clock = clock
+        self.clock = clock
         self.snapshot: Snapshot | None = None
         self._etag: str | None = None
         self._assignments_version: int | None = None
@@ -52,13 +52,13 @@ class PolicyStore:
 
     async def get_bundle(self, user_id: str) -> UserBundle | None:
         entry = self._bundles.get(user_id)
-        if entry is not None and entry[0] > self._clock():
+        if entry is not None and entry[0] > self.clock():
             self._bundles.move_to_end(user_id)
             return entry[1]
         generation = self._generation
         bundle = await self._client.get_bundle(user_id)
         if generation == self._generation:
-            self._bundles[user_id] = (self._clock() + self._config.bundle_ttl, bundle)
+            self._bundles[user_id] = (self.clock() + self._config.bundle_ttl, bundle)
             self._bundles.move_to_end(user_id)
             while len(self._bundles) > self._config.bundle_cache_size:
                 self._bundles.popitem(last=False)
