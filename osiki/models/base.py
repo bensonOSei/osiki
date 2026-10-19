@@ -1,9 +1,21 @@
+import json
 import time
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 AttributeValue = str | int | float | bool | None | list[str | int | float]
+
+
+def attributes_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Compare attribute maps type-strictly, ignoring dict key order.
+
+    Plain ``==`` treats ``True == 1`` and ``[1] == [1.0]``, but the rule engine
+    never treats a boolean as a number, so such a change must still be saved.
+    """
+    return json.dumps(left, sort_keys=True, default=str) == json.dumps(
+        right, sort_keys=True, default=str
+    )
 
 
 class TimestampMixin(BaseModel):

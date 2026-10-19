@@ -4,7 +4,7 @@ from beanie import PydanticObjectId
 
 from osiki.decision.models import EndpointEntry, EnvironmentSettings
 from osiki.models.access_log import AccessLog
-from osiki.models.base import AttributeValue, EnvironmentMixin
+from osiki.models.base import AttributeValue, EnvironmentMixin, attributes_equal
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintType
 from osiki.models.endpoint import DiscoveredEndpoint, EndpointMapping
@@ -580,7 +580,10 @@ class MockUserRepository(_AssignmentBound[User], BaseUserRepository):
                 if (
                     (name is None or name == user.name)
                     and (email is None or email == user.email)
-                    and (attributes is None or attributes == user.attributes)
+                    and (
+                        attributes is None
+                        or attributes_equal(attributes, user.attributes)
+                    )
                 ):
                     return user
                 if name is not None:
@@ -608,7 +611,9 @@ class MockTenantRepository(_AssignmentBound[Tenant], BaseTenantRepository):
     ) -> Tenant:
         for tenant in self._scoped():
             if tenant.external_id == external_id:
-                if tenant.name == name and tenant.attributes == attributes:
+                if tenant.name == name and attributes_equal(
+                    tenant.attributes, attributes
+                ):
                     return tenant
                 tenant.name = name
                 tenant.attributes = attributes

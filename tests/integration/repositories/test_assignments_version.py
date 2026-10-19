@@ -248,9 +248,7 @@ async def test_noop_upserts_do_not_bump() -> None:
     tenant = await tenants.upsert("acme", "Acme", {"plan": "pro"})
     before = await state.get_assignments_version()
 
-    same_user = await users.upsert_by_external_id(
-        "u1", "Kofi", "k@test.com", {"a": 1}
-    )
+    same_user = await users.upsert_by_external_id("u1", "Kofi", "k@test.com", {"a": 1})
     await users.upsert_by_external_id("u1", None, None, None)
     await users.upsert_by_external_id("u1", "Kofi", None, None)
     same_tenant = await tenants.upsert("acme", "Acme", {"plan": "pro"})
@@ -291,3 +289,57 @@ async def test_changed_upserts_still_bump(change: Write) -> None:
     await change(state)
 
     assert await state.get_assignments_version() > before
+
+
+TYPE_ONLY_CHANGES = [
+    ({"a": 1}, {"a": True}),
+    ({"a": 0}, {"a": False}),
+    ({"a": 1}, {"a": 1.0}),
+    ({"a": [1]}, {"a": [True]}),
+]
+
+
+@pytest.mark.parametrize(("old", "new"), TYPE_ONLY_CHANGES)
+async def test_type_only_attribute_changes_are_saved_and_bump(
+    old: dict, new: dict
+) -> None:
+    state = State(ENV)
+    users = MongoDBUserRepository(ENV, state)
+    tenants = MongoDBTenantRepository(ENV, state)
+    await users.upsert_by_external_id("u1", "Kofi", None, old)
+    await tenants.upsert("acme", "Acme", old)
+    before = await state.get_assignments_version()
+
+    user = await users.upsert_by_external_id("u1", None, None, new)
+    assert await state.get_assignments_version() == before + 1
+    tenant = await tenants.upsert("acme", "Acme", new)
+    assert await state.get_assignments_version() == before + 2
+
+    for saved in (
+        await users.get_by_external_id("u1"),
+        await tenants.get_by_external_id("acme"),
+        user,
+        tenant,
+    ):
+        assert saved is not None
+        ((key, value),) = new.items()
+        if isinstance(value, list):
+            # The model's list type is list[str | int | float], so it coerces
+            # a bool element to int on load; the write and bump still happen.
+            assert saved.attributes[key] == value
+        else:
+            assert type(saved.attributes[key]) is type(value)
+
+
+async def test_identical_upserts_with_reordered_keys_still_skip() -> None:
+    state = State(ENV)
+    users = MongoDBUserRepository(ENV, state)
+    tenants = MongoDBTenantRepository(ENV, state)
+    await users.upsert_by_external_id("u1", "Kofi", None, {"a": 1, "b": [1, 2.5]})
+    await tenants.upsert("acme", "Acme", {"a": True, "b": "x"})
+    before = await state.get_assignments_version()
+
+    await users.upsert_by_external_id("u1", None, None, {"b": [1, 2.5], "a": 1})
+    await tenants.upsert("acme", "Acme", {"b": "x", "a": True})
+
+    assert await state.get_assignments_version() == before

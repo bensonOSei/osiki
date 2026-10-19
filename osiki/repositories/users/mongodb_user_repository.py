@@ -3,7 +3,7 @@ import time
 from beanie import PydanticObjectId
 from loguru import logger
 
-from osiki.models.base import AttributeValue
+from osiki.models.base import AttributeValue, attributes_equal
 from osiki.models.user import User
 from osiki.repositories.environment_state.base_environment_state_repository import (
     BaseEnvironmentStateRepository,
@@ -110,7 +110,7 @@ class MongoDBUserRepository(BaseUserRepository):
             user.name, changed = name, True
         if email is not None and email != user.email:
             user.email, changed = email, True
-        if attributes is not None and attributes != user.attributes:
+        if attributes is not None and not attributes_equal(attributes, user.attributes):
             user.attributes, changed = attributes, True
         if not changed:
             # A no-op sync must not bump the version: that flushes every

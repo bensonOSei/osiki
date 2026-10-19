@@ -3,7 +3,7 @@ import time
 from beanie.operators import In
 from loguru import logger
 
-from osiki.models.base import AttributeValue
+from osiki.models.base import AttributeValue, attributes_equal
 from osiki.models.tenant import Tenant
 from osiki.repositories.environment_state.base_environment_state_repository import (
     BaseEnvironmentStateRepository,
@@ -36,7 +36,7 @@ class MongoDBTenantRepository(BaseTenantRepository):
             await self._state.bump_assignments_version()
             logger.debug("Tenant created", external_id=external_id)
             return tenant
-        if tenant.name == name and tenant.attributes == attributes:
+        if tenant.name == name and attributes_equal(tenant.attributes, attributes):
             # A no-op sync must not bump the version: that flushes every
             # SDK's bundle cache.
             return tenant
