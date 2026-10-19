@@ -1,0 +1,90 @@
+{
+  "name": "residual_true_gives_all",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "invoices:read",
+            "condition": "own_team"
+          },
+          {
+            "permission": "*:*",
+            "condition": "is_user_1"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "own_team": {
+        "op": "eq",
+        "left": {
+          "ref": "record.team_id"
+        },
+        "right": {
+          "ref": "user.team_id"
+        }
+      },
+      "owner": {
+        "op": "eq",
+        "left": {
+          "ref": "record.owner_id"
+        },
+        "right": {
+          "ref": "user.id"
+        }
+      },
+      "same_region": {
+        "op": "eq",
+        "left": {
+          "ref": "record.region"
+        },
+        "right": {
+          "ref": "tenant.region"
+        }
+      },
+      "is_user_1": {
+        "op": "eq",
+        "left": {
+          "ref": "user.id"
+        },
+        "right": {
+          "value": "user-1"
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {
+      "team_id": "t1"
+    },
+    "tenants": {
+      "acme": {
+        "region": "gh"
+      }
+    },
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "resource": "invoices",
+  "action": "read",
+  "scope": {},
+  "now": 1000,
+  "expected": {
+    "mode": "all",
+    "filter": null
+  }
+}

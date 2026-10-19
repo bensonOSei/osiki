@@ -1,0 +1,63 @@
+{
+  "name": "rule_compare_08_lte",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": "rule"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "rule": {
+        "op": "lte",
+        "left": {
+          "ref": "record.x"
+        },
+        "right": {
+          "value": 2.0
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "u1",
+    "attributes": {
+      "team_id": "t1"
+    },
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": {
+      "x": 2
+    },
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "docs:read",
+    "matched_via": "direct",
+    "condition": "rule",
+    "denial_reason": null
+  }
+}

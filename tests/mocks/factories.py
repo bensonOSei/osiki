@@ -2,6 +2,15 @@ from typing import Any
 
 from beanie import PydanticObjectId
 
+from osiki.decision.models import (
+    AssignmentEntry,
+    ConstraintEntry,
+    DecisionRequest,
+    GrantEntry,
+    RoleEntry,
+    Snapshot,
+    UserBundle,
+)
 from osiki.models.base import AttributeValue, Scope
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintConfig, ConstraintType
@@ -152,3 +161,77 @@ def make_condition(
     )
     c.id = condition_id or PydanticObjectId()
     return c
+
+
+# --- Pure decision models (osiki.decision.models) ---
+
+
+def make_role_entry(
+    role_id: str = "role-1",
+    grants: list[tuple[str, str | None]] | None = None,
+    parent_id: str | None = None,
+    name: str | None = None,
+) -> RoleEntry:
+    """``grants`` is a list of ``(permission, condition_key)`` pairs."""
+    return RoleEntry(
+        id=role_id,
+        name=name or role_id,
+        parent_id=parent_id,
+        grants=[
+            GrantEntry(permission=permission, condition=condition)
+            for permission, condition in grants or []
+        ],
+    )
+
+
+def make_snapshot(
+    roles: list[RoleEntry] | None = None,
+    conditions: dict[str, dict[str, Any]] | None = None,
+    constraints: list[ConstraintEntry] | None = None,
+    environment_id: str = "default",
+    version: int = 1,
+) -> Snapshot:
+    return Snapshot(
+        environment_id=environment_id,
+        version=version,
+        roles=roles or [],
+        conditions=conditions or {},
+        constraints=constraints or [],
+    )
+
+
+def make_assignment_entry(
+    role_id: str = "role-1",
+    scope: dict[str, str] | None = None,
+    expires_at: float | None = None,
+    via: str = "direct",
+) -> AssignmentEntry:
+    return AssignmentEntry.model_validate(
+        {"role_id": role_id, "scope": scope or {}, "expires_at": expires_at, "via": via}
+    )
+
+
+def make_user_bundle(
+    assignments: list[AssignmentEntry] | None = None,
+    user_id: str = "user-1",
+    attributes: dict[str, Any] | None = None,
+    tenants: dict[str, dict[str, Any]] | None = None,
+) -> UserBundle:
+    return UserBundle(
+        user_id=user_id,
+        attributes=attributes or {},
+        tenants=tenants or {},
+        assignments=assignments or [],
+    )
+
+
+def make_decision_request(
+    resource: str = "docs",
+    action: str = "read",
+    scope: dict[str, str] | None = None,
+    record: dict[str, Any] | None = None,
+    now: float = 1000,
+) -> DecisionRequest:
+    return DecisionRequest(
+        resource=resource, action=action, scope=scope or {}, record=record, now=now
+    )

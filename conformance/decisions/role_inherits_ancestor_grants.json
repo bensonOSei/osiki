@@ -1,0 +1,66 @@
+{
+  "name": "role_inherits_ancestor_grants",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "child",
+        "name": "child",
+        "parent_id": "mid",
+        "grants": [
+          {
+            "permission": "docs:write",
+            "condition": null
+          }
+        ]
+      },
+      {
+        "id": "mid",
+        "name": "mid",
+        "parent_id": "root",
+        "grants": []
+      },
+      {
+        "id": "root",
+        "name": "root",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": null
+          }
+        ]
+      }
+    ],
+    "conditions": {},
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {},
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "child",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "docs:read",
+    "matched_via": "direct",
+    "condition": null,
+    "denial_reason": null
+  }
+}

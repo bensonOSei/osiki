@@ -1,0 +1,66 @@
+{
+  "name": "rule_in_07",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": "rule"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "rule": {
+        "op": "in",
+        "left": {
+          "ref": "record.x"
+        },
+        "right": {
+          "value": [
+            1,
+            "a"
+          ]
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "u1",
+    "attributes": {
+      "team_id": "t1"
+    },
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": {
+      "x": 3
+    },
+    "now": 1000
+  },
+  "expected": {
+    "allowed": false,
+    "matched_permission": null,
+    "matched_via": null,
+    "condition": null,
+    "denial_reason": "condition_failed"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "missing_assigned_role_denies",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [],
+    "conditions": {},
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {},
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "gone",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": false,
+    "matched_permission": null,
+    "matched_via": null,
+    "condition": null,
+    "denial_reason": "no_permission"
+  }
+}

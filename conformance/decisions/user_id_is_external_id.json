@@ -1,0 +1,63 @@
+{
+  "name": "user_id_is_external_id",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": "owner"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "owner": {
+        "op": "eq",
+        "left": {
+          "ref": "record.owner_id"
+        },
+        "right": {
+          "ref": "user.id"
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "real",
+    "attributes": {
+      "id": "spoof"
+    },
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": {
+      "owner_id": "real"
+    },
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "docs:read",
+    "matched_via": "direct",
+    "condition": "owner",
+    "denial_reason": null
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "name": "rule_no_record_refs",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": "rule"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "rule": {
+        "op": "eq",
+        "left": {
+          "ref": "user.region"
+        },
+        "right": {
+          "ref": "tenant.region"
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "u1",
+    "attributes": {
+      "region": "gh"
+    },
+    "tenants": {
+      "a": {
+        "region": "gh"
+      }
+    },
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {
+      "tenant_id": "a"
+    },
+    "record": {},
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "docs:read",
+    "matched_via": "direct",
+    "condition": "rule",
+    "denial_reason": null
+  }
+}

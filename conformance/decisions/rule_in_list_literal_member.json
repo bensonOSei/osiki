@@ -1,0 +1,66 @@
+{
+  "name": "rule_in_list_literal_member",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": "rule"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "rule": {
+        "op": "in",
+        "left": {
+          "ref": "record.status"
+        },
+        "right": {
+          "value": [
+            "open",
+            "draft"
+          ]
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "u1",
+    "attributes": {
+      "team_id": "t1"
+    },
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": {
+      "status": "draft"
+    },
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "docs:read",
+    "matched_via": "direct",
+    "condition": "rule",
+    "denial_reason": null
+  }
+}
