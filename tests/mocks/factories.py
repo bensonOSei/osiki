@@ -11,6 +11,7 @@ from osiki.decision.models import (
     Snapshot,
     UserBundle,
 )
+from osiki.models.audit_log import AuditContext, AuditLog, Changes
 from osiki.models.base import AttributeValue, Scope
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintConfig, ConstraintType
@@ -270,3 +271,28 @@ def make_decision_request(
     return DecisionRequest(
         resource=resource, action=action, scope=scope or {}, record=record, now=now
     )
+
+
+def make_audit_log(
+    action: str = "role.create",
+    tenant_id: str | None = None,
+    actor_id: str = "actor-1",
+    actor_type: str = "developer",
+    target_type: str = "role",
+    target_id: str = "target-1",
+    timestamp: float | None = None,
+) -> AuditLog:
+    log = AuditLog(
+        actor_id=actor_id,
+        actor_type=actor_type,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        tenant_id=tenant_id,
+        changes=Changes(),
+        context=AuditContext(),
+    )
+    if timestamp is not None:
+        log.timestamp = timestamp
+    log.id = PydanticObjectId()
+    return log

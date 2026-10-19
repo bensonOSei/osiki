@@ -1,9 +1,11 @@
 import time
 
 from beanie import PydanticObjectId
+from pymongo.asynchronous.client_session import AsyncClientSession
 
 from osiki.decision.models import EndpointEntry, EnvironmentSettings
 from osiki.models.access_log import AccessLog
+from osiki.models.audit_log import AuditLog
 from osiki.models.base import AttributeValue, EnvironmentMixin, attributes_equal
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintType
@@ -19,6 +21,9 @@ from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
 from osiki.repositories.access_logs.base_access_log_repository import (
     BaseAccessLogRepository,
+)
+from osiki.repositories.audit_logs.base_audit_log_repository import (
+    BaseAuditLogRepository,
 )
 from osiki.repositories.conditions.base_condition_repository import (
     BaseConditionRepository,
@@ -748,6 +753,57 @@ class MockAccessLogRepository(_EnvironmentBound[AccessLog], BaseAccessLogReposit
 
     async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AccessLog]:
         return list(self._scoped())[skip : skip + limit]
+
+
+class MockAuditLogRepository(_EnvironmentBound[AuditLog], BaseAuditLogRepository):
+    async def create(
+        self, audit_log: AuditLog, session: AsyncClientSession | None = None
+    ) -> AuditLog:
+        if audit_log.id is None:
+            audit_log.id = PydanticObjectId()
+        return self._store(str(audit_log.id), audit_log)
+
+    def _newest_first(self) -> list[AuditLog]:
+        return sorted(self._scoped(), key=lambda a: a.timestamp, reverse=True)
+
+    async def get_by_actor(
+        self, actor_id: str, skip: int = 0, limit: int = 100
+    ) -> list[AuditLog]:
+        found = [a for a in self._newest_first() if a.actor_id == actor_id]
+        return found[skip : skip + limit]
+
+    async def get_by_target(
+        self, target_type: str, target_id: str, skip: int = 0, limit: int = 100
+    ) -> list[AuditLog]:
+        found = [
+            a
+            for a in self._newest_first()
+            if a.target_type == target_type and a.target_id == target_id
+        ]
+        return found[skip : skip + limit]
+
+    async def get_by_action(
+        self, action: str, skip: int = 0, limit: int = 100
+    ) -> list[AuditLog]:
+        found = [a for a in self._newest_first() if a.action == action]
+        return found[skip : skip + limit]
+
+    async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AuditLog]:
+        return self._newest_first()[skip : skip + limit]
+
+    async def list(
+        self,
+        tenant_id: str | None,
+        skip: int,
+        limit: int,
+        session: AsyncClientSession | None = None,
+    ) -> list[AuditLog]:
+        found = [
+            a
+            for a in self._newest_first()
+            if tenant_id is None or a.tenant_id == tenant_id
+        ]
+        return found[skip : skip + limit]
 
 
 class MockConditionRepository(_ConfigBound[Condition], BaseConditionRepository):

@@ -1,11 +1,15 @@
 from abc import ABC, abstractmethod
 
+from pymongo.asynchronous.client_session import AsyncClientSession
+
 from osiki.models.audit_log import AuditLog
 
 
 class BaseAuditLogRepository(ABC):
     @abstractmethod
-    async def create(self, audit_log: AuditLog) -> AuditLog: ...
+    async def create(
+        self, audit_log: AuditLog, session: AsyncClientSession | None = None
+    ) -> AuditLog: ...
 
     @abstractmethod
     async def get_by_actor(
@@ -24,3 +28,13 @@ class BaseAuditLogRepository(ABC):
 
     @abstractmethod
     async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AuditLog]: ...
+
+    @abstractmethod
+    async def list(
+        self,
+        tenant_id: str | None,
+        skip: int,
+        limit: int,
+        session: AsyncClientSession | None = None,
+    ) -> list[AuditLog]:
+        """Newest first; ``tenant_id=None`` returns every entry."""

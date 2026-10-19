@@ -28,6 +28,7 @@ class AuditLog(Document, EnvironmentMixin):
     action: str
     target_type: str
     target_id: str
+    tenant_id: str | None = None
     changes: Changes
     context: AuditContext
 
@@ -43,6 +44,13 @@ class AuditLog(Document, EnvironmentMixin):
                     ("environment_id", 1),
                     ("target_type", 1),
                     ("target_id", 1),
+                    ("timestamp", DESCENDING),
+                ]
+            ),
+            IndexModel(
+                [
+                    ("environment_id", 1),
+                    ("tenant_id", 1),
                     ("timestamp", DESCENDING),
                 ]
             ),

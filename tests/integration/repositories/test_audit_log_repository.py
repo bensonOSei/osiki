@@ -88,3 +88,34 @@ async def test_get_recent() -> None:
         )
     result = await repo.get_recent(limit=10)
     assert len(result) >= 3
+
+
+def _log(tenant_id: str | None, timestamp: float, **kw: str) -> AuditLog:
+    return AuditLog(
+        actor_id="u",
+        actor_type="tenant_user",
+        action="x",
+        target_type="role",
+        target_id="r",
+        tenant_id=tenant_id,
+        timestamp=timestamp,
+        changes=Changes(),
+        context=AuditContext(),
+    )
+
+
+async def test_list_filters_tenant_newest_first_and_paginates() -> None:
+    repo = MongoDBAuditLogRepository("list-env")
+    for tenant, ts in (("t1", 1.0), ("t2", 2.0), ("t1", 3.0), ("t1", 4.0)):
+        await repo.create(_log(tenant, ts))
+    scoped = await repo.list("t1", skip=0, limit=10)
+    assert [a.timestamp for a in scoped] == [4.0, 3.0, 1.0]
+    assert [a.timestamp for a in await repo.list("t1", skip=1, limit=1)] == [3.0]
+    everything = await repo.list(None, skip=0, limit=10)
+    assert [a.timestamp for a in everything] == [4.0, 3.0, 2.0, 1.0]
+
+
+async def test_list_is_environment_scoped() -> None:
+    await MongoDBAuditLogRepository("env-a").create(_log("t1", 1.0))
+    assert await MongoDBAuditLogRepository("env-b").list("t1", 0, 10) == []
+    assert await MongoDBAuditLogRepository("env-b").list(None, 0, 10) == []

@@ -1,5 +1,6 @@
 from tests.mocks.factories import (
     make_assignment_entry,
+    make_audit_log,
     make_condition,
     make_constraint,
     make_decision_request,
@@ -21,6 +22,7 @@ from tests.mocks.factories import (
 )
 from tests.mocks.repositories import (
     MockAccessLogRepository,
+    MockAuditLogRepository,
     MockConditionRepository,
     MockConstraintRepository,
     MockEndpointRepository,
@@ -39,6 +41,7 @@ from tests.mocks.repositories import (
 __all__ = [
     # Repositories
     "MockAccessLogRepository",
+    "MockAuditLogRepository",
     "MockConditionRepository",
     "MockConstraintRepository",
     "MockEndpointRepository",
@@ -54,6 +57,7 @@ __all__ = [
     "MockUserRoleRepository",
     # Factories
     "make_assignment_entry",
+    "make_audit_log",
     "make_decision_request",
     "make_discovered_endpoint",
     "make_endpoint_mapping",

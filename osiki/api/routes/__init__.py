@@ -1,4 +1,5 @@
 from osiki.api.routes.access_logs import router as access_logs_router
+from osiki.api.routes.audit_logs import router as audit_logs_router
 from osiki.api.routes.authorization import router as authorization_router
 from osiki.api.routes.conditions import router as conditions_router
 from osiki.api.routes.constraints import router as constraints_router
@@ -14,6 +15,7 @@ from osiki.api.routes.users import router as users_router
 
 __all__ = [
     "access_logs_router",
+    "audit_logs_router",
     "authorization_router",
     "conditions_router",
     "constraints_router",

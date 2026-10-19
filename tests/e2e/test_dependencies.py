@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from osiki.api.dependencies import (
     get_access_log_repository,
+    get_audit_log_repository,
     get_authorization_service,
     get_bundle_builder,
     get_condition_repository,
@@ -26,6 +27,9 @@ from osiki.api.dependencies import (
 )
 from osiki.repositories.access_logs.mongodb_access_log_repository import (
     MongoDBAccessLogRepository,
+)
+from osiki.repositories.audit_logs.mongodb_audit_log_repository import (
+    MongoDBAuditLogRepository,
 )
 from osiki.repositories.conditions.mongodb_condition_repository import (
     MongoDBConditionRepository,
@@ -116,6 +120,12 @@ def test_get_condition_repository() -> None:
 
 def test_get_access_log_repository() -> None:
     assert isinstance(get_access_log_repository("default"), MongoDBAccessLogRepository)
+
+
+def test_get_audit_log_repository() -> None:
+    repo = get_audit_log_repository("default")
+    assert isinstance(repo, MongoDBAuditLogRepository)
+    assert repo.environment_id == "default"
 
 
 def test_get_snapshot_cache_is_process_wide() -> None:

@@ -10,6 +10,12 @@ from osiki.repositories.access_logs.base_access_log_repository import (
 from osiki.repositories.access_logs.mongodb_access_log_repository import (
     MongoDBAccessLogRepository,
 )
+from osiki.repositories.audit_logs.base_audit_log_repository import (
+    BaseAuditLogRepository,
+)
+from osiki.repositories.audit_logs.mongodb_audit_log_repository import (
+    MongoDBAuditLogRepository,
+)
 from osiki.repositories.conditions.base_condition_repository import (
     BaseConditionRepository,
 )
@@ -166,6 +172,10 @@ def get_access_log_repository(environment_id: EnvironmentId) -> BaseAccessLogRep
     return MongoDBAccessLogRepository(environment_id)
 
 
+def get_audit_log_repository(environment_id: EnvironmentId) -> BaseAuditLogRepository:
+    return MongoDBAuditLogRepository(environment_id)
+
+
 def get_tenant_repository(
     environment_id: EnvironmentId, state: EnvironmentStateRepository
 ) -> BaseTenantRepository:
@@ -291,6 +301,9 @@ ConditionRepository = Annotated[
 EndpointRepository = Annotated[BaseEndpointRepository, Depends(get_endpoint_repository)]
 AccessLogRepository = Annotated[
     BaseAccessLogRepository, Depends(get_access_log_repository)
+]
+AuditLogRepository = Annotated[
+    BaseAuditLogRepository, Depends(get_audit_log_repository)
 ]
 TenantRepository = Annotated[BaseTenantRepository, Depends(get_tenant_repository)]
 TenantMemberRepository = Annotated[
