@@ -6,6 +6,7 @@ from osiki.models.user_role import UserRole
 from osiki.repositories.group_roles.base_group_role_repository import (
     BaseGroupRoleRepository,
 )
+from osiki.repositories.groups.base_group_repository import BaseGroupRepository
 from osiki.repositories.tenant_members.base_tenant_member_repository import (
     BaseTenantMemberRepository,
 )
@@ -26,7 +27,8 @@ class BundleBuilder:
     only memberships whose tenant document exists and is active, so a stale
     membership is no membership. Assignments are the user's active direct
     roles (``via="direct"``) followed by the active roles of the user's active
-    group memberships (``via="group"``), each in repository order.
+    memberships in groups that exist and are active (``via="group"``), each in
+    repository order. A deactivated group grants nothing.
     """
 
     def __init__(
@@ -34,6 +36,7 @@ class BundleBuilder:
         user_repo: BaseUserRepository,
         user_role_repo: BaseUserRoleRepository,
         user_group_repo: BaseUserGroupRepository,
+        group_repo: BaseGroupRepository,
         group_role_repo: BaseGroupRoleRepository,
         tenant_member_repo: BaseTenantMemberRepository,
         tenant_repo: BaseTenantRepository,
@@ -41,6 +44,7 @@ class BundleBuilder:
         self._user_repo = user_repo
         self._user_role_repo = user_role_repo
         self._user_group_repo = user_group_repo
+        self._group_repo = group_repo
         self._group_role_repo = group_role_repo
         self._tenant_member_repo = tenant_member_repo
         self._tenant_repo = tenant_repo
@@ -53,7 +57,13 @@ class BundleBuilder:
 
         direct = await self._user_role_repo.get_user_roles(internal_id)
         memberships = await self._user_group_repo.get_user_groups(internal_id)
-        group_ids = [str(m.group_id) for m in memberships if m.is_active]
+        member_of = [str(m.group_id) for m in memberships if m.is_active]
+        live = (
+            {str(g.id) for g in await self._group_repo.get_by_ids(member_of)}
+            if member_of
+            else set()
+        )
+        group_ids = [gid for gid in member_of if gid in live]
         via_group = (
             await self._group_role_repo.get_roles_for_groups(group_ids)
             if group_ids

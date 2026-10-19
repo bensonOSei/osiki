@@ -1,8 +1,8 @@
 """Pure ``decide`` / ``effective_grants`` tests over snapshots and bundles.
 
-Ports the meaningful cases of ``tests/unit/services/test_authorization.py`` and
-``test_permission_resolver.py`` (exact, wildcard, inheritance, cycle, expiry,
-group via) plus the conditional-grant semantics pinned in Task B4.
+Covers exact and wildcard matching, inheritance, cycles, expiry and group via
+(ported from the retired permission resolver's tests) plus the
+conditional-grant semantics pinned in Task B4.
 """
 
 from typing import Any

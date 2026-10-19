@@ -87,3 +87,15 @@ async def test_list_active() -> None:
     await repo.create(Group(name="active-group-2"))
     result = await repo.list_active()
     assert len(result) >= 2
+
+
+async def test_get_by_ids_returns_only_active_groups_in_environment() -> None:
+    repo = MongoDBGroupRepository("default")
+    live = await repo.create(Group(name="live"))
+    dead = await repo.create(Group(name="dead"))
+    await repo.deactivate(str(dead.id))
+    elsewhere = await MongoDBGroupRepository("other").create(Group(name="x"))
+
+    result = await repo.get_by_ids([str(live.id), str(dead.id), str(elsewhere.id)])
+
+    assert [g.id for g in result] == [live.id]

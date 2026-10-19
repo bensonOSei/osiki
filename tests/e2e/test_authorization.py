@@ -243,3 +243,31 @@ def test_config_write_after_a_check_takes_effect(client: TestClient) -> None:
     after = _check(client, user_id="user-1", resource="documents", action="read")
     assert after["allowed"] is False
     assert after["denial_reason"] == "no_permission"
+
+
+def test_deleted_group_stops_granting(client: TestClient) -> None:
+    perm = client.post(
+        f"{API}/permissions", json={"resource": "documents", "action": "read"}
+    ).json()
+    role = client.post(
+        f"{API}/roles", json={"name": "reader", "permission_ids": [perm["id"]]}
+    ).json()
+    group = client.post(f"{API}/groups", json={"name": "readers"}).json()
+    client.post(
+        f"{API}/groups/{group['id']}/roles",
+        json={"role_id": role["id"], "assigned_by": "admin"},
+    )
+    user_id = _user(client, "user-1")
+    client.post(
+        f"{API}/users/{user_id}/groups",
+        json={"group_id": group["id"], "added_by": "admin"},
+    )
+    before = _check(client, user_id="user-1", resource="documents", action="read")
+    assert before["allowed"] is True
+    assert before["matched_via"] == "group"
+
+    assert client.delete(f"{API}/groups/{group['id']}").status_code == 204
+
+    after = _check(client, user_id="user-1", resource="documents", action="read")
+    assert after["allowed"] is False
+    assert after["denial_reason"] == "no_permission"

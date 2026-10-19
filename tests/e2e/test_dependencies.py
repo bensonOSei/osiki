@@ -153,6 +153,7 @@ def test_get_authorization_service() -> None:
         get_user_repository("default"),
         get_user_role_repository("default"),
         get_user_group_repository("default"),
+        get_group_repository("default"),
         get_group_role_repository("default"),
         get_tenant_member_repository("default"),
         get_tenant_repository("default"),

@@ -25,6 +25,13 @@ class MongoDBGroupRepository(BaseGroupRepository):
             logger.debug("Group not found", group_id=group_id)
         return group
 
+    async def get_by_ids(self, group_ids: list[str]) -> list[Group]:
+        object_ids = [PydanticObjectId(gid) for gid in group_ids]
+        return await Group.find(
+            Group.environment_id == self.environment_id,
+            {"_id": {"$in": object_ids}, "is_active": True},
+        ).to_list()
+
     async def get_by_name(self, name: str) -> Group | None:
         return await Group.find_one(
             Group.environment_id == self.environment_id, Group.name == name

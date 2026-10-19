@@ -52,6 +52,7 @@ from tests.mocks import (
     MockConditionRepository,
     MockConstraintRepository,
     MockEnvironmentStateRepository,
+    MockGroupRepository,
     MockGroupRoleRepository,
     MockPermissionRepository,
     MockRoleRepository,
@@ -101,6 +102,7 @@ __all__ = [
     "MockConditionRepository",
     "MockConstraintRepository",
     "MockEnvironmentStateRepository",
+    "MockGroupRepository",
     "MockGroupRoleRepository",
     "MockPermissionRepository",
     "MockRoleRepository",
@@ -190,6 +192,11 @@ def mock_user_group_repository() -> BaseUserGroupRepository:
 
 
 @pytest.fixture
+def mock_group_repository() -> MockGroupRepository:
+    return MockGroupRepository("default")
+
+
+@pytest.fixture
 def mock_group_role_repository() -> BaseGroupRoleRepository:
     return MockGroupRoleRepository("default")
 
@@ -267,6 +274,7 @@ def bundle_builder(
     mock_user_repository,
     mock_user_role_repository,
     mock_user_group_repository,
+    mock_group_repository,
     mock_group_role_repository,
     mock_tenant_member_repository,
     mock_tenant_repository,
@@ -275,6 +283,7 @@ def bundle_builder(
         mock_user_repository,
         mock_user_role_repository,
         mock_user_group_repository,
+        mock_group_repository,
         mock_group_role_repository,
         mock_tenant_member_repository,
         mock_tenant_repository,

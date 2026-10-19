@@ -228,6 +228,9 @@ async def test_cache_is_keyed_by_environment() -> None:
     b = Env("b")
     b.cache = a.cache
     await a.roles.create(make_role(name="only-in-a"))
+    # Same version in both environments: only the key can tell them apart.
+    await b.state.bump_config_version()
+    assert await a.state.get_config_version() == await b.state.get_config_version()
 
     snap_a = await a.builder().build()
     snap_b = await b.builder().build()
@@ -236,6 +239,7 @@ async def test_cache_is_keyed_by_environment() -> None:
     assert [r.name for r in snap_a.roles] == ["only-in-a"]
     assert snap_b.environment_id == "b"
     assert snap_b.roles == []
+    assert snap_b is not snap_a
 
 
 async def test_snapshot_cache_get_and_put() -> None:

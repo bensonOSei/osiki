@@ -272,7 +272,9 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         return None
 
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
-        return [self._data[rid] for rid in role_ids if self._get(rid) is not None]
+        return [
+            r for rid in role_ids if (r := self._get(rid)) is not None and r.is_active
+        ]
 
     async def get_all_active(self) -> list[Role]:
         return [r for r in self._scoped() if r.is_active]
@@ -347,7 +349,11 @@ class MockPermissionRepository(_ConfigBound[Permission], BasePermissionRepositor
         return self._get(permission_id)
 
     async def get_by_ids(self, permission_ids: list[str]) -> list[Permission]:
-        return [self._data[pid] for pid in permission_ids if self._get(pid) is not None]
+        return [
+            p
+            for pid in permission_ids
+            if (p := self._get(pid)) is not None and p.is_active
+        ]
 
     async def get_by_resource_action(
         self, resource: str, action: str
@@ -549,6 +555,11 @@ class MockGroupRepository(_EnvironmentBound[Group], BaseGroupRepository):
 
     async def get_by_id(self, group_id: str) -> Group | None:
         return self._get(group_id)
+
+    async def get_by_ids(self, group_ids: list[str]) -> list[Group]:
+        return [
+            g for gid in group_ids if (g := self._get(gid)) is not None and g.is_active
+        ]
 
     async def get_by_name(self, name: str) -> Group | None:
         for group in self._scoped():

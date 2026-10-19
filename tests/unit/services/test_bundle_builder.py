@@ -8,12 +8,14 @@ from osiki.models.base import Scope
 from osiki.models.user import User
 from osiki.services.bundle_builder import BundleBuilder
 from tests.mocks import (
+    MockGroupRepository,
     MockGroupRoleRepository,
     MockTenantMemberRepository,
     MockTenantRepository,
     MockUserGroupRepository,
     MockUserRepository,
     MockUserRoleRepository,
+    make_group,
     make_group_role,
     make_user,
     make_user_group,
@@ -24,6 +26,7 @@ from tests.mocks import (
 class Env:
     def __init__(self) -> None:
         self.users = MockUserRepository("default")
+        self.groups = MockGroupRepository("default")
         self.user_roles = MockUserRoleRepository("default")
         self.user_groups = MockUserGroupRepository("default")
         self.group_roles = MockGroupRoleRepository("default")
@@ -35,6 +38,7 @@ class Env:
             self.users,
             self.user_roles,
             self.user_groups,
+            self.groups,
             self.group_roles,
             self.members,
             self.tenants,
@@ -78,7 +82,7 @@ async def test_bundle_flattens_group_assignments_with_via_group(
 ) -> None:
     direct_role = PydanticObjectId()
     group_role = PydanticObjectId()
-    group = PydanticObjectId()
+    group = (await env.groups.create(make_group())).id
     await env.user_roles.create(
         make_user_role(
             user_id=user.id,
@@ -109,7 +113,7 @@ async def test_bundle_flattens_group_assignments_with_via_group(
 
 
 async def test_bundle_skips_revoked_assignments(env: Env, user: User) -> None:
-    group = PydanticObjectId()
+    group = (await env.groups.create(make_group())).id
     ur = await env.user_roles.create(
         make_user_role(user_id=user.id, role_id=PydanticObjectId())
     )
@@ -151,3 +155,23 @@ async def test_membership_without_active_tenant_is_omitted(
 
     assert bundle is not None
     assert bundle.tenants == {}
+
+
+async def test_deactivated_or_missing_group_grants_nothing(
+    env: Env, user: User
+) -> None:
+    dead = await env.groups.create(make_group(name="dead"))
+    await env.groups.deactivate(str(dead.id))
+    missing = PydanticObjectId()
+    for group_id in (dead.id, missing):
+        await env.user_groups.create(
+            make_user_group(user_id=user.id, group_id=group_id)
+        )
+        await env.group_roles.create(
+            make_group_role(group_id=group_id, role_id=PydanticObjectId())
+        )
+
+    bundle = await env.builder().build("ext-1")
+
+    assert bundle is not None
+    assert bundle.assignments == []

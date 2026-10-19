@@ -11,6 +11,10 @@ class BaseGroupRepository(ABC):
     async def get_by_id(self, group_id: str) -> Group | None: ...
 
     @abstractmethod
+    async def get_by_ids(self, group_ids: list[str]) -> list[Group]:
+        """The ACTIVE groups among ``group_ids`` in this environment."""
+
+    @abstractmethod
     async def get_by_name(self, name: str) -> Group | None: ...
 
     @abstractmethod

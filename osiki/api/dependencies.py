@@ -209,6 +209,7 @@ def get_bundle_builder(
     user_group_repository: Annotated[
         BaseUserGroupRepository, Depends(get_user_group_repository)
     ],
+    group_repository: Annotated[BaseGroupRepository, Depends(get_group_repository)],
     group_role_repository: Annotated[
         BaseGroupRoleRepository, Depends(get_group_role_repository)
     ],
@@ -221,6 +222,7 @@ def get_bundle_builder(
         user_repository,
         user_role_repository,
         user_group_repository,
+        group_repository,
         group_role_repository,
         tenant_member_repository,
         tenant_repository,
