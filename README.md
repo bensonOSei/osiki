@@ -125,13 +125,17 @@ Send 1 to 500 entries; the response is `202 {"accepted": n}`. They are stored wi
 
 ## Upgrading existing data
 
-If you are upgrading a deployment that already has data, run `scripts/migrate_m1.py` before sending traffic to the new version. It brings existing documents up to the environment-scoped model.
+If you are upgrading a deployment that already has data:
+
+1. Stop every instance of the old version. Old and new versions must never run side by side against the same database: the old one writes documents without an environment and with the old role format.
+2. Run `scripts/migrate_m1.py`.
+3. Start the new version, and only then send it traffic.
 
 ```bash
 poetry run python scripts/migrate_m1.py
 ```
 
-It reads `MONGODB_URL` and `MONGODB_DATABASE` from the environment and is safe to run repeatedly.
+The migration stamps every existing document with the `default` environment, converts each role's `permission_ids` into unconditional `grants` (merged into any grants the role already has, so no permission is lost), and drops the indexes the new version no longer uses, including the old unique ones that would otherwise keep rejecting valid writes. It reads `MONGODB_URL` and `MONGODB_DATABASE` from the environment and is safe to run repeatedly.
 
 ## Key concepts
 
