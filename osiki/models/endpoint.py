@@ -5,6 +5,7 @@ from beanie import Document
 from pydantic import Field
 from pymongo import IndexModel
 
+from osiki.decision.models import EndpointEntry
 from osiki.models.base import EnvironmentMixin, TimestampMixin
 
 
@@ -43,3 +44,7 @@ class EndpointMapping(Document, EnvironmentMixin, TimestampMixin):
                 [("environment_id", 1), ("method", 1), ("path", 1)], unique=True
             ),
         ]
+
+    def to_entry(self) -> EndpointEntry:
+        """The snapshot's view of this mapping (the one place fields are copied)."""
+        return EndpointEntry.model_validate(self, from_attributes=True)

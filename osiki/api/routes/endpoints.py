@@ -5,7 +5,6 @@ from fastapi import APIRouter, Query, status
 from osiki.api.dependencies import EndpointRepository
 from osiki.api.exceptions import NotFoundError
 from osiki.decision.models import EndpointEntry
-from osiki.models.endpoint import EndpointMapping
 from osiki.schemas.endpoint import (
     DiscoveredEndpointsCreate,
     DiscoveredEndpointsRecorded,
@@ -14,18 +13,6 @@ from osiki.schemas.endpoint import (
 )
 
 router = APIRouter(prefix="/endpoints", tags=["endpoints"])
-
-
-def _entry(mapping: EndpointMapping) -> EndpointEntry:
-    return EndpointEntry(
-        method=mapping.method,
-        path=mapping.path,
-        permission=mapping.permission,
-        record_type=mapping.record_type,
-        record_id_param=mapping.record_id_param,
-        public=mapping.public,
-        on_unavailable=mapping.on_unavailable,
-    )
 
 
 @router.post(
@@ -54,7 +41,7 @@ async def list_endpoints(repo: EndpointRepository) -> list[EndpointStatusRead]:
         row = rows.get(key) or EndpointStatusRead(
             method=mapping.method, path=mapping.path
         )
-        row.mapping = _entry(mapping)
+        row.mapping = mapping.to_entry()
         rows[key] = row
     return sorted(rows.values(), key=lambda r: (r.path, r.method))
 
@@ -64,7 +51,7 @@ async def put_mapping(
     body: EndpointMappingWrite, repo: EndpointRepository
 ) -> EndpointEntry:
     mapping = await repo.upsert_mapping(EndpointEntry(**body.model_dump()))
-    return _entry(mapping)
+    return mapping.to_entry()
 
 
 @router.delete("/mapping", status_code=status.HTTP_204_NO_CONTENT)

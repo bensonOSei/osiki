@@ -4,7 +4,6 @@ from loguru import logger
 
 from osiki.decision.models import (
     ConstraintEntry,
-    EndpointEntry,
     GrantEntry,
     RoleEntry,
     Snapshot,
@@ -133,18 +132,7 @@ class SnapshotBuilder:
                 for c in constraints
                 if c.is_active
             ],
-            endpoints=[
-                EndpointEntry(
-                    method=m.method,
-                    path=m.path,
-                    permission=m.permission,
-                    record_type=m.record_type,
-                    record_id_param=m.record_id_param,
-                    public=m.public,
-                    on_unavailable=m.on_unavailable,
-                )
-                for m in mappings
-            ],
+            endpoints=[m.to_entry() for m in mappings],
             settings=settings,
         )
 
