@@ -9,6 +9,7 @@ from mongomock_motor import AsyncMongoMockClient
 
 from osiki.models.access_log import AccessLog
 from osiki.models.audit_log import AuditLog
+from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
@@ -44,6 +45,7 @@ from osiki.services.constraint_validator.constraint_validator import ConstraintV
 from osiki.services.permission_resolver.permission_resolver import PermissionResolver
 from osiki.services.scope_matcher.scope_matcher import ScopeMatcher
 from tests.mocks import (
+    MockConditionRepository,
     MockConstraintRepository,
     MockGroupRoleRepository,
     MockPermissionRepository,
@@ -52,6 +54,7 @@ from tests.mocks import (
     MockUserGroupRepository,
     MockUserRepository,
     MockUserRoleRepository,
+    make_condition,
     make_constraint,
     make_group,
     make_group_role,
@@ -66,6 +69,7 @@ from tests.mocks import (
 
 # Re-export for backward compatibility
 __all__ = [
+    "make_condition",
     "make_constraint",
     "make_group",
     "make_group_role",
@@ -76,6 +80,7 @@ __all__ = [
     "make_user",
     "make_user_group",
     "make_user_role",
+    "MockConditionRepository",
     "MockConstraintRepository",
     "MockGroupRoleRepository",
     "MockPermissionRepository",
@@ -120,6 +125,7 @@ async def init_db(mongo_client: AsyncMongoMockClient) -> None:
             UserGroup,
             GroupRole,
             Constraint,
+            Condition,
             AuditLog,
             AccessLog,
             Tenant,

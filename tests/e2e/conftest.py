@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from osiki.api.dependencies import (
     get_access_log_repository,
+    get_condition_repository,
     get_constraint_repository,
     get_group_repository,
     get_group_role_repository,
@@ -29,6 +30,7 @@ from osiki.api.exceptions import (
 from osiki.api.middleware import RequestIDMiddleware
 from osiki.api.routes import (
     authorization_router,
+    conditions_router,
     constraints_router,
     groups_router,
     health_router,
@@ -40,6 +42,7 @@ from osiki.api.routes import (
 from osiki.configs.settings import get_settings
 from tests.mocks.repositories import (
     MockAccessLogRepository,
+    MockConditionRepository,
     MockConstraintRepository,
     MockGroupRepository,
     MockGroupRoleRepository,
@@ -62,6 +65,7 @@ _user_role_repos: dict[str, MockUserRoleRepository] = {}
 _user_group_repos: dict[str, MockUserGroupRepository] = {}
 _group_role_repos: dict[str, MockGroupRoleRepository] = {}
 _constraint_repos: dict[str, MockConstraintRepository] = {}
+_condition_repos: dict[str, MockConditionRepository] = {}
 _access_log_repos: dict[str, MockAccessLogRepository] = {}
 _tenant_repos: dict[str, MockTenantRepository] = {}
 _tenant_member_repos: dict[str, MockTenantMemberRepository] = {}
@@ -90,6 +94,7 @@ def _reset_all_repos() -> None:
         _user_group_repos,
         _group_role_repos,
         _constraint_repos,
+        _condition_repos,
         _access_log_repos,
         _tenant_repos,
         _tenant_member_repos,
@@ -110,6 +115,7 @@ def _create_test_app() -> FastAPI:
     test_app.include_router(groups_router, prefix=settings.api_prefix)
     test_app.include_router(roles_router, prefix=settings.api_prefix)
     test_app.include_router(permissions_router, prefix=settings.api_prefix)
+    test_app.include_router(conditions_router, prefix=settings.api_prefix)
     test_app.include_router(constraints_router, prefix=settings.api_prefix)
     test_app.include_router(tenants_router, prefix=settings.api_prefix)
     test_app.include_router(authorization_router, prefix=settings.api_prefix)
@@ -149,6 +155,9 @@ def _create_test_app() -> FastAPI:
     )
     test_app.dependency_overrides[get_constraint_repository] = _repo_provider(
         _constraint_repos, MockConstraintRepository
+    )
+    test_app.dependency_overrides[get_condition_repository] = _repo_provider(
+        _condition_repos, MockConditionRepository
     )
     test_app.dependency_overrides[get_access_log_repository] = _repo_provider(
         _access_log_repos, MockAccessLogRepository

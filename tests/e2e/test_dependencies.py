@@ -1,5 +1,6 @@
 from osiki.api.dependencies import (
     get_access_log_repository,
+    get_condition_repository,
     get_constraint_repository,
     get_constraint_validator,
     get_group_repository,
@@ -15,6 +16,9 @@ from osiki.api.dependencies import (
 )
 from osiki.repositories.access_logs.mongodb_access_log_repository import (
     MongoDBAccessLogRepository,
+)
+from osiki.repositories.conditions.mongodb_condition_repository import (
+    MongoDBConditionRepository,
 )
 from osiki.repositories.constraints.mongodb_constraint_repository import (
     MongoDBConstraintRepository,
@@ -74,6 +78,10 @@ def test_get_group_role_repository() -> None:
 
 def test_get_constraint_repository() -> None:
     assert isinstance(get_constraint_repository("default"), MongoDBConstraintRepository)
+
+
+def test_get_condition_repository() -> None:
+    assert isinstance(get_condition_repository("default"), MongoDBConditionRepository)
 
 
 def test_get_access_log_repository() -> None:

@@ -4,6 +4,7 @@ from pymongo import AsyncMongoClient
 
 from osiki.models.access_log import AccessLog
 from osiki.models.audit_log import AuditLog
+from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
@@ -30,10 +31,11 @@ async def initialize_database(db_url: str, db_name: str = "osiki") -> None:
             UserGroup,
             GroupRole,
             Constraint,
+            Condition,
             AuditLog,
             AccessLog,
             Tenant,
             TenantMember,
         ],
     )
-    logger.info("Database initialized successfully with 12 document models")
+    logger.info("Database initialized successfully with 13 document models")

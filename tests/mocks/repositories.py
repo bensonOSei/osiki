@@ -4,6 +4,7 @@ from beanie import PydanticObjectId
 
 from osiki.models.access_log import AccessLog
 from osiki.models.base import AttributeValue, EnvironmentMixin
+from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintType
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
@@ -16,6 +17,9 @@ from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
 from osiki.repositories.access_logs.base_access_log_repository import (
     BaseAccessLogRepository,
+)
+from osiki.repositories.conditions.base_condition_repository import (
+    BaseConditionRepository,
 )
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
@@ -533,3 +537,38 @@ class MockAccessLogRepository(_EnvironmentBound[AccessLog], BaseAccessLogReposit
 
     async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AccessLog]:
         return list(self._scoped())[skip : skip + limit]
+
+
+class MockConditionRepository(_EnvironmentBound[Condition], BaseConditionRepository):
+    async def create(self, condition: Condition) -> Condition:
+        if condition.id is None:
+            condition.id = PydanticObjectId()
+        return self._store(str(condition.id), condition)
+
+    async def get_by_id(self, condition_id: str) -> Condition | None:
+        return self._get(condition_id)
+
+    async def get_by_key(self, key: str) -> Condition | None:
+        for c in self._scoped():
+            if c.key == key:
+                return c
+        return None
+
+    async def get_by_ids(self, ids: list[str]) -> list[Condition]:
+        return [c for i in ids if (c := self._get(i)) is not None and c.is_active]
+
+    async def update(self, condition: Condition) -> Condition:
+        condition.updated_at = time.time()
+        self._data[str(condition.id)] = condition
+        return condition
+
+    async def deactivate(self, condition_id: str) -> bool:
+        condition = self._get(condition_id)
+        if condition is None:
+            return False
+        condition.is_active = False
+        return True
+
+    async def list_active(self, skip: int = 0, limit: int = 100) -> list[Condition]:
+        active = [c for c in self._scoped() if c.is_active]
+        return active[skip : skip + limit]

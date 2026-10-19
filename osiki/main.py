@@ -8,6 +8,7 @@ from osiki.api.exceptions import register_exception_handlers
 from osiki.api.middleware import RequestIDMiddleware
 from osiki.api.routes import (
     authorization_router,
+    conditions_router,
     constraints_router,
     groups_router,
     health_router,
@@ -58,6 +59,7 @@ app.include_router(users_router, prefix=settings.api_prefix)
 app.include_router(groups_router, prefix=settings.api_prefix)
 app.include_router(roles_router, prefix=settings.api_prefix)
 app.include_router(permissions_router, prefix=settings.api_prefix)
+app.include_router(conditions_router, prefix=settings.api_prefix)
 app.include_router(constraints_router, prefix=settings.api_prefix)
 app.include_router(tenants_router, prefix=settings.api_prefix)
 app.include_router(authorization_router, prefix=settings.api_prefix)

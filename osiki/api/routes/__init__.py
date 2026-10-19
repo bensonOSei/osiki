@@ -1,4 +1,5 @@
 from osiki.api.routes.authorization import router as authorization_router
+from osiki.api.routes.conditions import router as conditions_router
 from osiki.api.routes.constraints import router as constraints_router
 from osiki.api.routes.groups import router as groups_router
 from osiki.api.routes.health import router as health_router
@@ -9,6 +10,7 @@ from osiki.api.routes.users import router as users_router
 
 __all__ = [
     "authorization_router",
+    "conditions_router",
     "constraints_router",
     "groups_router",
     "health_router",

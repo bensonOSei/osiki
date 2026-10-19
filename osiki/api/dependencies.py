@@ -9,6 +9,12 @@ from osiki.repositories.access_logs.base_access_log_repository import (
 from osiki.repositories.access_logs.mongodb_access_log_repository import (
     MongoDBAccessLogRepository,
 )
+from osiki.repositories.conditions.base_condition_repository import (
+    BaseConditionRepository,
+)
+from osiki.repositories.conditions.mongodb_condition_repository import (
+    MongoDBConditionRepository,
+)
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
 )
@@ -108,6 +114,12 @@ def get_constraint_repository(
     return MongoDBConstraintRepository(environment_id)
 
 
+def get_condition_repository(
+    environment_id: EnvironmentId,
+) -> BaseConditionRepository:
+    return MongoDBConditionRepository(environment_id)
+
+
 def get_access_log_repository(environment_id: EnvironmentId) -> BaseAccessLogRepository:
     return MongoDBAccessLogRepository(environment_id)
 
@@ -201,6 +213,9 @@ GroupRoleRepository = Annotated[
 ]
 ConstraintRepository = Annotated[
     BaseConstraintRepository, Depends(get_constraint_repository)
+]
+ConditionRepository = Annotated[
+    BaseConditionRepository, Depends(get_condition_repository)
 ]
 AccessLogRepository = Annotated[
     BaseAccessLogRepository, Depends(get_access_log_repository)

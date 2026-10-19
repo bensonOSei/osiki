@@ -1,6 +1,9 @@
+from typing import Any
+
 from beanie import PydanticObjectId
 
 from osiki.models.base import AttributeValue, Scope
+from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintConfig, ConstraintType
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
@@ -129,4 +132,19 @@ def make_constraint(
 ) -> Constraint:
     c = Constraint(name=name, type=constraint_type, config=config)
     c.id = constraint_id or PydanticObjectId()
+    return c
+
+
+def make_condition(
+    key: str = "is_owner",
+    expression: dict[str, Any] | None = None,
+    condition_id: PydanticObjectId | None = None,
+) -> Condition:
+    c = Condition(
+        key=key,
+        name=key,
+        expression=expression
+        or {"op": "eq", "left": {"ref": "user.id"}, "right": {"value": "u1"}},
+    )
+    c.id = condition_id or PydanticObjectId()
     return c
