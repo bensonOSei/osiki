@@ -143,3 +143,7 @@ def test_condition_env_isolated(client: TestClient) -> None:
     assert got.status_code == 404
     # the same key is free in another environment
     _create(client, "is_owner", **{ENV_HEADER: "b"})
+
+
+def test_delete_malformed_condition_id_404(client: TestClient) -> None:
+    assert client.delete(f"{API}/conditions/not-an-id").status_code == 404

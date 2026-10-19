@@ -398,3 +398,40 @@ def test_malformed_ids_422(client: TestClient) -> None:
     assert bad_permission.status_code == 422
     assert bad_condition.status_code == 422
     assert bad_parent.status_code == 422
+
+
+def test_self_parent_422(client: TestClient) -> None:
+    role_id = client.post(f"{API}/roles", json={"name": "r"}).json()["id"]
+
+    response = client.patch(f"{API}/roles/{role_id}", json={"parent_role_id": role_id})
+
+    assert response.status_code == 422
+    assert role_id in response.json()["details"]["parent_role_id"]
+
+
+def test_descendant_as_parent_422_but_valid_reparent_ok(client: TestClient) -> None:
+    root = client.post(f"{API}/roles", json={"name": "root"}).json()["id"]
+    child = client.post(
+        f"{API}/roles", json={"name": "child", "parent_role_id": root}
+    ).json()["id"]
+    other = client.post(f"{API}/roles", json={"name": "other"}).json()["id"]
+
+    cycle = client.patch(f"{API}/roles/{root}", json={"parent_role_id": child})
+    reparent = client.patch(f"{API}/roles/{child}", json={"parent_role_id": other})
+
+    assert cycle.status_code == 422
+    assert reparent.status_code == 200
+    assert reparent.json()["parent_role_id"] == other
+
+
+def test_deactivated_condition_422(client: TestClient) -> None:
+    pid = _perm(client, "invoices", "read")
+    cid = _condition(client)
+    assert client.delete(f"{API}/conditions/{cid}").status_code == 204
+
+    response = client.post(
+        f"{API}/roles",
+        json={"name": "r", "grants": [{"permission_id": pid, "condition_id": cid}]},
+    )
+
+    assert response.status_code == 422

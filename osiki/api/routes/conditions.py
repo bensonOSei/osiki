@@ -1,3 +1,4 @@
+from beanie import PydanticObjectId
 from fastapi import APIRouter, Query, status
 
 from osiki.api.dependencies import ConditionRepository, RoleRepository
@@ -94,6 +95,10 @@ async def delete_condition(
     condition_repo: ConditionRepository,
     role_repo: RoleRepository,
 ) -> None:
+    if not PydanticObjectId.is_valid(condition_id):
+        raise NotFoundError(
+            "Condition not found", details={"condition_id": condition_id}
+        )
     if await role_repo.is_condition_in_use(condition_id):
         raise ConflictError(
             "Condition is in use", details={"condition_id": condition_id}

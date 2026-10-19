@@ -73,7 +73,8 @@ async def _validate_references(
             )
         if grant.condition_id is not None:
             _check_object_id(grant.condition_id, "condition_id")
-            if await condition_repo.get_by_id(grant.condition_id) is None:
+            condition = await condition_repo.get_by_id(grant.condition_id)
+            if condition is None or not condition.is_active:
                 raise ValidationError(
                     f"Condition not found: {grant.condition_id}",
                     details={"condition_id": grant.condition_id},
@@ -85,6 +86,27 @@ async def _validate_references(
                 f"Parent role not found: {parent_role_id}",
                 details={"parent_role_id": parent_role_id},
             )
+
+
+async def _reject_parent_cycle(
+    role_id: str, parent_role_id: str, role_repo: RoleRepository
+) -> None:
+    """Refuse a parent whose ancestor chain reaches the role (incl. itself)."""
+    visited: set[str] = set()
+    current: str | None = parent_role_id
+    while current is not None and current not in visited:
+        if current == role_id:
+            raise ValidationError(
+                f"Parent role would create a cycle: {parent_role_id}",
+                details={"parent_role_id": parent_role_id},
+            )
+        visited.add(current)
+        ancestor = await role_repo.get_by_id(current)
+        current = (
+            str(ancestor.parent_role_id)
+            if ancestor is not None and ancestor.parent_role_id
+            else None
+        )
 
 
 def _to_grants(grants: list[GrantSchema]) -> list[Grant]:
@@ -157,6 +179,9 @@ async def update_role(
     await _validate_references(
         grants, data.parent_role_id, role_repo, permission_repo, condition_repo
     )
+
+    if data.parent_role_id is not None:
+        await _reject_parent_cycle(role_id, data.parent_role_id, role_repo)
 
     if data.name is not None:
         role.name = data.name
