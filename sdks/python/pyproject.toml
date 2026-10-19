@@ -58,6 +58,7 @@ exclude = ["tests"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
+markers = ["perf: timing-sensitive latency checks"]
 
 [tool.coverage.run]
 omit = ["src/osiki_sdk/_decision/*"]
