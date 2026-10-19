@@ -66,9 +66,9 @@ class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
             "group_id": PydanticObjectId(group_id),
             "role_id": PydanticObjectId(role_id),
             "is_active": True,
+            # None matches only project-wide rows (tenant_id null or missing).
+            "scope.tenant_id": tenant_id,
         }
-        if tenant_id:
-            query["scope.tenant_id"] = tenant_id
         return await GroupRole.find_one(
             GroupRole.environment_id == self.environment_id, query
         )

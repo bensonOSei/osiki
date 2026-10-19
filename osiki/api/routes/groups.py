@@ -198,11 +198,19 @@ async def revoke_role_from_group(
     group_id: str,
     role_id: str,
     group_role_repo: GroupRoleRepository,
+    tenant_id: str | None = Query(
+        None, description="Revoke the assignment in this tenant (default: none)"
+    ),
 ) -> None:
-    assignment = await group_role_repo.find_assignment(group_id, role_id)
+    # Without tenant_id only the project-wide assignment is revoked.
+    assignment = await group_role_repo.find_assignment(group_id, role_id, tenant_id)
     if not assignment:
         raise NotFoundError(
             "Role assignment not found",
-            details={"group_id": group_id, "role_id": role_id},
+            details={
+                "group_id": group_id,
+                "role_id": role_id,
+                "tenant_id": tenant_id or "",
+            },
         )
     await group_role_repo.revoke(str(assignment.id))

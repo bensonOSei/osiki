@@ -143,3 +143,23 @@ async def test_get_expired() -> None:
     )
     result = await repo.get_expired(now)
     assert len(result) == 1
+
+
+async def test_find_assignment_without_tenant_is_project_wide_only() -> None:
+    repo = MongoDBUserRoleRepository("default")
+    user_id, role_id = PydanticObjectId(), PydanticObjectId()
+    await repo.create(
+        UserRole(
+            user_id=user_id,
+            role_id=role_id,
+            scope=Scope(tenant_id="t1"),
+            assigned_by="admin",
+        )
+    )
+    assert await repo.find_assignment(str(user_id), str(role_id)) is None
+
+    project_wide = await repo.create(
+        UserRole(user_id=user_id, role_id=role_id, assigned_by="admin")
+    )
+    found = await repo.find_assignment(str(user_id), str(role_id))
+    assert found is not None and found.id == project_wide.id

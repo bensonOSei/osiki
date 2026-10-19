@@ -212,12 +212,20 @@ async def revoke_role_from_user(
     user_id: str,
     role_id: str,
     user_role_repo: UserRoleRepository,
+    tenant_id: str | None = Query(
+        None, description="Revoke the assignment in this tenant (default: none)"
+    ),
 ) -> None:
-    assignment = await user_role_repo.find_assignment(user_id, role_id)
+    # Without tenant_id only the project-wide assignment is revoked.
+    assignment = await user_role_repo.find_assignment(user_id, role_id, tenant_id)
     if not assignment:
         raise NotFoundError(
             "Role assignment not found",
-            details={"user_id": user_id, "role_id": role_id},
+            details={
+                "user_id": user_id,
+                "role_id": role_id,
+                "tenant_id": tenant_id or "",
+            },
         )
     await user_role_repo.revoke(str(assignment.id))
 

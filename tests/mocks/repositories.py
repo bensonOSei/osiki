@@ -143,7 +143,7 @@ class MockUserRoleRepository(_EnvironmentBound[UserRole], BaseUserRoleRepository
                 and str(ur.role_id) == role_id
                 and ur.is_active
             ):
-                if tenant_id is None or ur.scope.tenant_id == tenant_id:
+                if ur.scope.tenant_id == tenant_id:
                     return ur
         return None
 
@@ -234,7 +234,7 @@ class MockGroupRoleRepository(_EnvironmentBound[GroupRole], BaseGroupRoleReposit
                 and str(gr.role_id) == role_id
                 and gr.is_active
             ):
-                if tenant_id is None or gr.scope.tenant_id == tenant_id:
+                if gr.scope.tenant_id == tenant_id:
                     return gr
         return None
 

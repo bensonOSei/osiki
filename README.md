@@ -63,6 +63,8 @@ Remove a member with `DELETE` on the same path; `GET /tenants/{id}/members` list
 
 Membership comes first. Assigning a user a role scoped to a tenant does not make them a member: if they are not one already, the assignment is rejected with `409 Conflict` (`"User is not a member of this tenant"`, with a `hint` to add the membership first). An unknown tenant answers `404`.
 
+To revoke a tenant-scoped assignment, name the tenant: `DELETE /users/{id}/roles/{role_id}?tenant_id=acme-corp` (and the same on `/groups/{id}/roles/{role_id}`). Without `tenant_id`, only the project-wide assignment of that role is revoked; if there is none the answer is `404`, never a guess at one of the tenants.
+
 ## Conditions
 
 A condition is a named rule, written as a JSON expression tree, that a role grant can carry. It is evaluated against the `record` sent with the check, and against the user's attributes. This one allows access when the record belongs to the user's team:

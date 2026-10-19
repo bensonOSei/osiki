@@ -522,3 +522,86 @@ def test_joining_group_without_violation_succeeds(client: TestClient) -> None:
         json={"group_id": group_id, "added_by": "admin"},
     )
     assert response.status_code == 201
+
+
+# --- Revoking a tenant-scoped assignment ---
+
+
+def _docs_reader_role(client: TestClient) -> str:
+    perm = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    ).json()
+    role = client.post(
+        f"{API}/roles",
+        json={"name": "reader", "grants": [{"permission_id": perm["id"]}]},
+    ).json()
+    return str(role["id"])
+
+
+def _reads_docs(client: TestClient, tenant_id: str) -> bool:
+    response = client.post(
+        f"{API}/authorization/check",
+        json={
+            "user_id": "ext-1",
+            "resource": "docs",
+            "action": "read",
+            "scope": {"tenant_id": tenant_id},
+        },
+    )
+    assert response.status_code == 200
+    return bool(response.json()["allowed"])
+
+
+def _member_of_a_and_b(client: TestClient) -> str:
+    user_id = _make_user(client, "ext-1")
+    for tenant in ("a", "b"):
+        client.put(f"{API}/tenants/{tenant}", json={"name": tenant})
+        client.put(f"{API}/tenants/{tenant}/members/ext-1")
+    return user_id
+
+
+def test_revoke_targets_the_named_tenant(client: TestClient) -> None:
+    user_id = _member_of_a_and_b(client)
+    role_id = _docs_reader_role(client)
+    for tenant in ("a", "b"):
+        assert (
+            _assign(client, user_id, role_id, {"tenant_id": tenant}).status_code == 201
+        )
+    assert _reads_docs(client, "a") and _reads_docs(client, "b")
+
+    url = f"{API}/users/{user_id}/roles/{role_id}"
+    assert client.delete(url, params={"tenant_id": "a"}).status_code == 204
+
+    assert not _reads_docs(client, "a")
+    assert _reads_docs(client, "b")
+    assert client.delete(url, params={"tenant_id": "a"}).status_code == 404
+
+
+def test_revoke_without_tenant_never_picks_a_tenant(client: TestClient) -> None:
+    user_id = _member_of_a_and_b(client)
+    role_id = _docs_reader_role(client)
+    assert _assign(client, user_id, role_id, {"tenant_id": "a"}).status_code == 201
+
+    response = client.delete(f"{API}/users/{user_id}/roles/{role_id}")
+
+    assert response.status_code == 404
+    assert response.json()["details"] == {
+        "user_id": user_id,
+        "role_id": role_id,
+        "tenant_id": "",
+    }
+    assert _reads_docs(client, "a")
+
+
+def test_revoke_without_tenant_takes_the_project_wide_one(client: TestClient) -> None:
+    user_id = _member_of_a_and_b(client)
+    role_id = _docs_reader_role(client)
+    assert _assign(client, user_id, role_id, {"tenant_id": "a"}).status_code == 201
+    assert _assign(client, user_id, role_id).status_code == 201
+
+    url = f"{API}/users/{user_id}/roles/{role_id}"
+    assert client.delete(url).status_code == 204
+
+    assert _reads_docs(client, "a")
+    assert not _reads_docs(client, "b")
+    assert client.delete(url).status_code == 404

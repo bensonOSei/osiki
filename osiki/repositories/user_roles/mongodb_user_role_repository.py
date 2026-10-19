@@ -69,9 +69,9 @@ class MongoDBUserRoleRepository(BaseUserRoleRepository):
             "user_id": PydanticObjectId(user_id),
             "role_id": PydanticObjectId(role_id),
             "is_active": True,
+            # None matches only project-wide rows (tenant_id null or missing).
+            "scope.tenant_id": tenant_id,
         }
-        if tenant_id:
-            query["scope.tenant_id"] = tenant_id
         return await UserRole.find_one(
             UserRole.environment_id == self.environment_id, query
         )
