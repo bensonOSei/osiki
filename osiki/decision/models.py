@@ -22,10 +22,14 @@ class _Frozen(BaseModel):
 
 
 class GrantEntry(_Frozen):
-    """A role's grant: ``"res:act"`` plus an optional condition key."""
+    """A role's grant: ``"res:act"`` plus an optional condition key.
+
+    ``condition`` is never ``""``: an empty key would read as "no condition"
+    to a careless port.
+    """
 
     permission: str
-    condition: str | None = None
+    condition: str | None = Field(default=None, min_length=1)
 
 
 class RoleEntry(_Frozen):

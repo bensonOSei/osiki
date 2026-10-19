@@ -17,11 +17,6 @@ async def check_authorization(
         resource=request.resource,
         action=request.action,
         scope=scope,
+        record=request.record,
     )
-    return AuthorizationResponse(
-        allowed=result.allowed,
-        matched_permission=result.matched_permission,
-        matched_via=result.matched_via,
-        denial_reason=result.denial_reason,
-        cache_hit=result.cache_hit,
-    )
+    return AuthorizationResponse.model_validate(result)

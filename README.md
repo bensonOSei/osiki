@@ -25,7 +25,8 @@ curl -X POST http://localhost:8000/api/v1/authorization/check \
 {
   "allowed": true,
   "matched_permission": "invoices:write",
-  "matched_via": "direct_role",
+  "matched_via": "direct",
+  "condition": null,
   "denial_reason": null,
   "cache_hit": false
 }
@@ -107,10 +108,10 @@ osiki/
 │   ├── schemas/            # Request/response Pydantic models
 │   ├── repositories/       # Data access layer
 │   ├── services/           # Business logic
-│   │   ├── authorization/        # The main authorization check
-│   │   ├── permission_resolver/  # Resolves effective permissions
-│   │   ├── constraint_validator/ # Enforces business rules
-│   │   └── scope_matcher/        # Multi-tenant scope matching
+│   │   ├── authorization/        # The main authorization check (via decide)
+│   │   ├── snapshot_builder/     # Versioned, cached config snapshot
+│   │   ├── bundle_builder/       # One user's attributes, tenants, assignments
+│   │   └── constraint_validator/ # Enforces business rules
 │   └── configs/            # Settings, database init, logging
 ├── cli/                    # Code generation CLI (Typer)
 ├── tests/                  # Unit, integration, and e2e tests

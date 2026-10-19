@@ -2,18 +2,25 @@ from beanie import PydanticObjectId
 from loguru import logger
 
 from osiki.models.permission import Permission
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.permissions.base_permission_repository import (
     BasePermissionRepository,
 )
 
 
 class MongoDBPermissionRepository(BasePermissionRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, permission: Permission) -> Permission:
         permission.environment_id = self.environment_id
         await permission.insert()
+        await self._state.bump_config_version()
         logger.debug(
             "Permission created",
             permission_id=str(permission.id),
@@ -67,6 +74,7 @@ class MongoDBPermissionRepository(BasePermissionRepository):
             return False
         permission.is_active = False
         await permission.save()
+        await self._state.bump_config_version()
         logger.info("Permission deactivated", permission_id=permission_id)
         return True
 

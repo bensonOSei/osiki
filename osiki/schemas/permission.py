@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
@@ -25,3 +25,11 @@ class PermissionRead(BaseModel):
     @property
     def permission_string(self) -> str:
         return f"{self.resource}:{self.action}"
+
+
+class EffectiveGrantRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    permission: str
+    condition: str | None = None
+    via: Literal["direct", "group"]

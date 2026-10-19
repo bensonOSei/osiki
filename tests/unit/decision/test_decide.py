@@ -7,8 +7,11 @@ group via) plus the conditional-grant semantics pinned in Task B4.
 
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from osiki.decision.decide import decide, effective_grants
-from osiki.decision.models import Decision, EffectiveGrant
+from osiki.decision.models import Decision, EffectiveGrant, GrantEntry
 from tests.conftest import (
     make_assignment_entry,
     make_decision_request,
@@ -599,3 +602,8 @@ def test_direct_conditional_beats_group_conditional() -> None:
     assert decide(snapshot, bundle, request) == _allow(
         "invoices:read", condition="own_team"
     )
+
+
+def test_grant_condition_key_cannot_be_empty() -> None:
+    with pytest.raises(ValidationError):
+        GrantEntry(permission="docs:read", condition="")

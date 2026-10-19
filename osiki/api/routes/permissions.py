@@ -1,15 +1,14 @@
 from fastapi import APIRouter, Query, status
 
-from osiki.api.dependencies import (
-    PermissionRepository,
-    PermissionResolverDep,
-    TenantMemberRepository,
-    UserRepository,
-)
+from osiki.api.dependencies import AuthorizationServiceDep, PermissionRepository
 from osiki.api.exceptions import ConflictError, NotFoundError
 from osiki.models.permission import Permission
 from osiki.schemas.base import PaginatedResponse
-from osiki.schemas.permission import PermissionCreate, PermissionRead
+from osiki.schemas.permission import (
+    EffectiveGrantRead,
+    PermissionCreate,
+    PermissionRead,
+)
 
 router = APIRouter(prefix="/permissions", tags=["permissions"])
 
@@ -107,24 +106,12 @@ async def list_permissions(
 @router.get("/users/{user_id}/effective")
 async def get_user_effective_permissions(
     user_id: str,
-    user_repo: UserRepository,
-    permission_resolver: PermissionResolverDep,
-    member_repo: TenantMemberRepository,
+    auth_service: AuthorizationServiceDep,
     tenant_id: str | None = Query(None),
-) -> list[str]:
-    user = await user_repo.get_by_id(user_id)
-    if not user:
-        raise NotFoundError("User not found", details={"user_id": user_id})
-
-    # Same rule as /authorization/check: nothing is effective in a tenant the
-    # user isn't a member of (membership is keyed by external id).
-    if tenant_id is not None and not await member_repo.is_member(
-        tenant_id, user.external_id
-    ):
-        return []
-
+) -> list[EffectiveGrantRead]:
+    """The grants the user (EXTERNAL id) holds; [] in a non-member tenant."""
     scope = {"tenant_id": tenant_id} if tenant_id is not None else None
-    permissions = await permission_resolver.get_effective_permissions(
-        str(user.id), scope
-    )
-    return sorted(permissions)
+    grants = await auth_service.effective_grants(user_id, scope)
+    if grants is None:
+        raise NotFoundError("User not found", details={"user_id": user_id})
+    return [EffectiveGrantRead.model_validate(g) for g in grants]

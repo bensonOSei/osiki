@@ -147,3 +147,99 @@ def test_project_wide_grant_requires_tenant_membership(client: TestClient) -> No
         scope={"tenant_id": "t"},
     )
     assert after["allowed"] is True
+
+
+OWN_TEAM = {
+    "op": "eq",
+    "left": {"ref": "record.team_id"},
+    "right": {"ref": "user.team_id"},
+}
+
+
+def _conditional_setup(client: TestClient) -> dict[str, str]:
+    """own_team condition, conditional invoices:read, a team-t1 user in acme."""
+    cond = client.post(
+        f"{API}/conditions",
+        json={"key": "own_team", "name": "Own team", "expression": OWN_TEAM},
+    ).json()
+    perm = client.post(
+        f"{API}/permissions", json={"resource": "invoices", "action": "read"}
+    ).json()
+    role = client.post(
+        f"{API}/roles",
+        json={
+            "name": "clerk",
+            "grants": [{"permission_id": perm["id"], "condition_id": cond["id"]}],
+        },
+    ).json()
+    client.put(f"{API}/tenants/acme", json={"name": "Acme"})
+    user_id = client.put(
+        f"{API}/users/by-external/user-1", json={"attributes": {"team_id": "t1"}}
+    ).json()["id"]
+    response = client.post(
+        f"{API}/users/{user_id}/roles",
+        json={
+            "role_id": role["id"],
+            "assigned_by": "admin",
+            "scope": {"tenant_id": "acme"},
+        },
+    )
+    assert response.status_code == 201
+    return {"condition_id": cond["id"], "role_id": role["id"]}
+
+
+def _invoice_check(client: TestClient, record: Any = None) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "user_id": "user-1",
+        "resource": "invoices",
+        "action": "read",
+        "scope": {"tenant_id": "acme"},
+    }
+    if record is not None:
+        body["record"] = record
+    return _check(client, **body)
+
+
+def test_check_with_record_and_condition(client: TestClient) -> None:
+    _conditional_setup(client)
+
+    same_team = _invoice_check(client, {"team_id": "t1"})
+    assert same_team["allowed"] is True
+    assert same_team["condition"] == "own_team"
+    assert same_team["matched_permission"] == "invoices:read"
+    assert same_team["matched_via"] == "direct"
+
+    other_team = _invoice_check(client, {"team_id": "t2"})
+    assert other_team["allowed"] is False
+    assert other_team["denial_reason"] == "condition_failed"
+    assert other_team["condition"] is None
+
+    no_record = _invoice_check(client)
+    assert no_record["allowed"] is False
+    assert no_record["denial_reason"] == "record_required"
+
+
+def test_deactivated_role_denies_after_cached_allow(client: TestClient) -> None:
+    ids = _conditional_setup(client)
+    assert _invoice_check(client, {"team_id": "t1"})["allowed"] is True
+
+    assert client.delete(f"{API}/roles/{ids['role_id']}").status_code == 204
+
+    after = _invoice_check(client, {"team_id": "t1"})
+    assert after["allowed"] is False
+    assert after["denial_reason"] == "no_permission"
+
+
+def test_config_write_after_a_check_takes_effect(client: TestClient) -> None:
+    user_id = _user(client, "user-1")
+    _grant(client, user_id, "documents", "read")
+    assert _check(client, user_id="user-1", resource="documents", action="read")[
+        "allowed"
+    ]
+
+    role_id = client.get(f"{API}/roles").json()["items"][0]["id"]
+    client.patch(f"{API}/roles/{role_id}", json={"grants": []})
+
+    after = _check(client, user_id="user-1", resource="documents", action="read")
+    assert after["allowed"] is False
+    assert after["denial_reason"] == "no_permission"

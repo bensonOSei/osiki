@@ -4,16 +4,23 @@ from beanie import PydanticObjectId
 from loguru import logger
 
 from osiki.models.role import Grant, Role
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.roles.base_role_repository import BaseRoleRepository
 
 
 class MongoDBRoleRepository(BaseRoleRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, role: Role) -> Role:
         role.environment_id = self.environment_id
         await role.insert()
+        await self._state.bump_config_version()
         logger.debug("Role created", role_id=str(role.id), name=role.name)
         return role
 
@@ -39,6 +46,11 @@ class MongoDBRoleRepository(BaseRoleRepository):
             {"_id": {"$in": object_ids}, "is_active": True},
         ).to_list()
 
+    async def get_all_active(self) -> list[Role]:
+        return await Role.find(
+            Role.environment_id == self.environment_id, Role.is_active == True
+        ).to_list()
+
     async def get_children(self, parent_role_id: str) -> list[Role]:
         return await Role.find(
             Role.environment_id == self.environment_id,
@@ -49,6 +61,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
     async def update(self, role: Role) -> Role:
         role.updated_at = time.time()
         await role.save()
+        await self._state.bump_config_version()
         logger.debug("Role updated", role_id=str(role.id))
         return role
 
@@ -63,6 +76,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
         role.is_active = False
         role.updated_at = time.time()
         await role.save()
+        await self._state.bump_config_version()
         logger.info("Role deactivated", role_id=role_id)
         return True
 
@@ -96,6 +110,8 @@ class MongoDBRoleRepository(BaseRoleRepository):
                 permission_id=permission_id,
                 condition_id=condition_id,
             )
+        # Bump even on a no-op: over-bumping costs one rebuild, never staleness.
+        await self._state.bump_config_version()
         return True
 
     async def remove_permission(
@@ -118,6 +134,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
                 permission_id=permission_id,
                 condition_id=condition_id,
             )
+        await self._state.bump_config_version()
         return True
 
     async def is_condition_in_use(self, condition_id: str) -> bool:

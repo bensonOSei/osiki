@@ -14,6 +14,7 @@ from osiki.decision.models import (
 from osiki.models.base import AttributeValue, Scope
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintConfig, ConstraintType
+from osiki.models.environment_state import EnvironmentState
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
@@ -33,6 +34,16 @@ def make_user(
     user = User(external_id=external_id, email=email)
     user.id = user_id or PydanticObjectId()
     return user
+
+
+def make_environment_state(
+    environment_id: str = "default", config_version: int = 0
+) -> EnvironmentState:
+    state = EnvironmentState(
+        environment_id=environment_id, config_version=config_version
+    )
+    state.id = PydanticObjectId()
+    return state
 
 
 def make_tenant(

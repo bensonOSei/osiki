@@ -7,15 +7,22 @@ from osiki.models.constraint import Constraint, ConstraintType
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
 )
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 
 
 class MongoDBConstraintRepository(BaseConstraintRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, constraint: Constraint) -> Constraint:
         constraint.environment_id = self.environment_id
         await constraint.insert()
+        await self._state.bump_config_version()
         logger.info(
             "Constraint created",
             constraint_id=str(constraint.id),
@@ -65,6 +72,7 @@ class MongoDBConstraintRepository(BaseConstraintRepository):
     async def update(self, constraint: Constraint) -> Constraint:
         constraint.updated_at = time.time()
         await constraint.save()
+        await self._state.bump_config_version()
         logger.info("Constraint updated", constraint_id=str(constraint.id))
         return constraint
 
@@ -79,5 +87,6 @@ class MongoDBConstraintRepository(BaseConstraintRepository):
         constraint.is_active = False
         constraint.updated_at = time.time()
         await constraint.save()
+        await self._state.bump_config_version()
         logger.info("Constraint deactivated", constraint_id=constraint_id)
         return True

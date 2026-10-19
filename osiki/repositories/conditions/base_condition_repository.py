@@ -17,6 +17,10 @@ class BaseConditionRepository(ABC):
     async def get_by_ids(self, ids: list[str]) -> list[Condition]: ...
 
     @abstractmethod
+    async def get_all(self) -> list[Condition]:
+        """Every condition in the environment, inactive ones included."""
+
+    @abstractmethod
     async def update(self, condition: Condition) -> Condition: ...
 
     @abstractmethod

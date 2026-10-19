@@ -6,6 +6,7 @@ from osiki.models.access_log import AccessLog
 from osiki.models.audit_log import AuditLog
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint
+from osiki.models.environment_state import EnvironmentState
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
@@ -36,6 +37,7 @@ async def initialize_database(db_url: str, db_name: str = "osiki") -> None:
             AccessLog,
             Tenant,
             TenantMember,
+            EnvironmentState,
         ],
     )
-    logger.info("Database initialized successfully with 13 document models")
+    logger.info("Database initialized successfully with 14 document models")

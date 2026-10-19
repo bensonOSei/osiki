@@ -7,15 +7,22 @@ from osiki.models.condition import Condition
 from osiki.repositories.conditions.base_condition_repository import (
     BaseConditionRepository,
 )
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 
 
 class MongoDBConditionRepository(BaseConditionRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, condition: Condition) -> Condition:
         condition.environment_id = self.environment_id
         await condition.insert()
+        await self._state.bump_config_version()
         logger.info(
             "Condition created", condition_id=str(condition.id), key=condition.key
         )
@@ -43,9 +50,16 @@ class MongoDBConditionRepository(BaseConditionRepository):
             {"_id": {"$in": object_ids}, "is_active": True},
         ).to_list()
 
+    async def get_all(self) -> list[Condition]:
+        # Includes inactive rows so a grant's condition key can still be named.
+        return await Condition.find(
+            Condition.environment_id == self.environment_id
+        ).to_list()
+
     async def update(self, condition: Condition) -> Condition:
         condition.updated_at = time.time()
         await condition.save()
+        await self._state.bump_config_version()
         logger.info("Condition updated", condition_id=str(condition.id))
         return condition
 
@@ -60,6 +74,7 @@ class MongoDBConditionRepository(BaseConditionRepository):
         condition.is_active = False
         condition.updated_at = time.time()
         await condition.save()
+        await self._state.bump_config_version()
         logger.info("Condition deactivated", condition_id=condition_id)
         return True
 

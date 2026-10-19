@@ -24,6 +24,9 @@ from osiki.repositories.conditions.base_condition_repository import (
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
 )
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.group_roles.base_group_role_repository import (
     BaseGroupRoleRepository,
 )
@@ -67,6 +70,32 @@ class _EnvironmentBound[T: EnvironmentMixin]:
         doc.environment_id = self.environment_id
         self._data[key] = doc
         return doc
+
+
+class _ConfigBound[T: EnvironmentMixin](_EnvironmentBound[T]):
+    """A config store that bumps the environment's config version on writes."""
+
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
+        super().__init__(environment_id)
+        self._state = state
+
+    async def _bump(self) -> None:
+        await self._state.bump_config_version()
+
+
+class MockEnvironmentStateRepository(BaseEnvironmentStateRepository):
+    def __init__(self, environment_id: str) -> None:
+        self.environment_id = environment_id
+        self._version = 0
+
+    async def get_config_version(self) -> int:
+        return self._version
+
+    async def bump_config_version(self) -> int:
+        self._version += 1
+        return self._version
 
 
 def _grant(permission_id: str, condition_id: str | None) -> Grant:
@@ -225,11 +254,13 @@ class MockGroupRoleRepository(_EnvironmentBound[GroupRole], BaseGroupRoleReposit
         ]
 
 
-class MockRoleRepository(_EnvironmentBound[Role], BaseRoleRepository):
+class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
     async def create(self, role: Role) -> Role:
         if role.id is None:
             role.id = PydanticObjectId()
-        return self._store(str(role.id), role)
+        self._store(str(role.id), role)
+        await self._bump()
+        return role
 
     async def get_by_id(self, role_id: str) -> Role | None:
         return self._get(role_id)
@@ -243,6 +274,9 @@ class MockRoleRepository(_EnvironmentBound[Role], BaseRoleRepository):
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         return [self._data[rid] for rid in role_ids if self._get(rid) is not None]
 
+    async def get_all_active(self) -> list[Role]:
+        return [r for r in self._scoped() if r.is_active]
+
     async def get_children(self, parent_role_id: str) -> list[Role]:
         return [
             role
@@ -253,13 +287,16 @@ class MockRoleRepository(_EnvironmentBound[Role], BaseRoleRepository):
     async def update(self, role: Role) -> Role:
         role.updated_at = time.time()
         self._data[str(role.id)] = role
+        await self._bump()
         return role
 
     async def deactivate(self, role_id: str) -> bool:
-        if self._get(role_id) is not None:
-            self._data[role_id].is_active = False
-            return True
-        return False
+        role = self._get(role_id)
+        if role is None or role.is_system:
+            return False
+        role.is_active = False
+        await self._bump()
+        return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
         active = [r for r in self._scoped() if r.is_active]
@@ -274,6 +311,7 @@ class MockRoleRepository(_EnvironmentBound[Role], BaseRoleRepository):
         grant = _grant(permission_id, condition_id)
         if grant not in role.grants:
             role.grants.append(grant)
+        await self._bump()
         return True
 
     async def remove_permission(
@@ -285,6 +323,7 @@ class MockRoleRepository(_EnvironmentBound[Role], BaseRoleRepository):
         grant = _grant(permission_id, condition_id)
         if grant in role.grants:
             role.grants.remove(grant)
+        await self._bump()
         return True
 
     async def is_condition_in_use(self, condition_id: str) -> bool:
@@ -296,11 +335,13 @@ class MockRoleRepository(_EnvironmentBound[Role], BaseRoleRepository):
         )
 
 
-class MockPermissionRepository(_EnvironmentBound[Permission], BasePermissionRepository):
+class MockPermissionRepository(_ConfigBound[Permission], BasePermissionRepository):
     async def create(self, permission: Permission) -> Permission:
         if permission.id is None:
             permission.id = PydanticObjectId()
-        return self._store(str(permission.id), permission)
+        self._store(str(permission.id), permission)
+        await self._bump()
+        return permission
 
     async def get_by_id(self, permission_id: str) -> Permission | None:
         return self._get(permission_id)
@@ -322,6 +363,7 @@ class MockPermissionRepository(_EnvironmentBound[Permission], BasePermissionRepo
     async def deactivate(self, permission_id: str) -> bool:
         if self._get(permission_id) is not None:
             self._data[permission_id].is_active = False
+            await self._bump()
             return True
         return False
 
@@ -330,11 +372,13 @@ class MockPermissionRepository(_EnvironmentBound[Permission], BasePermissionRepo
         return active[skip : skip + limit]
 
 
-class MockConstraintRepository(_EnvironmentBound[Constraint], BaseConstraintRepository):
+class MockConstraintRepository(_ConfigBound[Constraint], BaseConstraintRepository):
     async def create(self, constraint: Constraint) -> Constraint:
         if constraint.id is None:
             constraint.id = PydanticObjectId()
-        return self._store(str(constraint.id), constraint)
+        self._store(str(constraint.id), constraint)
+        await self._bump()
+        return constraint
 
     async def get_by_id(self, constraint_id: str) -> Constraint | None:
         return self._get(constraint_id)
@@ -362,11 +406,13 @@ class MockConstraintRepository(_EnvironmentBound[Constraint], BaseConstraintRepo
     async def update(self, constraint: Constraint) -> Constraint:
         constraint.updated_at = time.time()
         self._data[str(constraint.id)] = constraint
+        await self._bump()
         return constraint
 
     async def deactivate(self, constraint_id: str) -> bool:
         if self._get(constraint_id) is not None:
             self._data[constraint_id].is_active = False
+            await self._bump()
             return True
         return False
 
@@ -562,11 +608,13 @@ class MockAccessLogRepository(_EnvironmentBound[AccessLog], BaseAccessLogReposit
         return list(self._scoped())[skip : skip + limit]
 
 
-class MockConditionRepository(_EnvironmentBound[Condition], BaseConditionRepository):
+class MockConditionRepository(_ConfigBound[Condition], BaseConditionRepository):
     async def create(self, condition: Condition) -> Condition:
         if condition.id is None:
             condition.id = PydanticObjectId()
-        return self._store(str(condition.id), condition)
+        self._store(str(condition.id), condition)
+        await self._bump()
+        return condition
 
     async def get_by_id(self, condition_id: str) -> Condition | None:
         return self._get(condition_id)
@@ -580,9 +628,13 @@ class MockConditionRepository(_EnvironmentBound[Condition], BaseConditionReposit
     async def get_by_ids(self, ids: list[str]) -> list[Condition]:
         return [c for i in ids if (c := self._get(i)) is not None and c.is_active]
 
+    async def get_all(self) -> list[Condition]:
+        return self._scoped()
+
     async def update(self, condition: Condition) -> Condition:
         condition.updated_at = time.time()
         self._data[str(condition.id)] = condition
+        await self._bump()
         return condition
 
     async def deactivate(self, condition_id: str) -> bool:
@@ -590,6 +642,7 @@ class MockConditionRepository(_EnvironmentBound[Condition], BaseConditionReposit
         if condition is None:
             return False
         condition.is_active = False
+        await self._bump()
         return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Condition]:

@@ -17,6 +17,10 @@ class BaseRoleRepository(ABC):
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]: ...
 
     @abstractmethod
+    async def get_all_active(self) -> list[Role]:
+        """Every active role in the environment, unpaginated."""
+
+    @abstractmethod
     async def get_children(self, parent_role_id: str) -> list[Role]: ...
 
     @abstractmethod

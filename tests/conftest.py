@@ -11,6 +11,7 @@ from osiki.models.access_log import AccessLog
 from osiki.models.audit_log import AuditLog
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint
+from osiki.models.environment_state import EnvironmentState
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
@@ -41,16 +42,21 @@ from osiki.repositories.user_roles.base_user_role_repository import (
 )
 from osiki.repositories.users.base_user_repository import BaseUserRepository
 from osiki.services.authorization.authorization_service import AuthorizationService
+from osiki.services.bundle_builder.bundle_builder import BundleBuilder
 from osiki.services.constraint_validator.constraint_validator import ConstraintValidator
-from osiki.services.permission_resolver.permission_resolver import PermissionResolver
-from osiki.services.scope_matcher.scope_matcher import ScopeMatcher
+from osiki.services.snapshot_builder.snapshot_builder import (
+    SnapshotBuilder,
+    SnapshotCache,
+)
 from tests.mocks import (
     MockConditionRepository,
     MockConstraintRepository,
+    MockEnvironmentStateRepository,
     MockGroupRoleRepository,
     MockPermissionRepository,
     MockRoleRepository,
     MockTenantMemberRepository,
+    MockTenantRepository,
     MockUserGroupRepository,
     MockUserRepository,
     MockUserRoleRepository,
@@ -58,6 +64,7 @@ from tests.mocks import (
     make_condition,
     make_constraint,
     make_decision_request,
+    make_environment_state,
     make_group,
     make_group_role,
     make_permission,
@@ -76,6 +83,7 @@ from tests.mocks import (
 __all__ = [
     "make_assignment_entry",
     "make_decision_request",
+    "make_environment_state",
     "make_condition",
     "make_constraint",
     "make_group",
@@ -92,10 +100,12 @@ __all__ = [
     "make_user_bundle",
     "MockConditionRepository",
     "MockConstraintRepository",
+    "MockEnvironmentStateRepository",
     "MockGroupRoleRepository",
     "MockPermissionRepository",
     "MockRoleRepository",
     "MockTenantMemberRepository",
+    "MockTenantRepository",
     "MockUserGroupRepository",
     "MockUserRepository",
     "MockUserRoleRepository",
@@ -140,6 +150,7 @@ async def init_db(mongo_client: AsyncMongoMockClient) -> None:
             AccessLog,
             Tenant,
             TenantMember,
+            EnvironmentState,
         ],
     )
     # mongomock's create_indexes() drops partialFilterExpression, which would turn
@@ -184,18 +195,34 @@ def mock_group_role_repository() -> BaseGroupRoleRepository:
 
 
 @pytest.fixture
-def mock_role_repository() -> BaseRoleRepository:
-    return MockRoleRepository("default")
+def mock_environment_state_repository() -> MockEnvironmentStateRepository:
+    return MockEnvironmentStateRepository("default")
 
 
 @pytest.fixture
-def mock_permission_repository() -> BasePermissionRepository:
-    return MockPermissionRepository("default")
+def mock_role_repository(mock_environment_state_repository) -> BaseRoleRepository:
+    return MockRoleRepository("default", mock_environment_state_repository)
 
 
 @pytest.fixture
-def mock_constraint_repository() -> BaseConstraintRepository:
-    return MockConstraintRepository("default")
+def mock_permission_repository(
+    mock_environment_state_repository,
+) -> BasePermissionRepository:
+    return MockPermissionRepository("default", mock_environment_state_repository)
+
+
+@pytest.fixture
+def mock_condition_repository(
+    mock_environment_state_repository,
+) -> MockConditionRepository:
+    return MockConditionRepository("default", mock_environment_state_repository)
+
+
+@pytest.fixture
+def mock_constraint_repository(
+    mock_environment_state_repository,
+) -> BaseConstraintRepository:
+    return MockConstraintRepository("default", mock_environment_state_repository)
 
 
 @pytest.fixture
@@ -208,30 +235,49 @@ def mock_tenant_member_repository() -> BaseTenantMemberRepository:
     return MockTenantMemberRepository("default")
 
 
+@pytest.fixture
+def mock_tenant_repository() -> MockTenantRepository:
+    return MockTenantRepository("default")
+
+
 # --- Service Fixtures (for unit tests) ---
 
 
 @pytest.fixture
-def scope_matcher() -> ScopeMatcher:
-    return ScopeMatcher()
+def snapshot_builder(
+    mock_environment_state_repository,
+    mock_role_repository,
+    mock_permission_repository,
+    mock_condition_repository,
+    mock_constraint_repository,
+) -> SnapshotBuilder:
+    return SnapshotBuilder(
+        "default",
+        mock_environment_state_repository,
+        mock_role_repository,
+        mock_permission_repository,
+        mock_condition_repository,
+        mock_constraint_repository,
+        cache=SnapshotCache(),
+    )
 
 
 @pytest.fixture
-def permission_resolver(
+def bundle_builder(
+    mock_user_repository,
     mock_user_role_repository,
     mock_user_group_repository,
     mock_group_role_repository,
-    mock_role_repository,
-    mock_permission_repository,
-    scope_matcher,
-) -> PermissionResolver:
-    return PermissionResolver(
-        user_role_repository=mock_user_role_repository,
-        user_group_repository=mock_user_group_repository,
-        group_role_repository=mock_group_role_repository,
-        role_repository=mock_role_repository,
-        permission_repository=mock_permission_repository,
-        scope_matcher=scope_matcher,
+    mock_tenant_member_repository,
+    mock_tenant_repository,
+) -> BundleBuilder:
+    return BundleBuilder(
+        mock_user_repository,
+        mock_user_role_repository,
+        mock_user_group_repository,
+        mock_group_role_repository,
+        mock_tenant_member_repository,
+        mock_tenant_repository,
     )
 
 
@@ -247,13 +293,7 @@ def constraint_validator(
 
 
 @pytest.fixture
-def authorization_service(
-    permission_resolver,
-    mock_user_repository,
-    mock_tenant_member_repository,
-) -> AuthorizationService:
+def authorization_service(snapshot_builder, bundle_builder) -> AuthorizationService:
     return AuthorizationService(
-        permission_resolver=permission_resolver,
-        user_repository=mock_user_repository,
-        tenant_member_repository=mock_tenant_member_repository,
+        snapshot_builder=snapshot_builder, bundle_builder=bundle_builder
     )
