@@ -1,7 +1,13 @@
 from fastapi import APIRouter, Query, status
 
-from osiki.api.dependencies import GroupRepository, GroupRoleRepository
-from osiki.api.exceptions import ConflictError, NotFoundError
+from osiki.api.dependencies import (
+    ConstraintValidatorDep,
+    GroupRepository,
+    GroupRoleRepository,
+    TenantRepository,
+    UserGroupRepository,
+)
+from osiki.api.exceptions import ConflictError, NotFoundError, constraint_violation
 from osiki.models.group import Group
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.group import GroupCreate, GroupRead, GroupUpdate
@@ -133,10 +139,18 @@ async def assign_role_to_group(
     data: GroupRoleAssignmentRequest,
     group_repo: GroupRepository,
     group_role_repo: GroupRoleRepository,
+    tenant_repo: TenantRepository,
+    user_group_repo: UserGroupRepository,
+    validator: ConstraintValidatorDep,
 ) -> GroupRoleAssignmentResponse:
     group = await group_repo.get_by_id(group_id)
     if not group:
         raise NotFoundError("Group not found", details={"group_id": group_id})
+
+    # A group isn't a user, so a tenant-scoped group role adds no membership.
+    tenant_id = data.scope.tenant_id if data.scope else None
+    if tenant_id is not None and not await tenant_repo.get_by_external_id(tenant_id):
+        raise NotFoundError("Tenant not found", details={"tenant_id": tenant_id})
 
     from beanie import PydanticObjectId
 
@@ -145,6 +159,14 @@ async def assign_role_to_group(
     from osiki.schemas.scope import ScopeSchema
 
     scope = Scope(**(data.scope.model_dump() if data.scope else {}))
+    # Every active member would gain the role: the first violation blocks.
+    for member in await user_group_repo.get_group_members(group_id):
+        result = await validator.validate(
+            str(member.user_id), data.role_id, scope.to_dict()
+        )
+        if not result.valid:
+            raise constraint_violation(result.constraint_name, result.reason)
+
     group_role = GroupRole(
         group_id=PydanticObjectId(group_id),
         role_id=PydanticObjectId(data.role_id),
@@ -176,11 +198,19 @@ async def revoke_role_from_group(
     group_id: str,
     role_id: str,
     group_role_repo: GroupRoleRepository,
+    tenant_id: str | None = Query(
+        None, description="Revoke the assignment in this tenant (default: none)"
+    ),
 ) -> None:
-    assignment = await group_role_repo.find_assignment(group_id, role_id)
+    # Without tenant_id only the project-wide assignment is revoked.
+    assignment = await group_role_repo.find_assignment(group_id, role_id, tenant_id)
     if not assignment:
         raise NotFoundError(
             "Role assignment not found",
-            details={"group_id": group_id, "role_id": role_id},
+            details={
+                "group_id": group_id,
+                "role_id": role_id,
+                "tenant_id": tenant_id or "",
+            },
         )
     await group_role_repo.revoke(str(assignment.id))

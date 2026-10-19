@@ -22,7 +22,12 @@ class BaseGroupRoleRepository(ABC):
     @abstractmethod
     async def find_assignment(
         self, group_id: str, role_id: str, tenant_id: str | None = None
-    ) -> GroupRole | None: ...
+    ) -> GroupRole | None:
+        """The active assignment scoped to ``tenant_id``.
+
+        ``tenant_id=None`` matches only the project-wide assignment (no tenant),
+        never a tenant-scoped one.
+        """
 
     @abstractmethod
     async def revoke(self, group_role_id: str) -> bool: ...

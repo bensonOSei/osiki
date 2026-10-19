@@ -1,11 +1,26 @@
+from typing import Any
+
 from beanie import PydanticObjectId
 
-from osiki.models.base import Scope
+from osiki.decision.models import (
+    AssignmentEntry,
+    ConstraintEntry,
+    DecisionRequest,
+    GrantEntry,
+    RoleEntry,
+    Snapshot,
+    UserBundle,
+)
+from osiki.models.base import AttributeValue, Scope
+from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintConfig, ConstraintType
+from osiki.models.environment_state import EnvironmentState
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
-from osiki.models.role import Role
+from osiki.models.role import Grant, Role
+from osiki.models.tenant import Tenant
+from osiki.models.tenant_member import TenantMember
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -21,16 +36,48 @@ def make_user(
     return user
 
 
+def make_environment_state(
+    environment_id: str = "default", config_version: int = 0
+) -> EnvironmentState:
+    state = EnvironmentState(
+        environment_id=environment_id, config_version=config_version
+    )
+    state.id = PydanticObjectId()
+    return state
+
+
+def make_tenant(
+    external_id: str = "tenant-1",
+    name: str = "Tenant",
+    attributes: dict[str, AttributeValue] | None = None,
+) -> Tenant:
+    tenant = Tenant(external_id=external_id, name=name, attributes=attributes or {})
+    tenant.id = PydanticObjectId()
+    return tenant
+
+
+def make_tenant_member(
+    tenant_id: str = "tenant-1", user_id: str = "user-1"
+) -> TenantMember:
+    member = TenantMember(tenant_id=tenant_id, user_id=user_id)
+    member.id = PydanticObjectId()
+    return member
+
+
 def make_role(
     name: str = "test-role",
     permission_ids: list[PydanticObjectId] | None = None,
+    grants: list[Grant] | None = None,
     parent_role_id: PydanticObjectId | None = None,
     role_id: PydanticObjectId | None = None,
     is_active: bool = True,
 ) -> Role:
     role = Role(
         name=name,
-        permission_ids=permission_ids or [],
+        grants=[
+            *[Grant(permission_id=pid) for pid in (permission_ids or [])],
+            *(grants or []),
+        ],
         parent_role_id=parent_role_id,
         is_active=is_active,
     )
@@ -110,3 +157,92 @@ def make_constraint(
     c = Constraint(name=name, type=constraint_type, config=config)
     c.id = constraint_id or PydanticObjectId()
     return c
+
+
+def make_condition(
+    key: str = "is_owner",
+    expression: dict[str, Any] | None = None,
+    condition_id: PydanticObjectId | None = None,
+) -> Condition:
+    c = Condition(
+        key=key,
+        name=key,
+        expression=expression
+        or {"op": "eq", "left": {"ref": "user.id"}, "right": {"value": "u1"}},
+    )
+    c.id = condition_id or PydanticObjectId()
+    return c
+
+
+# --- Pure decision models (osiki.decision.models) ---
+
+
+def make_role_entry(
+    role_id: str = "role-1",
+    grants: list[tuple[str, str | None]] | None = None,
+    parent_id: str | None = None,
+    name: str | None = None,
+) -> RoleEntry:
+    """``grants`` is a list of ``(permission, condition_key)`` pairs."""
+    return RoleEntry(
+        id=role_id,
+        name=name or role_id,
+        parent_id=parent_id,
+        grants=[
+            GrantEntry(permission=permission, condition=condition)
+            for permission, condition in grants or []
+        ],
+    )
+
+
+def make_snapshot(
+    roles: list[RoleEntry] | None = None,
+    conditions: dict[str, dict[str, Any]] | None = None,
+    constraints: list[ConstraintEntry] | None = None,
+    environment_id: str = "default",
+    version: int = 1,
+) -> Snapshot:
+    return Snapshot(
+        environment_id=environment_id,
+        version=version,
+        roles=roles or [],
+        conditions=conditions or {},
+        constraints=constraints or [],
+    )
+
+
+def make_assignment_entry(
+    role_id: str = "role-1",
+    scope: dict[str, str] | None = None,
+    expires_at: float | None = None,
+    via: str = "direct",
+) -> AssignmentEntry:
+    return AssignmentEntry.model_validate(
+        {"role_id": role_id, "scope": scope or {}, "expires_at": expires_at, "via": via}
+    )
+
+
+def make_user_bundle(
+    assignments: list[AssignmentEntry] | None = None,
+    user_id: str = "user-1",
+    attributes: dict[str, Any] | None = None,
+    tenants: dict[str, dict[str, Any]] | None = None,
+) -> UserBundle:
+    return UserBundle(
+        user_id=user_id,
+        attributes=attributes or {},
+        tenants=tenants or {},
+        assignments=assignments or [],
+    )
+
+
+def make_decision_request(
+    resource: str = "docs",
+    action: str = "read",
+    scope: dict[str, str] | None = None,
+    record: dict[str, Any] | None = None,
+    now: float = 1000,
+) -> DecisionRequest:
+    return DecisionRequest(
+        resource=resource, action=action, scope=scope or {}, record=record, now=now
+    )

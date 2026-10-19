@@ -10,6 +10,8 @@ You send a request like "can user X perform action Y on resource Z?" and Osiki f
 
 **Core authorization check:**
 
+`user_id` is your application's own (external) user id. `record` is optional: send the record being accessed when a grant carries a condition.
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/authorization/check \
   -H "Content-Type: application/json" \
@@ -17,7 +19,8 @@ curl -X POST http://localhost:8000/api/v1/authorization/check \
     "user_id": "abc-123",
     "resource": "invoices",
     "action": "write",
-    "scope": { "tenant_id": "acme-corp" }
+    "scope": { "tenant_id": "acme-corp" },
+    "record": { "team_id": "t-7" }
   }'
 ```
 
@@ -25,20 +28,136 @@ curl -X POST http://localhost:8000/api/v1/authorization/check \
 {
   "allowed": true,
   "matched_permission": "invoices:write",
-  "matched_via": "direct_role",
+  "matched_via": "direct",
+  "condition": "own_team",
   "denial_reason": null,
   "cache_hit": false
 }
 ```
 
+`condition` is the key of the named condition that allowed the request, or `null` for an unconditional grant.
+
+## Environments
+
+Every request is scoped to an environment. Send it in the `X-Osiki-Environment` header; when the header is missing the environment is `default`. Environments are fully isolated: users, roles, conditions, tenants and logs in one are invisible to the others. Identifiers are lowercase letters, digits, `-` and `_`.
+
+```bash
+curl http://localhost:8000/api/v1/roles -H "X-Osiki-Environment: staging"
+```
+
+## Identifiers
+
+Two kinds of id appear in the API:
+
+- **External ids**, your own: users and tenants are addressed by them in `POST /authorization/check`, `POST /authorization/filter`, `/tenants/...` (including members) and `/users/by-external/{external_id}` (upsert and bundle).
+- **Internal ids**, the ObjectIds Osiki returns as `id`: `/users/{id}`, `/users/{id}/roles`, `/users/{id}/groups`, `/groups/{id}`, `/groups/{id}/roles` and the role, permission, condition and constraint routes take these. The `id` field of any user response (create, get or upsert) is that internal id.
+
+## Tenants and membership
+
+Tenants are identified by your own external id. Upsert one, then add users (by external id) to it. A user who is not a member of a tenant is denied inside that tenant's scope.
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/tenants/acme-corp \
+  -H "Content-Type: application/json" -d '{"name": "Acme Corp"}'
+
+curl -X PUT http://localhost:8000/api/v1/users/by-external/abc-123 \
+  -H "Content-Type: application/json" -d '{"name": "Ama", "attributes": {"team_id": "t-7"}}'
+
+curl -X PUT http://localhost:8000/api/v1/tenants/acme-corp/members/abc-123
+```
+
+Remove a member with `DELETE` on the same path; `GET /tenants/{id}/members` lists them.
+
+Membership comes first. Assigning a user a role scoped to a tenant does not make them a member: if they are not one already, the assignment is rejected with `409 Conflict` (`"User is not a member of this tenant"`, with a `hint` to add the membership first). An unknown tenant answers `404`.
+
+To revoke a tenant-scoped assignment, name the tenant: `DELETE /users/{id}/roles/{role_id}?tenant_id=acme-corp` (and the same on `/groups/{id}/roles/{role_id}`). Without `tenant_id`, only the project-wide assignment of that role is revoked; if there is none the answer is `404`, never a guess at one of the tenants.
+
+## Conditions
+
+A condition is a named rule, written as a JSON expression tree, that a role grant can carry. It is evaluated against the `record` sent with the check, and against the user's attributes. This one allows access when the record belongs to the user's team:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/conditions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "own_team",
+    "name": "Own team",
+    "expression": {
+      "op": "eq",
+      "left": { "ref": "record.team_id" },
+      "right": { "ref": "user.team_id" }
+    }
+  }'
+```
+
+Then grant a permission through that condition when you create the role:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/roles \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "team-member",
+    "grants": [{ "permission_id": "<permission id>", "condition_id": "<condition id>" }]
+  }'
+```
+
+Without a `record`, a conditional grant does not allow. When in doubt, Osiki denies.
+
+## Snapshot, bundle and filter
+
+These endpoints let an SDK decide locally instead of calling `/authorization/check` for every request.
+
+- `GET /snapshot` returns the environment's authorization configuration: `environment_id`, `version`, the active roles (each with its `parent_id` and its grants as `"resource:action"` strings plus an optional condition key), the conditions (key to rule), and the constraints. It has no separate permission or tenant lists, and no users: a user's tenants and assignments come from the bundle below. It carries an `ETag`; send it back as `If-None-Match` and an unchanged snapshot answers `304 Not Modified`. Responses are `Cache-Control: private` and `Vary: X-Osiki-Environment`.
+- `GET /snapshot/version` returns just `{"version": n}`, cheap to poll.
+- `GET /users/by-external/{external_id}/bundle` returns one user's attributes, tenants and assignments.
+- `POST /authorization/filter` takes `user_id`, `resource`, `action` and an optional `scope` and returns a list filter: `{"mode": "all"}`, `{"mode": "none"}`, or `{"mode": "filter", "filter": ...}` with a residual expression tree whose leaves carry a `type`. Use it to push the user's access rules into your own database query.
+
+Every decision made locally must match the server's. The fixtures that pin this behaviour, and how an SDK loads them, are described in [conformance/README.md](conformance/README.md).
+
+## Constraints
+
+Constraints are enforced when roles are assigned: directly to a user, to a group, or by adding a user to a group. A violating assignment is rejected with `409 Conflict`, naming the constraint and the reason.
+
+Constraints respect tenant scope. A prerequisite counts only when it is held project-wide or in the same tenant as the new assignment (a project-wide assignment needs a project-wide prerequisite). Mutually exclusive roles may be held in two different tenants, but not in the same tenant, and not when either of them is project-wide.
+
+## Access logs
+
+The server records every denial and a sample of successful checks (`ACCESS_LOG_SUCCESS_SAMPLE_RATE`, default `0.1`). Writing happens after the response is sent, so logging never slows or changes a check. SDKs that decide locally report their decisions in batches:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/access-logs/batch \
+  -H "Content-Type: application/json" \
+  -d '{ "entries": [{
+    "timestamp": 1760000000.5, "user_id": "abc-123", "resource": "invoices",
+    "action": "write", "scope": { "tenant_id": "acme-corp" },
+    "allowed": true, "matched_permission": "invoices:write", "latency_ms": 0.2
+  }] }'
+```
+
+Send 1 to 500 entries; the response is `202 {"accepted": n}`. They are stored with `source: "sdk"`.
+
+## Upgrading existing data
+
+If you are upgrading a deployment that already has data:
+
+1. Stop every instance of the old version. Old and new versions must never run side by side against the same database: the old one writes documents without an environment and with the old role format.
+2. Run `scripts/migrate_m1.py`.
+3. Start the new version, and only then send it traffic.
+
+```bash
+poetry run python scripts/migrate_m1.py
+```
+
+The migration stamps every existing document with the `default` environment, converts each role's `permission_ids` into unconditional `grants` (merged into any grants the role already has, so no permission is lost), and drops the indexes the new version no longer uses, including the old unique ones that would otherwise keep rejecting valid writes. It reads `MONGODB_URL` and `MONGODB_DATABASE` from the environment and is safe to run repeatedly.
+
 ## Key concepts
 
-- **Permissions** are `resource:action` pairs (e.g. `invoices:write`, `reports:read`). Wildcards work too — `invoices:*`, `*:read`, `*:*`.
+- **Permissions** are `resource:action` pairs (e.g. `invoices:write`, `reports:read`). Wildcards work too — `invoices:*`, `*:read`, `*:*`. Neither part may be empty or contain `:`.
 - **Roles** hold collections of permissions and can inherit from parent roles. A role chain like `viewer → editor → admin` means admins get everything editors and viewers have.
 - **Groups** let you assign roles to many users at once. Add a user to the "finance-team" group and they get all roles attached to that group.
-- **Scopes** handle multi-tenancy. A role can be scoped to `{ "tenant_id": "acme-corp", "region": "eu" }` so permissions only apply within that context.
+- **Scopes** handle multi-tenancy. A role can be scoped to `{ "tenant_id": "acme-corp", "region": "eu" }` so permissions only apply within that context. Scope values are strings; custom keys are allowed, but a non-string value is rejected with `422`.
 - **Constraints** enforce business rules — mutual exclusion between roles, cardinality limits, and prerequisite requirements.
-- **Audit logs** track every administrative change. **Access logs** record authorization checks (all denials, sampled successes).
+- **Access logs** record authorization checks (all denials, sampled successes). An audit log model exists, but nothing writes to it yet: administrative changes are not audited in this version.
 
 ## Getting started
 
@@ -84,11 +203,16 @@ All endpoints live under `/api/v1`. Here's the shape of things:
 
 | Resource | Endpoints |
 |---|---|
-| **Users** | Create, get, update, delete, list. Assign/revoke roles. Add/remove from groups. |
-| **Groups** | Create, get, update, delete, list. Assign/revoke roles. |
+| **Users** | Create, get, update, delete, list. Assign/revoke roles (`?tenant_id=` on revoke). Add/remove from groups. Upsert and bundle by external id. |
+| **Groups** | Create, get, update, delete, list. Assign/revoke roles (`?tenant_id=` on revoke). |
 | **Roles** | Create, get, update, delete, list. |
 | **Permissions** | Create, get, list. |
-| **Authorization** | `POST /authorization/check` — the main event. |
+| **Conditions** | Create, get, update, delete, list. |
+| **Constraints** | Create, get, update, delete, list. |
+| **Tenants** | Upsert, get. Add/remove/list members. |
+| **Authorization** | `POST /authorization/check` — the main event. `POST /authorization/filter` for list filters. |
+| **Snapshot** | `GET /snapshot` (ETag/304), `GET /snapshot/version`, `GET /users/by-external/{id}/bundle`. |
+| **Access logs** | `POST /access-logs/batch` — SDK decision ingest. |
 
 Once the server is running, full interactive docs are at `http://localhost:8000/docs`.
 
@@ -107,10 +231,10 @@ osiki/
 │   ├── schemas/            # Request/response Pydantic models
 │   ├── repositories/       # Data access layer
 │   ├── services/           # Business logic
-│   │   ├── authorization/        # The main authorization check
-│   │   ├── permission_resolver/  # Resolves effective permissions
-│   │   ├── constraint_validator/ # Enforces business rules
-│   │   └── scope_matcher/        # Multi-tenant scope matching
+│   │   ├── authorization/        # The main authorization check (via decide)
+│   │   ├── snapshot_builder/     # Versioned, cached config snapshot
+│   │   ├── bundle_builder/       # One user's attributes, tenants, assignments
+│   │   └── constraint_validator/ # Enforces business rules
 │   └── configs/            # Settings, database init, logging
 ├── cli/                    # Code generation CLI (Typer)
 ├── tests/                  # Unit, integration, and e2e tests

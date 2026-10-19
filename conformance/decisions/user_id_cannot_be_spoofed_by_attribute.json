@@ -1,0 +1,63 @@
+{
+  "name": "user_id_cannot_be_spoofed_by_attribute",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": "owner"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "owner": {
+        "op": "eq",
+        "left": {
+          "ref": "record.owner_id"
+        },
+        "right": {
+          "ref": "user.id"
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "real",
+    "attributes": {
+      "id": "spoof"
+    },
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": {
+      "owner_id": "spoof"
+    },
+    "now": 1000
+  },
+  "expected": {
+    "allowed": false,
+    "matched_permission": null,
+    "matched_via": null,
+    "condition": null,
+    "denial_reason": "condition_failed"
+  }
+}

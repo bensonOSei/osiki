@@ -1,5 +1,7 @@
+import pytest
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
+from httpx import Response
 
 from tests.e2e.conftest import API
 
@@ -178,8 +180,10 @@ def test_assign_role_to_user(client: TestClient) -> None:
 
 
 def test_assign_role_to_user_with_scope(client: TestClient) -> None:
+    client.put(f"{API}/tenants/tenant-1", json={"name": "Tenant 1"})
     user_resp = client.post(f"{API}/users", json={"external_id": "user-1"})
     user_id = user_resp.json()["id"]
+    client.put(f"{API}/tenants/tenant-1/members/user-1")
     role_id = str(PydanticObjectId())
 
     response = client.post(
@@ -192,6 +196,77 @@ def test_assign_role_to_user_with_scope(client: TestClient) -> None:
     )
     assert response.status_code == 201
     assert response.json()["scope"]["tenant_id"] == "tenant-1"
+
+
+def test_tenant_scoped_assignment_requires_membership(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    user_resp = client.post(f"{API}/users", json={"external_id": "ext-1"})
+    user_id = user_resp.json()["id"]
+    role_id = str(PydanticObjectId())
+
+    response = client.post(
+        f"{API}/users/{user_id}/roles",
+        json={"role_id": role_id, "assigned_by": "admin", "scope": {"tenant_id": "t"}},
+    )
+    assert response.status_code == 409
+    body = response.json()
+    assert body["message"] == "User is not a member of this tenant"
+    assert body["details"] == {"tenant_id": "t", "hint": "add tenant membership first"}
+    # Nothing was written: no membership and no assignment.
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == []
+    revoke = client.delete(f"{API}/users/{user_id}/roles/{role_id}?tenant_id=t")
+    assert revoke.status_code == 404
+
+
+def test_tenant_scoped_assignment_after_membership(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    user_resp = client.post(f"{API}/users", json={"external_id": "ext-1"})
+    user_id = user_resp.json()["id"]
+    assert client.put(f"{API}/tenants/t/members/ext-1").status_code == 204
+
+    response = client.post(
+        f"{API}/users/{user_id}/roles",
+        json={
+            "role_id": str(PydanticObjectId()),
+            "assigned_by": "admin",
+            "scope": {"tenant_id": "t"},
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["scope"]["tenant_id"] == "t"
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == ["ext-1"]
+
+
+def test_unscoped_assignment_adds_no_membership(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    user_resp = client.post(f"{API}/users", json={"external_id": "ext-1"})
+    user_id = user_resp.json()["id"]
+
+    response = client.post(
+        f"{API}/users/{user_id}/roles",
+        json={"role_id": str(PydanticObjectId()), "assigned_by": "admin"},
+    )
+    assert response.status_code == 201
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == []
+
+
+def test_tenant_scoped_assignment_unknown_tenant_404(client: TestClient) -> None:
+    user_resp = client.post(f"{API}/users", json={"external_id": "ext-1"})
+    user_id = user_resp.json()["id"]
+    role_id = str(PydanticObjectId())
+
+    response = client.post(
+        f"{API}/users/{user_id}/roles",
+        json={
+            "role_id": role_id,
+            "assigned_by": "admin",
+            "scope": {"tenant_id": "missing"},
+        },
+    )
+    assert response.status_code == 404
+    assert client.get(f"{API}/tenants/missing/members").json()["items"] == []
+    # No assignment was created, so there is nothing to revoke.
+    assert client.delete(f"{API}/users/{user_id}/roles/{role_id}").status_code == 404
 
 
 def test_assign_role_to_nonexistent_user(client: TestClient) -> None:
@@ -288,3 +363,272 @@ def test_remove_user_from_group_not_found(client: TestClient) -> None:
     fake_group = str(PydanticObjectId())
     response = client.delete(f"{API}/users/{fake_user}/groups/{fake_group}")
     assert response.status_code == 404
+
+
+# --- Constraint enforcement ---
+
+ENV_HEADER = "X-Osiki-Environment"
+
+
+def _constraint(client: TestClient, body: dict, **headers: str) -> None:
+    resp = client.post(f"{API}/constraints", json=body, headers=headers)
+    assert resp.status_code == 201, resp.text
+
+
+def _make_user(client: TestClient, external_id: str, **headers: str) -> str:
+    resp = client.post(
+        f"{API}/users", json={"external_id": external_id}, headers=headers
+    )
+    return str(resp.json()["id"])
+
+
+def _assign(
+    client: TestClient, user_id: str, role_id: str, scope: dict | None = None, **h: str
+) -> Response:
+    body: dict = {"role_id": role_id, "assigned_by": "admin"}
+    if scope:
+        body["scope"] = scope
+    return client.post(f"{API}/users/{user_id}/roles", json=body, headers=h)
+
+
+def test_mutual_exclusion_blocks_direct_assignment(client: TestClient) -> None:
+    initiator, approver = str(PydanticObjectId()), str(PydanticObjectId())
+    _constraint(
+        client,
+        {
+            "name": "no-dual-signing",
+            "type": "mutual_exclusion",
+            "config": {"role_ids": [initiator, approver]},
+        },
+    )
+    user_id = _make_user(client, "ext-1")
+    assert _assign(client, user_id, initiator).status_code == 201
+
+    response = _assign(client, user_id, approver)
+    assert response.status_code == 409
+    assert response.json()["details"] == {
+        "constraint": "no-dual-signing",
+        "reason": "User already has a mutually exclusive role",
+    }
+    # The violating assignment was not written.
+    assert client.delete(f"{API}/users/{user_id}/roles/{approver}").status_code == 404
+
+
+def test_constraint_checked_for_tenant_member(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    initiator, approver = str(PydanticObjectId()), str(PydanticObjectId())
+    _constraint(
+        client,
+        {
+            "name": "x",
+            "type": "mutual_exclusion",
+            "config": {"role_ids": [initiator, approver]},
+        },
+    )
+    user_id = _make_user(client, "ext-1")
+    client.put(f"{API}/tenants/t/members/ext-1")
+    assert _assign(client, user_id, initiator).status_code == 201
+
+    response = _assign(client, user_id, approver, {"tenant_id": "t"})
+    assert response.status_code == 409
+    assert response.json()["details"]["constraint"] == "x"
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == ["ext-1"]
+
+
+def test_cardinality_per_tenant_counts_only_this_env(client: TestClient) -> None:
+    role = str(PydanticObjectId())
+    body = {
+        "name": "one-admin",
+        "type": "cardinality",
+        "config": {"role_id": role, "max_assignments": 1, "scope_level": "per_tenant"},
+    }
+    for env in ("a", "b"):
+        _constraint(client, body, **{ENV_HEADER: env})
+        client.put(f"{API}/tenants/t", json={"name": "T"}, headers={ENV_HEADER: env})
+    scope = {"tenant_id": "t"}
+
+    u1 = _make_user(client, "u1", **{ENV_HEADER: "a"})
+    u2 = _make_user(client, "u2", **{ENV_HEADER: "a"})
+    u3 = _make_user(client, "u3", **{ENV_HEADER: "b"})
+    for env, external_id in (("a", "u1"), ("a", "u2"), ("b", "u3")):
+        client.put(f"{API}/tenants/t/members/{external_id}", headers={ENV_HEADER: env})
+
+    assert _assign(client, u1, role, scope, **{ENV_HEADER: "a"}).status_code == 201
+    # Env a is full for tenant t; env b has its own count.
+    blocked = _assign(client, u2, role, scope, **{ENV_HEADER: "a"})
+    assert blocked.status_code == 409
+    assert blocked.json()["details"]["constraint"] == "one-admin"
+    assert _assign(client, u3, role, scope, **{ENV_HEADER: "b"}).status_code == 201
+
+
+def test_prerequisite_blocks_assignment(client: TestClient) -> None:
+    editor, viewer = str(PydanticObjectId()), str(PydanticObjectId())
+    _constraint(
+        client,
+        {
+            "name": "editor-requires-viewer",
+            "type": "prerequisite",
+            "config": {"role_id": editor, "requires_role_id": viewer},
+        },
+    )
+    user_id = _make_user(client, "ext-1")
+
+    response = _assign(client, user_id, editor)
+    assert response.status_code == 409
+    assert response.json()["details"]["reason"] == "Prerequisite role not assigned"
+
+    assert _assign(client, user_id, viewer).status_code == 201
+    assert _assign(client, user_id, editor).status_code == 201
+
+
+def test_mutual_exclusion_blocks_joining_group(client: TestClient) -> None:
+    initiator, approver = str(PydanticObjectId()), str(PydanticObjectId())
+    _constraint(
+        client,
+        {
+            "name": "no-dual-signing",
+            "type": "mutual_exclusion",
+            "config": {"role_ids": [initiator, approver]},
+        },
+    )
+    group_id = client.post(f"{API}/groups", json={"name": "approvers"}).json()["id"]
+    assert (
+        client.post(
+            f"{API}/groups/{group_id}/roles",
+            json={"role_id": approver, "assigned_by": "admin"},
+        ).status_code
+        == 201
+    )
+    user_id = _make_user(client, "ext-1")
+    assert _assign(client, user_id, initiator).status_code == 201
+
+    response = client.post(
+        f"{API}/users/{user_id}/groups",
+        json={"group_id": group_id, "added_by": "admin"},
+    )
+    assert response.status_code == 409
+    assert response.json()["details"]["constraint"] == "no-dual-signing"
+    assert client.delete(f"{API}/users/{user_id}/groups/{group_id}").status_code == 404
+
+
+def test_joining_group_without_violation_succeeds(client: TestClient) -> None:
+    group_id = client.post(f"{API}/groups", json={"name": "g"}).json()["id"]
+    client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={"role_id": str(PydanticObjectId()), "assigned_by": "admin"},
+    )
+    user_id = _make_user(client, "ext-1")
+    response = client.post(
+        f"{API}/users/{user_id}/groups",
+        json={"group_id": group_id, "added_by": "admin"},
+    )
+    assert response.status_code == 201
+
+
+# --- Revoking a tenant-scoped assignment ---
+
+
+def _docs_reader_role(client: TestClient) -> str:
+    perm = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    ).json()
+    role = client.post(
+        f"{API}/roles",
+        json={"name": "reader", "grants": [{"permission_id": perm["id"]}]},
+    ).json()
+    return str(role["id"])
+
+
+def _reads_docs(client: TestClient, tenant_id: str) -> bool:
+    response = client.post(
+        f"{API}/authorization/check",
+        json={
+            "user_id": "ext-1",
+            "resource": "docs",
+            "action": "read",
+            "scope": {"tenant_id": tenant_id},
+        },
+    )
+    assert response.status_code == 200
+    return bool(response.json()["allowed"])
+
+
+def _member_of_a_and_b(client: TestClient) -> str:
+    user_id = _make_user(client, "ext-1")
+    for tenant in ("a", "b"):
+        client.put(f"{API}/tenants/{tenant}", json={"name": tenant})
+        client.put(f"{API}/tenants/{tenant}/members/ext-1")
+    return user_id
+
+
+def test_revoke_targets_the_named_tenant(client: TestClient) -> None:
+    user_id = _member_of_a_and_b(client)
+    role_id = _docs_reader_role(client)
+    for tenant in ("a", "b"):
+        assert (
+            _assign(client, user_id, role_id, {"tenant_id": tenant}).status_code == 201
+        )
+    assert _reads_docs(client, "a") and _reads_docs(client, "b")
+
+    url = f"{API}/users/{user_id}/roles/{role_id}"
+    assert client.delete(url, params={"tenant_id": "a"}).status_code == 204
+
+    assert not _reads_docs(client, "a")
+    assert _reads_docs(client, "b")
+    assert client.delete(url, params={"tenant_id": "a"}).status_code == 404
+
+
+def test_revoke_without_tenant_never_picks_a_tenant(client: TestClient) -> None:
+    user_id = _member_of_a_and_b(client)
+    role_id = _docs_reader_role(client)
+    assert _assign(client, user_id, role_id, {"tenant_id": "a"}).status_code == 201
+
+    response = client.delete(f"{API}/users/{user_id}/roles/{role_id}")
+
+    assert response.status_code == 404
+    assert response.json()["details"] == {
+        "user_id": user_id,
+        "role_id": role_id,
+        "tenant_id": "",
+    }
+    assert _reads_docs(client, "a")
+
+
+def test_revoke_without_tenant_takes_the_project_wide_one(client: TestClient) -> None:
+    user_id = _member_of_a_and_b(client)
+    role_id = _docs_reader_role(client)
+    assert _assign(client, user_id, role_id, {"tenant_id": "a"}).status_code == 201
+    assert _assign(client, user_id, role_id).status_code == 201
+
+    url = f"{API}/users/{user_id}/roles/{role_id}"
+    assert client.delete(url).status_code == 204
+
+    assert _reads_docs(client, "a")
+    assert not _reads_docs(client, "b")
+    assert client.delete(url).status_code == 404
+
+
+# --- Scope values are strings ---
+
+
+def test_assign_rejects_non_string_scope_extra(client: TestClient) -> None:
+    user_id = _make_user(client, "ext-1")
+    role_id = str(PydanticObjectId())
+
+    rejected = _assign(client, user_id, role_id, {"floor": 3})
+    assert rejected.status_code == 422
+    assert client.delete(f"{API}/users/{user_id}/roles/{role_id}").status_code == 404
+
+    accepted = _assign(client, user_id, role_id, {"floor": "3"})
+    assert accepted.status_code == 201
+    assert accepted.json()["scope"]["floor"] == "3"
+
+
+@pytest.mark.parametrize("scope", [{"floor": 3}, {"floor": ["a"]}, {"tenant_id": 1}])
+def test_check_rejects_non_string_scope(client: TestClient, scope: dict) -> None:
+    _make_user(client, "ext-1")
+    response = client.post(
+        f"{API}/authorization/check",
+        json={"user_id": "ext-1", "resource": "docs", "action": "read", "scope": scope},
+    )
+    assert response.status_code == 422

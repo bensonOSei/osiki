@@ -37,7 +37,7 @@ class ConstraintValidator(BaseConstraintValidator):
         for constraint in constraints:
             if constraint.type == ConstraintType.MUTUAL_EXCLUSION:
                 result = await self._check_mutual_exclusion(
-                    user_id, role_id, constraint.config.role_ids or []
+                    user_id, role_id, scope, constraint.config.role_ids or []
                 )
                 if not result.valid:
                     logger.warning(
@@ -82,7 +82,7 @@ class ConstraintValidator(BaseConstraintValidator):
                     and str(constraint.config.role_id) == role_id
                 ):
                     result = await self._check_prerequisite(
-                        user_id, constraint.config.requires_role_id
+                        user_id, scope, constraint.config.requires_role_id
                     )
                     if not result.valid:
                         logger.warning(
@@ -106,14 +106,27 @@ class ConstraintValidator(BaseConstraintValidator):
         return ConstraintValidationResult(valid=True)
 
     async def _check_mutual_exclusion(
-        self, user_id: str, role_id: str, conflicting_role_ids: list[PydanticObjectId]
+        self,
+        user_id: str,
+        role_id: str,
+        scope: dict[str, str],
+        conflicting_role_ids: list[PydanticObjectId],
     ) -> ConstraintValidationResult:
         role_oid = PydanticObjectId(role_id)
         if role_oid not in conflicting_role_ids:
             return ConstraintValidationResult(valid=True)
 
-        user_roles = await self._user_role_repo.get_user_roles(user_id)
-        user_role_ids = {ur.role_id for ur in user_roles}
+        # Two roles can apply together unless they are scoped to different
+        # tenants, so only that case passes. A project-wide role applies in
+        # every tenant, on either side (deny-safe).
+        tenant_id = scope.get("tenant_id")
+        user_role_ids = {
+            ur.role_id
+            for ur in await self._user_role_repo.get_user_roles(user_id)
+            if tenant_id is None
+            or ur.scope.tenant_id is None
+            or ur.scope.tenant_id == tenant_id
+        }
 
         for conflicting_id in conflicting_role_ids:
             if conflicting_id != role_oid and conflicting_id in user_role_ids:
@@ -155,13 +168,24 @@ class ConstraintValidator(BaseConstraintValidator):
         return ConstraintValidationResult(valid=True)
 
     async def _check_prerequisite(
-        self, user_id: str, requires_role_id: PydanticObjectId | None
+        self,
+        user_id: str,
+        scope: dict[str, str],
+        requires_role_id: PydanticObjectId | None,
     ) -> ConstraintValidationResult:
         if not requires_role_id:
             return ConstraintValidationResult(valid=True)
 
-        user_roles = await self._user_role_repo.get_user_roles(user_id)
-        user_role_ids = {ur.role_id for ur in user_roles}
+        # The prerequisite must hold wherever the new role will apply: held
+        # project-wide, or in the same tenant. A role held in another tenant
+        # does not count, and a project-wide assignment needs a project-wide
+        # prerequisite.
+        tenant_id = scope.get("tenant_id")
+        user_role_ids = {
+            ur.role_id
+            for ur in await self._user_role_repo.get_user_roles(user_id)
+            if ur.scope.tenant_id is None or ur.scope.tenant_id == tenant_id
+        }
 
         if requires_role_id not in user_role_ids:
             return ConstraintValidationResult(

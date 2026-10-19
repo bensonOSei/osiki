@@ -3,10 +3,16 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+AttributeValue = str | int | float | bool | None | list[str | int | float]
+
 
 class TimestampMixin(BaseModel):
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
+
+
+class EnvironmentMixin(BaseModel):
+    environment_id: str = "default"
 
 
 class SoftDeleteMixin(BaseModel):

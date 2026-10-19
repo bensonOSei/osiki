@@ -4,10 +4,10 @@ from beanie import Document, PydanticObjectId
 from pydantic import Field
 from pymongo import IndexModel
 
-from osiki.models.base import SoftDeleteMixin, TimestampMixin
+from osiki.models.base import EnvironmentMixin, SoftDeleteMixin, TimestampMixin
 
 
-class UserGroup(Document, TimestampMixin, SoftDeleteMixin):
+class UserGroup(Document, EnvironmentMixin, TimestampMixin, SoftDeleteMixin):
     user_id: PydanticObjectId
     group_id: PydanticObjectId
     added_by: str
@@ -18,10 +18,15 @@ class UserGroup(Document, TimestampMixin, SoftDeleteMixin):
         name = "user_groups"
         indexes = [
             IndexModel(
-                [("user_id", 1), ("group_id", 1), ("is_active", 1)],
+                [
+                    ("environment_id", 1),
+                    ("user_id", 1),
+                    ("group_id", 1),
+                ],
                 unique=True,
-                sparse=True,
+                # Only active rows are unique: removed rows may pile up.
+                partialFilterExpression={"is_active": True},
             ),
-            IndexModel([("user_id", 1), ("is_active", 1)]),
-            IndexModel([("group_id", 1), ("is_active", 1)]),
+            IndexModel([("environment_id", 1), ("user_id", 1), ("is_active", 1)]),
+            IndexModel([("environment_id", 1), ("group_id", 1), ("is_active", 1)]),
         ]

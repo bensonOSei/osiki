@@ -167,6 +167,7 @@ def test_assign_role_to_group(client: TestClient) -> None:
 
 
 def test_assign_role_to_group_with_scope(client: TestClient) -> None:
+    client.put(f"{API}/tenants/t1", json={"name": "T1"})
     group_resp = client.post(f"{API}/groups", json={"name": "eng"})
     group_id = group_resp.json()["id"]
     role_id = str(PydanticObjectId())
@@ -183,6 +184,42 @@ def test_assign_role_to_group_with_scope(client: TestClient) -> None:
     data = response.json()
     assert data["scope"]["tenant_id"] == "t1"
     assert data["scope"]["region"] == "us-east"
+
+
+def test_group_tenant_scoped_assignment_adds_no_membership(
+    client: TestClient,
+) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    group_id = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+
+    response = client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={
+            "role_id": str(PydanticObjectId()),
+            "assigned_by": "admin",
+            "scope": {"tenant_id": "t"},
+        },
+    )
+    assert response.status_code == 201
+    assert client.get(f"{API}/tenants/t/members").json()["items"] == []
+
+
+def test_group_tenant_scoped_assignment_unknown_tenant_404(
+    client: TestClient,
+) -> None:
+    group_id = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+    role_id = str(PydanticObjectId())
+
+    response = client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={
+            "role_id": role_id,
+            "assigned_by": "admin",
+            "scope": {"tenant_id": "missing"},
+        },
+    )
+    assert response.status_code == 404
+    assert client.delete(f"{API}/groups/{group_id}/roles/{role_id}").status_code == 404
 
 
 def test_assign_role_to_nonexistent_group(client: TestClient) -> None:
@@ -213,3 +250,139 @@ def test_revoke_role_from_group_not_found(client: TestClient) -> None:
     fake_role = str(PydanticObjectId())
     response = client.delete(f"{API}/groups/{fake_group}/roles/{fake_role}")
     assert response.status_code == 404
+
+
+def test_mutual_exclusion_blocks_group_role_assignment(client: TestClient) -> None:
+    initiator, approver = str(PydanticObjectId()), str(PydanticObjectId())
+    client.post(
+        f"{API}/constraints",
+        json={
+            "name": "no-dual-signing",
+            "type": "mutual_exclusion",
+            "config": {"role_ids": [initiator, approver]},
+        },
+    )
+    group_id = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+    user_id = client.post(f"{API}/users", json={"external_id": "ext-1"}).json()["id"]
+    client.post(
+        f"{API}/users/{user_id}/groups",
+        json={"group_id": group_id, "added_by": "admin"},
+    )
+    client.post(
+        f"{API}/users/{user_id}/roles",
+        json={"role_id": initiator, "assigned_by": "admin"},
+    )
+
+    response = client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={"role_id": approver, "assigned_by": "admin"},
+    )
+    assert response.status_code == 409
+    assert response.json()["details"]["constraint"] == "no-dual-signing"
+    assert client.delete(f"{API}/groups/{group_id}/roles/{approver}").status_code == 404
+
+
+def test_group_role_assignment_without_members_passes_constraints(
+    client: TestClient,
+) -> None:
+    role = str(PydanticObjectId())
+    client.post(
+        f"{API}/constraints",
+        json={
+            "name": "max",
+            "type": "cardinality",
+            "config": {"role_id": role, "max_assignments": 1, "scope_level": "global"},
+        },
+    )
+    group_id = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+    response = client.post(
+        f"{API}/groups/{group_id}/roles",
+        json={"role_id": role, "assigned_by": "admin"},
+    )
+    assert response.status_code == 201
+
+
+# --- Revoking a tenant-scoped group role ---
+
+
+def _reads_docs(client: TestClient, tenant_id: str) -> bool:
+    response = client.post(
+        f"{API}/authorization/check",
+        json={
+            "user_id": "ext-1",
+            "resource": "docs",
+            "action": "read",
+            "scope": {"tenant_id": tenant_id},
+        },
+    )
+    assert response.status_code == 200
+    return bool(response.json()["allowed"])
+
+
+def _group_with_member(client: TestClient) -> tuple[str, str]:
+    """A group holding ext-1 (member of tenants a and b) and a docs reader role."""
+    group_id = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+    user_id = client.post(f"{API}/users", json={"external_id": "ext-1"}).json()["id"]
+    for tenant in ("a", "b"):
+        client.put(f"{API}/tenants/{tenant}", json={"name": tenant})
+        client.put(f"{API}/tenants/{tenant}/members/ext-1")
+    client.post(
+        f"{API}/users/{user_id}/groups",
+        json={"group_id": group_id, "added_by": "admin"},
+    )
+    perm = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    ).json()
+    role = client.post(
+        f"{API}/roles",
+        json={"name": "reader", "grants": [{"permission_id": perm["id"]}]},
+    ).json()
+    return group_id, role["id"]
+
+
+def _assign_group(
+    client: TestClient, group_id: str, role_id: str, tenant: str | None
+) -> int:
+    body: dict[str, object] = {"role_id": role_id, "assigned_by": "admin"}
+    if tenant is not None:
+        body["scope"] = {"tenant_id": tenant}
+    return client.post(f"{API}/groups/{group_id}/roles", json=body).status_code
+
+
+def test_group_revoke_targets_the_named_tenant(client: TestClient) -> None:
+    group_id, role_id = _group_with_member(client)
+    assert _assign_group(client, group_id, role_id, "a") == 201
+    assert _assign_group(client, group_id, role_id, "b") == 201
+
+    url = f"{API}/groups/{group_id}/roles/{role_id}"
+    assert client.delete(url, params={"tenant_id": "a"}).status_code == 204
+
+    assert not _reads_docs(client, "a")
+    assert _reads_docs(client, "b")
+    assert client.delete(url, params={"tenant_id": "a"}).status_code == 404
+    assert client.delete(url, params={"tenant_id": "b"}).status_code == 204
+    assert not _reads_docs(client, "b")
+
+
+def test_group_revoke_without_tenant_never_picks_a_tenant(client: TestClient) -> None:
+    group_id, role_id = _group_with_member(client)
+    assert _assign_group(client, group_id, role_id, "a") == 201
+
+    response = client.delete(f"{API}/groups/{group_id}/roles/{role_id}")
+
+    assert response.status_code == 404
+    assert response.json()["details"]["tenant_id"] == ""
+    assert _reads_docs(client, "a")
+
+
+def test_group_revoke_without_tenant_takes_the_project_wide_one(
+    client: TestClient,
+) -> None:
+    group_id, role_id = _group_with_member(client)
+    assert _assign_group(client, group_id, role_id, "a") == 201
+    assert _assign_group(client, group_id, role_id, None) == 201
+
+    assert client.delete(f"{API}/groups/{group_id}/roles/{role_id}").status_code == 204
+
+    assert _reads_docs(client, "a")
+    assert not _reads_docs(client, "b")

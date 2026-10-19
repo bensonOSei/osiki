@@ -1,0 +1,61 @@
+{
+  "name": "rule_absent_record_is_record_required",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": "rule"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "rule": {
+        "op": "eq",
+        "left": {
+          "ref": "record.team_id"
+        },
+        "right": {
+          "ref": "user.team_id"
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "u1",
+    "attributes": {
+      "team_id": "t1"
+    },
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": false,
+    "matched_permission": null,
+    "matched_via": null,
+    "condition": null,
+    "denial_reason": "record_required"
+  }
+}

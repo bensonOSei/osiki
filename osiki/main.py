@@ -7,12 +7,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from osiki.api.exceptions import register_exception_handlers
 from osiki.api.middleware import RequestIDMiddleware
 from osiki.api.routes import (
+    access_logs_router,
     authorization_router,
+    conditions_router,
     constraints_router,
     groups_router,
     health_router,
     permissions_router,
     roles_router,
+    snapshot_router,
+    tenants_router,
     users_router,
 )
 from osiki.configs.database import initialize_database
@@ -57,8 +61,12 @@ app.include_router(users_router, prefix=settings.api_prefix)
 app.include_router(groups_router, prefix=settings.api_prefix)
 app.include_router(roles_router, prefix=settings.api_prefix)
 app.include_router(permissions_router, prefix=settings.api_prefix)
+app.include_router(conditions_router, prefix=settings.api_prefix)
 app.include_router(constraints_router, prefix=settings.api_prefix)
+app.include_router(tenants_router, prefix=settings.api_prefix)
 app.include_router(authorization_router, prefix=settings.api_prefix)
+app.include_router(snapshot_router, prefix=settings.api_prefix)
+app.include_router(access_logs_router, prefix=settings.api_prefix)
 
 
 @app.get("/")

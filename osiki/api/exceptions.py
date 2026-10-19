@@ -18,6 +18,15 @@ class ConflictError(OsikiError):
     pass
 
 
+def constraint_violation(
+    constraint_name: str | None, reason: str | None
+) -> ConflictError:
+    return ConflictError(
+        "Constraint violated",
+        details={"constraint": constraint_name or "", "reason": reason or ""},
+    )
+
+
 class AuthorizationError(OsikiError):
     pass
 

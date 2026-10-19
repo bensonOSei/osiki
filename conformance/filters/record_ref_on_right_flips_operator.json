@@ -1,0 +1,88 @@
+{
+  "name": "record_ref_on_right_flips_operator",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "invoices:read",
+            "condition": "rule"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "rule": {
+        "and": [
+          {
+            "op": "lt",
+            "left": {
+              "value": 100
+            },
+            "right": {
+              "ref": "record.amount"
+            }
+          },
+          {
+            "op": "lte",
+            "left": {
+              "ref": "user.level"
+            },
+            "right": {
+              "ref": "record.clearance"
+            }
+          }
+        ]
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {
+      "team_id": "t1",
+      "level": 3
+    },
+    "tenants": {
+      "acme": {
+        "region": "gh"
+      }
+    },
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "resource": "invoices",
+  "action": "read",
+  "scope": {},
+  "now": 1000,
+  "expected": {
+    "mode": "filter",
+    "filter": {
+      "and": [
+        {
+          "field": "amount",
+          "op": "gt",
+          "value": 100,
+          "type": "number"
+        },
+        {
+          "field": "clearance",
+          "op": "gte",
+          "value": 3,
+          "type": "number"
+        }
+      ]
+    }
+  }
+}

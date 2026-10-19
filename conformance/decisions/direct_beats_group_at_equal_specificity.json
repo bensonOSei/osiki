@@ -1,0 +1,55 @@
+{
+  "name": "direct_beats_group_at_equal_specificity",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": null
+          }
+        ]
+      }
+    ],
+    "conditions": {},
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {},
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "group"
+      },
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "docs:read",
+    "matched_via": "direct",
+    "condition": null,
+    "denial_reason": null
+  }
+}

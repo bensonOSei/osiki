@@ -7,7 +7,7 @@ from osiki.repositories.audit_logs.mongodb_audit_log_repository import (
 
 
 async def test_create() -> None:
-    repo = MongoDBAuditLogRepository()
+    repo = MongoDBAuditLogRepository("default")
     log = AuditLog(
         actor_id="user-1",
         actor_type="user",
@@ -22,7 +22,7 @@ async def test_create() -> None:
 
 
 async def test_get_by_actor() -> None:
-    repo = MongoDBAuditLogRepository()
+    repo = MongoDBAuditLogRepository("default")
     await repo.create(
         AuditLog(
             actor_id="user-actor-1",
@@ -39,7 +39,7 @@ async def test_get_by_actor() -> None:
 
 
 async def test_get_by_target() -> None:
-    repo = MongoDBAuditLogRepository()
+    repo = MongoDBAuditLogRepository("default")
     await repo.create(
         AuditLog(
             actor_id="user-1",
@@ -56,7 +56,7 @@ async def test_get_by_target() -> None:
 
 
 async def test_get_by_action() -> None:
-    repo = MongoDBAuditLogRepository()
+    repo = MongoDBAuditLogRepository("default")
     await repo.create(
         AuditLog(
             actor_id="user-1",
@@ -73,7 +73,7 @@ async def test_get_by_action() -> None:
 
 
 async def test_get_recent() -> None:
-    repo = MongoDBAuditLogRepository()
+    repo = MongoDBAuditLogRepository("default")
     for i in range(3):
         await repo.create(
             AuditLog(

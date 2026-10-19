@@ -10,7 +10,11 @@ from osiki.repositories.group_roles.base_group_role_repository import (
 
 
 class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
+    def __init__(self, environment_id: str) -> None:
+        self.environment_id = environment_id
+
     async def create(self, group_role: GroupRole) -> GroupRole:
+        group_role.environment_id = self.environment_id
         await group_role.insert()
         logger.info(
             "Role assigned to group",
@@ -22,11 +26,17 @@ class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
         return group_role
 
     async def get_by_id(self, group_role_id: str) -> GroupRole | None:
-        return await GroupRole.get(PydanticObjectId(group_role_id))
+        return await GroupRole.find_one(
+            {
+                "_id": PydanticObjectId(group_role_id),
+                "environment_id": self.environment_id,
+            }
+        )
 
     async def get_group_roles(self, group_id: str) -> list[GroupRole]:
         now = time.time()
         return await GroupRole.find(
+            GroupRole.environment_id == self.environment_id,
             GroupRole.group_id == PydanticObjectId(group_id),
             GroupRole.is_active == True,
             {"$or": [{"expires_at": None}, {"expires_at": {"$gt": now}}]},
@@ -36,6 +46,7 @@ class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
         now = time.time()
         object_ids = [PydanticObjectId(gid) for gid in group_ids]
         return await GroupRole.find(
+            GroupRole.environment_id == self.environment_id,
             {"group_id": {"$in": object_ids}},
             GroupRole.is_active == True,
             {"$or": [{"expires_at": None}, {"expires_at": {"$gt": now}}]},
@@ -43,6 +54,7 @@ class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
 
     async def get_groups_with_role(self, role_id: str) -> list[GroupRole]:
         return await GroupRole.find(
+            GroupRole.environment_id == self.environment_id,
             GroupRole.role_id == PydanticObjectId(role_id),
             GroupRole.is_active == True,
         ).to_list()
@@ -54,10 +66,12 @@ class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
             "group_id": PydanticObjectId(group_id),
             "role_id": PydanticObjectId(role_id),
             "is_active": True,
+            # None matches only project-wide rows (tenant_id null or missing).
+            "scope.tenant_id": tenant_id,
         }
-        if tenant_id:
-            query["scope.tenant_id"] = tenant_id
-        return await GroupRole.find_one(query)
+        return await GroupRole.find_one(
+            GroupRole.environment_id == self.environment_id, query
+        )
 
     async def revoke(self, group_role_id: str) -> bool:
         group_role = await self.get_by_id(group_role_id)
@@ -80,8 +94,9 @@ class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
 
     async def get_expired(self, current_time: float) -> list[GroupRole]:
         return await GroupRole.find(
+            GroupRole.environment_id == self.environment_id,
             {
                 "is_active": True,
                 "expires_at": {"$ne": None, "$lte": current_time},
-            }
+            },
         ).to_list()

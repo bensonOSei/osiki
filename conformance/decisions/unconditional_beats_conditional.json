@@ -1,0 +1,76 @@
+{
+  "name": "unconditional_beats_conditional",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "cond",
+        "name": "cond",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "invoices:read",
+            "condition": "own_team"
+          }
+        ]
+      },
+      {
+        "id": "open",
+        "name": "open",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "invoices:read",
+            "condition": null
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "own_team": {
+        "op": "eq",
+        "left": {
+          "ref": "record.team_id"
+        },
+        "right": {
+          "ref": "user.team_id"
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {},
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "cond",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      },
+      {
+        "role_id": "open",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "invoices",
+    "action": "read",
+    "scope": {},
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "invoices:read",
+    "matched_via": "direct",
+    "condition": null,
+    "denial_reason": null
+  }
+}

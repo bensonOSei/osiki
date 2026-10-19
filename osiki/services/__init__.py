@@ -3,26 +3,22 @@ from osiki.services.authorization import (
     AuthorizationService,
     BaseAuthorizationService,
 )
+from osiki.services.bundle_builder import BundleBuilder
 from osiki.services.constraint_validator import (
     BaseConstraintValidator,
     ConstraintValidationResult,
     ConstraintValidator,
 )
-from osiki.services.permission_resolver import (
-    BasePermissionResolver,
-    PermissionResolver,
-)
-from osiki.services.scope_matcher import BaseScopeMatcher, ScopeMatcher
+from osiki.services.snapshot_builder import SnapshotBuilder, SnapshotCache
 
 __all__ = [
     "AuthorizationResult",
     "AuthorizationService",
     "BaseAuthorizationService",
     "BaseConstraintValidator",
-    "BasePermissionResolver",
-    "BaseScopeMatcher",
+    "BundleBuilder",
     "ConstraintValidationResult",
     "ConstraintValidator",
-    "PermissionResolver",
-    "ScopeMatcher",
+    "SnapshotBuilder",
+    "SnapshotCache",
 ]

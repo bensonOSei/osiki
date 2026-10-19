@@ -9,7 +9,7 @@ from osiki.repositories.user_groups.mongodb_user_group_repository import (
 
 
 async def test_create() -> None:
-    repo = MongoDBUserGroupRepository()
+    repo = MongoDBUserGroupRepository("default")
     ug = UserGroup(
         user_id=PydanticObjectId(), group_id=PydanticObjectId(), added_by="admin"
     )
@@ -18,7 +18,7 @@ async def test_create() -> None:
 
 
 async def test_get_user_groups() -> None:
-    repo = MongoDBUserGroupRepository()
+    repo = MongoDBUserGroupRepository("default")
     user_id = PydanticObjectId()
     await repo.create(
         UserGroup(user_id=user_id, group_id=PydanticObjectId(), added_by="admin")
@@ -31,7 +31,7 @@ async def test_get_user_groups() -> None:
 
 
 async def test_get_group_members() -> None:
-    repo = MongoDBUserGroupRepository()
+    repo = MongoDBUserGroupRepository("default")
     group_id = PydanticObjectId()
     await repo.create(
         UserGroup(user_id=PydanticObjectId(), group_id=group_id, added_by="admin")
@@ -44,7 +44,7 @@ async def test_get_group_members() -> None:
 
 
 async def test_find_membership() -> None:
-    repo = MongoDBUserGroupRepository()
+    repo = MongoDBUserGroupRepository("default")
     user_id = PydanticObjectId()
     group_id = PydanticObjectId()
     await repo.create(UserGroup(user_id=user_id, group_id=group_id, added_by="admin"))
@@ -53,7 +53,7 @@ async def test_find_membership() -> None:
 
 
 async def test_remove() -> None:
-    repo = MongoDBUserGroupRepository()
+    repo = MongoDBUserGroupRepository("default")
     ug = await repo.create(
         UserGroup(
             user_id=PydanticObjectId(), group_id=PydanticObjectId(), added_by="admin"
@@ -64,6 +64,6 @@ async def test_remove() -> None:
 
 
 async def test_remove_not_found() -> None:
-    repo = MongoDBUserGroupRepository()
+    repo = MongoDBUserGroupRepository("default")
     result = await repo.remove(str(PydanticObjectId()))
     assert result is False

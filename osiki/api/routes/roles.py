@@ -1,18 +1,130 @@
+from beanie import PydanticObjectId
 from fastapi import APIRouter, Query, status
 
-from osiki.api.dependencies import RoleRepository
-from osiki.api.exceptions import ConflictError, NotFoundError
-from osiki.models.role import Role
+from osiki.api.dependencies import (
+    ConditionRepository,
+    PermissionRepository,
+    RoleRepository,
+)
+from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
+from osiki.models.role import Grant, Role
 from osiki.schemas.base import PaginatedResponse
-from osiki.schemas.role import RoleCreate, RoleRead, RoleUpdate
+from osiki.schemas.role import GrantSchema, RoleCreate, RoleRead, RoleUpdate
 
 router = APIRouter(prefix="/roles", tags=["roles"])
+
+
+def _to_read(role: Role) -> RoleRead:
+    return RoleRead(
+        id=str(role.id),
+        name=role.name,
+        description=role.description,
+        parent_role_id=str(role.parent_role_id) if role.parent_role_id else None,
+        grants=[
+            GrantSchema(
+                permission_id=str(g.permission_id),
+                condition_id=str(g.condition_id) if g.condition_id else None,
+            )
+            for g in role.grants
+        ],
+        is_system=role.is_system,
+        is_active=role.is_active,
+        created_at=role.created_at,
+        updated_at=role.updated_at,
+        metadata=role.metadata,
+    )
+
+
+def _merge_grants(
+    grants: list[GrantSchema] | None, permission_ids: list[str] | None
+) -> list[GrantSchema]:
+    """Merge shorthand permission ids with explicit grants, deduplicated."""
+    merged = [GrantSchema(permission_id=pid) for pid in (permission_ids or [])]
+    merged.extend(grants or [])
+    seen: set[tuple[str, str | None]] = set()
+    unique: list[GrantSchema] = []
+    for grant in merged:
+        key = (grant.permission_id, grant.condition_id)
+        if key not in seen:
+            seen.add(key)
+            unique.append(grant)
+    return unique
+
+
+def _check_object_id(value: str, field: str) -> None:
+    if not PydanticObjectId.is_valid(value):
+        raise ValidationError(f"Invalid {field}: {value}", details={field: value})
+
+
+async def _validate_references(
+    grants: list[GrantSchema],
+    parent_role_id: str | None,
+    role_repo: RoleRepository,
+    permission_repo: PermissionRepository,
+    condition_repo: ConditionRepository,
+) -> None:
+    """Every permission, condition and parent must exist in this environment."""
+    for grant in grants:
+        _check_object_id(grant.permission_id, "permission_id")
+        if await permission_repo.get_by_id(grant.permission_id) is None:
+            raise ValidationError(
+                f"Permission not found: {grant.permission_id}",
+                details={"permission_id": grant.permission_id},
+            )
+        if grant.condition_id is not None:
+            _check_object_id(grant.condition_id, "condition_id")
+            condition = await condition_repo.get_by_id(grant.condition_id)
+            if condition is None or not condition.is_active:
+                raise ValidationError(
+                    f"Condition not found: {grant.condition_id}",
+                    details={"condition_id": grant.condition_id},
+                )
+    if parent_role_id is not None:
+        _check_object_id(parent_role_id, "parent_role_id")
+        if await role_repo.get_by_id(parent_role_id) is None:
+            raise ValidationError(
+                f"Parent role not found: {parent_role_id}",
+                details={"parent_role_id": parent_role_id},
+            )
+
+
+async def _reject_parent_cycle(
+    role_id: str, parent_role_id: str, role_repo: RoleRepository
+) -> None:
+    """Refuse a parent whose ancestor chain reaches the role (incl. itself)."""
+    visited: set[str] = set()
+    current: str | None = parent_role_id
+    while current is not None and current not in visited:
+        if current == role_id:
+            raise ValidationError(
+                f"Parent role would create a cycle: {parent_role_id}",
+                details={"parent_role_id": parent_role_id},
+            )
+        visited.add(current)
+        ancestor = await role_repo.get_by_id(current)
+        current = (
+            str(ancestor.parent_role_id)
+            if ancestor is not None and ancestor.parent_role_id
+            else None
+        )
+
+
+def _to_grants(grants: list[GrantSchema]) -> list[Grant]:
+    return [
+        Grant(
+            permission_id=PydanticObjectId(g.permission_id),
+            condition_id=PydanticObjectId(g.condition_id) if g.condition_id else None,
+        )
+        for g in grants
+    ]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_role(
     data: RoleCreate,
     role_repo: RoleRepository,
+    permission_repo: PermissionRepository,
+    condition_repo: ConditionRepository,
 ) -> RoleRead:
     existing = await role_repo.get_by_name(data.name)
     if existing:
@@ -21,7 +133,10 @@ async def create_role(
             details={"name": data.name},
         )
 
-    from beanie import PydanticObjectId
+    grants = _merge_grants(data.grants, data.permission_ids)
+    await _validate_references(
+        grants, data.parent_role_id, role_repo, permission_repo, condition_repo
+    )
 
     role = Role(
         name=data.name,
@@ -29,23 +144,11 @@ async def create_role(
         parent_role_id=(
             PydanticObjectId(data.parent_role_id) if data.parent_role_id else None
         ),
-        permission_ids=[PydanticObjectId(pid) for pid in (data.permission_ids or [])],
+        grants=_to_grants(grants),
         is_system=data.is_system,
         metadata=data.metadata or {},
     )
-    created = await role_repo.create(role)
-    return RoleRead(
-        id=str(created.id),
-        name=created.name,
-        description=created.description,
-        parent_role_id=str(created.parent_role_id) if created.parent_role_id else None,
-        permission_ids=[str(pid) for pid in created.permission_ids],
-        is_system=created.is_system,
-        is_active=created.is_active,
-        created_at=created.created_at,
-        updated_at=created.updated_at,
-        metadata=created.metadata,
-    )
+    return _to_read(await role_repo.create(role))
 
 
 @router.get("/{role_id}")
@@ -56,19 +159,7 @@ async def get_role(
     role = await role_repo.get_by_id(role_id)
     if not role:
         raise NotFoundError("Role not found", details={"role_id": role_id})
-
-    return RoleRead(
-        id=str(role.id),
-        name=role.name,
-        description=role.description,
-        parent_role_id=str(role.parent_role_id) if role.parent_role_id else None,
-        permission_ids=[str(pid) for pid in role.permission_ids],
-        is_system=role.is_system,
-        is_active=role.is_active,
-        created_at=role.created_at,
-        updated_at=role.updated_at,
-        metadata=role.metadata,
-    )
+    return _to_read(role)
 
 
 @router.patch("/{role_id}")
@@ -76,12 +167,21 @@ async def update_role(
     role_id: str,
     data: RoleUpdate,
     role_repo: RoleRepository,
+    permission_repo: PermissionRepository,
+    condition_repo: ConditionRepository,
 ) -> RoleRead:
     role = await role_repo.get_by_id(role_id)
     if not role:
         raise NotFoundError("Role not found", details={"role_id": role_id})
 
-    from beanie import PydanticObjectId
+    replace_grants = data.grants is not None or data.permission_ids is not None
+    grants = _merge_grants(data.grants, data.permission_ids)
+    await _validate_references(
+        grants, data.parent_role_id, role_repo, permission_repo, condition_repo
+    )
+
+    if data.parent_role_id is not None:
+        await _reject_parent_cycle(role_id, data.parent_role_id, role_repo)
 
     if data.name is not None:
         role.name = data.name
@@ -89,24 +189,12 @@ async def update_role(
         role.description = data.description
     if data.parent_role_id is not None:
         role.parent_role_id = PydanticObjectId(data.parent_role_id)
-    if data.permission_ids is not None:
-        role.permission_ids = [PydanticObjectId(pid) for pid in data.permission_ids]
+    if replace_grants:
+        role.grants = _to_grants(grants)
     if data.metadata is not None:
         role.metadata = data.metadata
 
-    updated = await role_repo.update(role)
-    return RoleRead(
-        id=str(updated.id),
-        name=updated.name,
-        description=updated.description,
-        parent_role_id=str(updated.parent_role_id) if updated.parent_role_id else None,
-        permission_ids=[str(pid) for pid in updated.permission_ids],
-        is_system=updated.is_system,
-        is_active=updated.is_active,
-        created_at=updated.created_at,
-        updated_at=updated.updated_at,
-        metadata=updated.metadata,
-    )
+    return _to_read(await role_repo.update(role))
 
 
 @router.delete("/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -128,21 +216,7 @@ async def list_roles(
     skip = (page - 1) * page_size
     roles = await role_repo.list_active(skip=skip, limit=page_size)
 
-    items = [
-        RoleRead(
-            id=str(r.id),
-            name=r.name,
-            description=r.description,
-            parent_role_id=str(r.parent_role_id) if r.parent_role_id else None,
-            permission_ids=[str(pid) for pid in r.permission_ids],
-            is_system=r.is_system,
-            is_active=r.is_active,
-            created_at=r.created_at,
-            updated_at=r.updated_at,
-            metadata=r.metadata,
-        )
-        for r in roles
-    ]
+    items = [_to_read(r) for r in roles]
 
     total = len(items) + skip
     return PaginatedResponse.create(items, total, page, page_size)

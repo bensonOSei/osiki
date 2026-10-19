@@ -1,3 +1,4 @@
+import pytest
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
 
@@ -134,15 +135,121 @@ def test_list_permissions_pagination(client: TestClient) -> None:
 
 
 def test_get_effective_permissions_user_not_found(client: TestClient) -> None:
-    fake_id = str(PydanticObjectId())
-    response = client.get(f"{API}/permissions/users/{fake_id}/effective")
+    response = client.get(f"{API}/permissions/users/nobody/effective")
+    assert response.status_code == 404
+
+
+def test_get_effective_permissions_rejects_internal_id(client: TestClient) -> None:
+    user_id = client.post(f"{API}/users", json={"external_id": "ext-1"}).json()["id"]
+
+    response = client.get(f"{API}/permissions/users/{user_id}/effective")
     assert response.status_code == 404
 
 
 def test_get_effective_permissions_empty(client: TestClient) -> None:
-    user_resp = client.post(f"{API}/users", json={"external_id": "user-1"})
-    user_id = user_resp.json()["id"]
+    client.post(f"{API}/users", json={"external_id": "user-1"})
 
-    response = client.get(f"{API}/permissions/users/{user_id}/effective")
+    response = client.get(f"{API}/permissions/users/user-1/effective")
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_effective_permissions_in_tenant_require_membership(
+    client: TestClient,
+) -> None:
+    client.put(f"{API}/tenants/t", json={"name": "T"})
+    user_id = client.post(f"{API}/users", json={"external_id": "ext-1"}).json()["id"]
+    perm = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    ).json()
+    role = client.post(
+        f"{API}/roles", json={"name": "reader", "permission_ids": [perm["id"]]}
+    ).json()
+    client.post(
+        f"{API}/users/{user_id}/roles",
+        json={"role_id": role["id"], "assigned_by": "admin"},
+    )
+    url = f"{API}/permissions/users/ext-1/effective"
+    grant = {"permission": "docs:read", "condition": None, "via": "direct"}
+
+    assert client.get(url).json() == [grant]
+
+    before = client.get(url, params={"tenant_id": "t"})
+    assert before.status_code == 200
+    assert before.json() == []
+
+    client.put(f"{API}/tenants/t/members/ext-1")
+
+    after = client.get(url, params={"tenant_id": "t"})
+    assert after.status_code == 200
+    assert after.json() == [grant]
+
+
+def test_effective_permissions_report_conditions_and_groups(
+    client: TestClient,
+) -> None:
+    cond = client.post(
+        f"{API}/conditions",
+        json={
+            "key": "own_team",
+            "name": "Own team",
+            "expression": {
+                "op": "eq",
+                "left": {"ref": "record.team_id"},
+                "right": {"ref": "user.team_id"},
+            },
+        },
+    ).json()
+    perm = client.post(
+        f"{API}/permissions", json={"resource": "invoices", "action": "read"}
+    ).json()
+    role = client.post(
+        f"{API}/roles",
+        json={
+            "name": "clerk",
+            "grants": [{"permission_id": perm["id"], "condition_id": cond["id"]}],
+        },
+    ).json()
+    group = client.post(f"{API}/groups", json={"name": "clerks"}).json()
+    client.post(
+        f"{API}/groups/{group['id']}/roles",
+        json={"role_id": role["id"], "assigned_by": "admin"},
+    )
+    user_id = client.post(f"{API}/users", json={"external_id": "ext-1"}).json()["id"]
+    client.post(
+        f"{API}/users/{user_id}/groups",
+        json={"group_id": group["id"], "added_by": "admin"},
+    )
+
+    response = client.get(f"{API}/permissions/users/ext-1/effective")
+
+    assert response.json() == [
+        {"permission": "invoices:read", "condition": "own_team", "via": "group"}
+    ]
+
+
+# --- Resource and action validation ---
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"resource": "", "action": "read"},
+        {"resource": "docs", "action": ""},
+        {"resource": "docs:x", "action": "read"},
+        {"resource": "docs", "action": "read:all"},
+        {"resource": ":", "action": "read"},
+    ],
+)
+def test_create_permission_rejects_empty_or_colon(
+    client: TestClient, body: dict[str, str]
+) -> None:
+    response = client.post(f"{API}/permissions", json=body)
+    assert response.status_code == 422
+    assert client.get(f"{API}/permissions").json()["items"] == []
+
+
+def test_create_permission_allows_wildcards(client: TestClient) -> None:
+    response = client.post(f"{API}/permissions", json={"resource": "*", "action": "*"})
+    assert response.status_code == 201
+    assert response.json()["permission_string"] == "*:*"

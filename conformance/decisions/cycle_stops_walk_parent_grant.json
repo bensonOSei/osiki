@@ -1,0 +1,60 @@
+{
+  "name": "cycle_stops_walk_parent_grant",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "a",
+        "name": "a",
+        "parent_id": "b",
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": null
+          }
+        ]
+      },
+      {
+        "id": "b",
+        "name": "b",
+        "parent_id": "a",
+        "grants": [
+          {
+            "permission": "files:read",
+            "condition": null
+          }
+        ]
+      }
+    ],
+    "conditions": {},
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {},
+    "tenants": {},
+    "assignments": [
+      {
+        "role_id": "a",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "files",
+    "action": "read",
+    "scope": {},
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "files:read",
+    "matched_via": "direct",
+    "condition": null,
+    "denial_reason": null
+  }
+}

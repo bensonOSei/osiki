@@ -1,0 +1,75 @@
+{
+  "name": "most_specific_match_wins",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "*:*",
+            "condition": null
+          },
+          {
+            "permission": "*:read",
+            "condition": null
+          },
+          {
+            "permission": "docs:*",
+            "condition": null
+          },
+          {
+            "permission": "docs:read",
+            "condition": null
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "own_team": {
+        "op": "eq",
+        "left": {
+          "ref": "record.team_id"
+        },
+        "right": {
+          "ref": "user.team_id"
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {
+      "team_id": "t1"
+    },
+    "tenants": {
+      "acme": {}
+    },
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "docs",
+    "action": "read",
+    "scope": {},
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "docs:read",
+    "matched_via": "direct",
+    "condition": null,
+    "denial_reason": null
+  }
+}

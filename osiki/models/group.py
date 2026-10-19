@@ -1,15 +1,21 @@
-from beanie import Document, Indexed
+from beanie import Document
 from pymongo import IndexModel
 
-from osiki.models.base import MetadataMixin, SoftDeleteMixin, TimestampMixin
+from osiki.models.base import (
+    EnvironmentMixin,
+    MetadataMixin,
+    SoftDeleteMixin,
+    TimestampMixin,
+)
 
 
-class Group(Document, TimestampMixin, SoftDeleteMixin, MetadataMixin):
-    name: Indexed(str, unique=True)  # type: ignore[valid-type]
+class Group(Document, EnvironmentMixin, TimestampMixin, SoftDeleteMixin, MetadataMixin):
+    name: str
     description: str | None = None
 
     class Settings:
         name = "groups"
         indexes = [
-            IndexModel([("is_active", 1), ("created_at", -1)]),
+            IndexModel([("environment_id", 1), ("name", 1)], unique=True),
+            IndexModel([("environment_id", 1), ("is_active", 1), ("created_at", -1)]),
         ]

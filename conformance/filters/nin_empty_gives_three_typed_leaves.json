@@ -1,0 +1,83 @@
+{
+  "name": "nin_empty_gives_three_typed_leaves",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "invoices:read",
+            "condition": "rule"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "rule": {
+        "not": {
+          "op": "in",
+          "left": {
+            "ref": "record.status"
+          },
+          "right": {
+            "value": []
+          }
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {
+      "team_id": "t1",
+      "level": 3
+    },
+    "tenants": {
+      "acme": {
+        "region": "gh"
+      }
+    },
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "resource": "invoices",
+  "action": "read",
+  "scope": {},
+  "now": 1000,
+  "expected": {
+    "mode": "filter",
+    "filter": {
+      "or": [
+        {
+          "field": "status",
+          "op": "nin",
+          "value": [],
+          "type": "string"
+        },
+        {
+          "field": "status",
+          "op": "nin",
+          "value": [],
+          "type": "number"
+        },
+        {
+          "field": "status",
+          "op": "nin",
+          "value": [],
+          "type": "boolean"
+        }
+      ]
+    }
+  }
+}

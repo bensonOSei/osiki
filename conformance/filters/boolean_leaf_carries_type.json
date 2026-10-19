@@ -1,0 +1,65 @@
+{
+  "name": "boolean_leaf_carries_type",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "invoices:read",
+            "condition": "rule"
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "rule": {
+        "op": "eq",
+        "left": {
+          "ref": "record.archived"
+        },
+        "right": {
+          "value": false
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {
+      "team_id": "t1",
+      "level": 3
+    },
+    "tenants": {
+      "acme": {
+        "region": "gh"
+      }
+    },
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "resource": "invoices",
+  "action": "read",
+  "scope": {},
+  "now": 1000,
+  "expected": {
+    "mode": "filter",
+    "filter": {
+      "field": "archived",
+      "op": "eq",
+      "value": false,
+      "type": "boolean"
+    }
+  }
+}

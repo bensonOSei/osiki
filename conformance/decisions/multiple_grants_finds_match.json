@@ -1,0 +1,71 @@
+{
+  "name": "multiple_grants_finds_match",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "docs:read",
+            "condition": null
+          },
+          {
+            "permission": "files:write",
+            "condition": null
+          },
+          {
+            "permission": "users:manage",
+            "condition": null
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "own_team": {
+        "op": "eq",
+        "left": {
+          "ref": "record.team_id"
+        },
+        "right": {
+          "ref": "user.team_id"
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {
+      "team_id": "t1"
+    },
+    "tenants": {
+      "acme": {}
+    },
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "users",
+    "action": "manage",
+    "scope": {},
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "users:manage",
+    "matched_via": "direct",
+    "condition": null,
+    "denial_reason": null
+  }
+}

@@ -7,7 +7,7 @@ from osiki.repositories.access_logs.mongodb_access_log_repository import (
 
 
 async def test_create() -> None:
-    repo = MongoDBAccessLogRepository()
+    repo = MongoDBAccessLogRepository("default")
     log = AccessLog(
         user_id="user-1",
         resource="docs",
@@ -23,7 +23,7 @@ async def test_create() -> None:
 
 
 async def test_get_by_user() -> None:
-    repo = MongoDBAccessLogRepository()
+    repo = MongoDBAccessLogRepository("default")
     await repo.create(
         AccessLog(
             user_id="access-user-1",
@@ -41,7 +41,7 @@ async def test_get_by_user() -> None:
 
 
 async def test_get_denials() -> None:
-    repo = MongoDBAccessLogRepository()
+    repo = MongoDBAccessLogRepository("default")
     await repo.create(
         AccessLog(
             user_id="denied-user",
@@ -60,7 +60,7 @@ async def test_get_denials() -> None:
 
 
 async def test_get_by_resource() -> None:
-    repo = MongoDBAccessLogRepository()
+    repo = MongoDBAccessLogRepository("default")
     await repo.create(
         AccessLog(
             user_id="user-1",
@@ -78,7 +78,7 @@ async def test_get_by_resource() -> None:
 
 
 async def test_get_by_resource_with_action() -> None:
-    repo = MongoDBAccessLogRepository()
+    repo = MongoDBAccessLogRepository("default")
     await repo.create(
         AccessLog(
             user_id="user-1",
@@ -108,7 +108,7 @@ async def test_get_by_resource_with_action() -> None:
 
 
 async def test_get_recent() -> None:
-    repo = MongoDBAccessLogRepository()
+    repo = MongoDBAccessLogRepository("default")
     for i in range(3):
         await repo.create(
             AccessLog(
@@ -124,3 +124,26 @@ async def test_get_recent() -> None:
         )
     result = await repo.get_recent(limit=10)
     assert len(result) >= 3
+
+
+async def test_create_many() -> None:
+    repo = MongoDBAccessLogRepository("batch-env")
+    logs = [
+        AccessLog(
+            user_id=f"batch-user-{i}",
+            resource="files",
+            action="read",
+            allowed=True,
+            latency_ms=1.0,
+            cache_hit=False,
+            context=AccessContext(),
+            source="sdk",
+            tenant_id="acme",
+        )
+        for i in range(3)
+    ]
+    assert await repo.create_many(logs) == 3
+    stored = await repo.get_recent()
+    assert len(stored) == 3
+    assert {log.source for log in stored} == {"sdk"}
+    assert {log.environment_id for log in stored} == {"batch-env"}

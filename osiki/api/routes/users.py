@@ -1,11 +1,17 @@
 from fastapi import APIRouter, Query, status
 
 from osiki.api.dependencies import (
+    BundleBuilderDep,
+    ConstraintValidatorDep,
+    GroupRoleRepository,
+    TenantMemberRepository,
+    TenantRepository,
     UserGroupRepository,
     UserRepository,
     UserRoleRepository,
 )
-from osiki.api.exceptions import ConflictError, NotFoundError
+from osiki.api.exceptions import ConflictError, NotFoundError, constraint_violation
+from osiki.decision.models import UserBundle
 from osiki.models.user import User
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.role_assignment import (
@@ -14,9 +20,23 @@ from osiki.schemas.role_assignment import (
     UserRoleAssignmentRequest,
     UserRoleAssignmentResponse,
 )
-from osiki.schemas.user import UserCreate, UserRead, UserUpdate
+from osiki.schemas.user import UserCreate, UserRead, UserUpdate, UserUpsert
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+def _to_read(user: User) -> UserRead:
+    return UserRead(
+        id=str(user.id),
+        external_id=user.external_id,
+        name=user.name,
+        email=user.email,
+        attributes=user.attributes,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        metadata=user.metadata,
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -37,15 +57,30 @@ async def create_user(
         metadata=data.metadata or {},
     )
     created = await user_repo.create(user)
-    return UserRead(
-        id=str(created.id),
-        external_id=created.external_id,
-        email=created.email,
-        is_active=created.is_active,
-        created_at=created.created_at,
-        updated_at=created.updated_at,
-        metadata=created.metadata,
+    return _to_read(created)
+
+
+@router.put("/by-external/{external_id}")
+async def upsert_user(
+    external_id: str,
+    data: UserUpsert,
+    user_repo: UserRepository,
+) -> UserRead:
+    user = await user_repo.upsert_by_external_id(
+        external_id, data.name, data.email, data.attributes
     )
+    return _to_read(user)
+
+
+@router.get("/by-external/{external_id}/bundle")
+async def get_user_bundle(
+    external_id: str,
+    bundle_builder: BundleBuilderDep,
+) -> UserBundle:
+    bundle = await bundle_builder.build(external_id)
+    if bundle is None:
+        raise NotFoundError("User not found", details={"external_id": external_id})
+    return bundle
 
 
 @router.get("/{user_id}")
@@ -57,15 +92,7 @@ async def get_user(
     if not user:
         raise NotFoundError("User not found", details={"user_id": user_id})
 
-    return UserRead(
-        id=str(user.id),
-        external_id=user.external_id,
-        email=user.email,
-        is_active=user.is_active,
-        created_at=user.created_at,
-        updated_at=user.updated_at,
-        metadata=user.metadata,
-    )
+    return _to_read(user)
 
 
 @router.patch("/{user_id}")
@@ -84,15 +111,7 @@ async def update_user(
         user.metadata = data.metadata
 
     updated = await user_repo.update(user)
-    return UserRead(
-        id=str(updated.id),
-        external_id=updated.external_id,
-        email=updated.email,
-        is_active=updated.is_active,
-        created_at=updated.created_at,
-        updated_at=updated.updated_at,
-        metadata=updated.metadata,
-    )
+    return _to_read(updated)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -114,18 +133,7 @@ async def list_users(
     skip = (page - 1) * page_size
     users = await user_repo.list_active(skip=skip, limit=page_size)
 
-    items = [
-        UserRead(
-            id=str(u.id),
-            external_id=u.external_id,
-            email=u.email,
-            is_active=u.is_active,
-            created_at=u.created_at,
-            updated_at=u.updated_at,
-            metadata=u.metadata,
-        )
-        for u in users
-    ]
+    items = [_to_read(u) for u in users]
 
     # Note: For proper pagination, we'd need a count method on the repository
     # For now, estimate based on returned results
@@ -139,10 +147,28 @@ async def assign_role_to_user(
     data: UserRoleAssignmentRequest,
     user_repo: UserRepository,
     user_role_repo: UserRoleRepository,
+    tenant_repo: TenantRepository,
+    member_repo: TenantMemberRepository,
+    validator: ConstraintValidatorDep,
 ) -> UserRoleAssignmentResponse:
     user = await user_repo.get_by_id(user_id)
     if not user:
         raise NotFoundError("User not found", details={"user_id": user_id})
+
+    tenant_id = data.scope.tenant_id if data.scope else None
+    if tenant_id is not None:
+        if not await tenant_repo.get_by_external_id(tenant_id):
+            raise NotFoundError("Tenant not found", details={"tenant_id": tenant_id})
+        # Membership is managed explicitly; an assignment never creates one,
+        # so revoking the assignment can never leave a stray membership.
+        if not await member_repo.is_member(tenant_id, user.external_id):
+            raise ConflictError(
+                "User is not a member of this tenant",
+                details={
+                    "tenant_id": tenant_id,
+                    "hint": "add tenant membership first",
+                },
+            )
 
     from beanie import PydanticObjectId
 
@@ -151,6 +177,10 @@ async def assign_role_to_user(
     from osiki.schemas.scope import ScopeSchema
 
     scope = Scope(**(data.scope.model_dump() if data.scope else {}))
+    result = await validator.validate(user_id, data.role_id, scope.to_dict())
+    if not result.valid:
+        raise constraint_violation(result.constraint_name, result.reason)
+
     user_role = UserRole(
         user_id=PydanticObjectId(user_id),
         role_id=PydanticObjectId(data.role_id),
@@ -182,12 +212,20 @@ async def revoke_role_from_user(
     user_id: str,
     role_id: str,
     user_role_repo: UserRoleRepository,
+    tenant_id: str | None = Query(
+        None, description="Revoke the assignment in this tenant (default: none)"
+    ),
 ) -> None:
-    assignment = await user_role_repo.find_assignment(user_id, role_id)
+    # Without tenant_id only the project-wide assignment is revoked.
+    assignment = await user_role_repo.find_assignment(user_id, role_id, tenant_id)
     if not assignment:
         raise NotFoundError(
             "Role assignment not found",
-            details={"user_id": user_id, "role_id": role_id},
+            details={
+                "user_id": user_id,
+                "role_id": role_id,
+                "tenant_id": tenant_id or "",
+            },
         )
     await user_role_repo.revoke(str(assignment.id))
 
@@ -198,10 +236,20 @@ async def add_user_to_group(
     data: UserGroupRequest,
     user_repo: UserRepository,
     user_group_repo: UserGroupRepository,
+    group_role_repo: GroupRoleRepository,
+    validator: ConstraintValidatorDep,
 ) -> UserGroupResponse:
     user = await user_repo.get_by_id(user_id)
     if not user:
         raise NotFoundError("User not found", details={"user_id": user_id})
+
+    # Joining grants every active role of the group: validate each one first.
+    for group_role in await group_role_repo.get_group_roles(data.group_id):
+        result = await validator.validate(
+            user_id, str(group_role.role_id), group_role.scope.to_dict()
+        )
+        if not result.valid:
+            raise constraint_violation(result.constraint_name, result.reason)
 
     from beanie import PydanticObjectId
 

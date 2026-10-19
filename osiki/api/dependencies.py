@@ -1,18 +1,32 @@
+from functools import cache
 from typing import Annotated
 
 from fastapi import Depends
 
+from osiki.api.environment import EnvironmentId
 from osiki.repositories.access_logs.base_access_log_repository import (
     BaseAccessLogRepository,
 )
 from osiki.repositories.access_logs.mongodb_access_log_repository import (
     MongoDBAccessLogRepository,
 )
+from osiki.repositories.conditions.base_condition_repository import (
+    BaseConditionRepository,
+)
+from osiki.repositories.conditions.mongodb_condition_repository import (
+    MongoDBConditionRepository,
+)
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
 )
 from osiki.repositories.constraints.mongodb_constraint_repository import (
     MongoDBConstraintRepository,
+)
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
+from osiki.repositories.environment_state.mongodb_environment_state_repository import (
+    MongoDBEnvironmentStateRepository,
 )
 from osiki.repositories.group_roles.base_group_role_repository import (
     BaseGroupRoleRepository,
@@ -30,6 +44,16 @@ from osiki.repositories.permissions.mongodb_permission_repository import (
 )
 from osiki.repositories.roles.base_role_repository import BaseRoleRepository
 from osiki.repositories.roles.mongodb_role_repository import MongoDBRoleRepository
+from osiki.repositories.tenant_members.base_tenant_member_repository import (
+    BaseTenantMemberRepository,
+)
+from osiki.repositories.tenant_members.mongodb_tenant_member_repository import (
+    MongoDBTenantMemberRepository,
+)
+from osiki.repositories.tenants.base_tenant_repository import BaseTenantRepository
+from osiki.repositories.tenants.mongodb_tenant_repository import (
+    MongoDBTenantRepository,
+)
 from osiki.repositories.user_groups.base_user_group_repository import (
     BaseUserGroupRepository,
 )
@@ -48,58 +72,93 @@ from osiki.services.authorization.authorization_service import AuthorizationServ
 from osiki.services.authorization.base_authorization_service import (
     BaseAuthorizationService,
 )
+from osiki.services.bundle_builder.bundle_builder import BundleBuilder
 from osiki.services.constraint_validator.base_constraint_validator import (
     BaseConstraintValidator,
 )
 from osiki.services.constraint_validator.constraint_validator import ConstraintValidator
-from osiki.services.permission_resolver.base_permission_resolver import (
-    BasePermissionResolver,
+from osiki.services.snapshot_builder.snapshot_builder import (
+    SnapshotBuilder,
+    SnapshotCache,
 )
-from osiki.services.permission_resolver.permission_resolver import PermissionResolver
-from osiki.services.scope_matcher.base_scope_matcher import BaseScopeMatcher
-from osiki.services.scope_matcher.scope_matcher import ScopeMatcher
 
 
 # Repository dependencies
-def get_user_repository() -> BaseUserRepository:
-    return MongoDBUserRepository()
+def get_environment_state_repository(
+    environment_id: EnvironmentId,
+) -> BaseEnvironmentStateRepository:
+    return MongoDBEnvironmentStateRepository(environment_id)
 
 
-def get_group_repository() -> BaseGroupRepository:
-    return MongoDBGroupRepository()
+# Config repositories bump the environment's config version on every write.
+EnvironmentStateRepository = Annotated[
+    BaseEnvironmentStateRepository, Depends(get_environment_state_repository)
+]
 
 
-def get_role_repository() -> BaseRoleRepository:
-    return MongoDBRoleRepository()
+def get_user_repository(environment_id: EnvironmentId) -> BaseUserRepository:
+    return MongoDBUserRepository(environment_id)
 
 
-def get_permission_repository() -> BasePermissionRepository:
-    return MongoDBPermissionRepository()
+def get_group_repository(environment_id: EnvironmentId) -> BaseGroupRepository:
+    return MongoDBGroupRepository(environment_id)
 
 
-def get_user_role_repository() -> BaseUserRoleRepository:
-    return MongoDBUserRoleRepository()
+def get_role_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseRoleRepository:
+    return MongoDBRoleRepository(environment_id, state)
 
 
-def get_user_group_repository() -> BaseUserGroupRepository:
-    return MongoDBUserGroupRepository()
+def get_permission_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BasePermissionRepository:
+    return MongoDBPermissionRepository(environment_id, state)
 
 
-def get_group_role_repository() -> BaseGroupRoleRepository:
-    return MongoDBGroupRoleRepository()
+def get_user_role_repository(environment_id: EnvironmentId) -> BaseUserRoleRepository:
+    return MongoDBUserRoleRepository(environment_id)
 
 
-def get_constraint_repository() -> BaseConstraintRepository:
-    return MongoDBConstraintRepository()
+def get_user_group_repository(environment_id: EnvironmentId) -> BaseUserGroupRepository:
+    return MongoDBUserGroupRepository(environment_id)
 
 
-def get_access_log_repository() -> BaseAccessLogRepository:
-    return MongoDBAccessLogRepository()
+def get_group_role_repository(environment_id: EnvironmentId) -> BaseGroupRoleRepository:
+    return MongoDBGroupRoleRepository(environment_id)
+
+
+def get_constraint_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseConstraintRepository:
+    return MongoDBConstraintRepository(environment_id, state)
+
+
+def get_condition_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseConditionRepository:
+    return MongoDBConditionRepository(environment_id, state)
+
+
+def get_access_log_repository(environment_id: EnvironmentId) -> BaseAccessLogRepository:
+    return MongoDBAccessLogRepository(environment_id)
+
+
+def get_tenant_repository(environment_id: EnvironmentId) -> BaseTenantRepository:
+    return MongoDBTenantRepository(environment_id)
+
+
+def get_tenant_member_repository(
+    environment_id: EnvironmentId,
+) -> BaseTenantMemberRepository:
+    return MongoDBTenantMemberRepository(environment_id)
 
 
 # Service dependencies
-def get_scope_matcher() -> BaseScopeMatcher:
-    return ScopeMatcher()
+@cache
+def get_snapshot_cache() -> SnapshotCache:
+    """The one process-wide snapshot cache."""
+    return SnapshotCache()
 
 
 def get_constraint_validator(
@@ -116,38 +175,67 @@ def get_constraint_validator(
     )
 
 
-def get_permission_resolver(
+def get_snapshot_builder(
+    environment_id: EnvironmentId,
+    state: EnvironmentStateRepository,
+    role_repository: Annotated[BaseRoleRepository, Depends(get_role_repository)],
+    permission_repository: Annotated[
+        BasePermissionRepository, Depends(get_permission_repository)
+    ],
+    condition_repository: Annotated[
+        BaseConditionRepository, Depends(get_condition_repository)
+    ],
+    constraint_repository: Annotated[
+        BaseConstraintRepository, Depends(get_constraint_repository)
+    ],
+    snapshot_cache: Annotated[SnapshotCache, Depends(get_snapshot_cache)],
+) -> SnapshotBuilder:
+    return SnapshotBuilder(
+        environment_id,
+        state,
+        role_repository,
+        permission_repository,
+        condition_repository,
+        constraint_repository,
+        cache=snapshot_cache,
+    )
+
+
+def get_bundle_builder(
+    user_repository: Annotated[BaseUserRepository, Depends(get_user_repository)],
     user_role_repository: Annotated[
         BaseUserRoleRepository, Depends(get_user_role_repository)
     ],
     user_group_repository: Annotated[
         BaseUserGroupRepository, Depends(get_user_group_repository)
     ],
+    group_repository: Annotated[BaseGroupRepository, Depends(get_group_repository)],
     group_role_repository: Annotated[
         BaseGroupRoleRepository, Depends(get_group_role_repository)
     ],
-    role_repository: Annotated[BaseRoleRepository, Depends(get_role_repository)],
-    permission_repository: Annotated[
-        BasePermissionRepository, Depends(get_permission_repository)
+    tenant_member_repository: Annotated[
+        BaseTenantMemberRepository, Depends(get_tenant_member_repository)
     ],
-    scope_matcher: Annotated[BaseScopeMatcher, Depends(get_scope_matcher)],
-) -> BasePermissionResolver:
-    return PermissionResolver(
-        user_role_repository=user_role_repository,
-        user_group_repository=user_group_repository,
-        group_role_repository=group_role_repository,
-        role_repository=role_repository,
-        permission_repository=permission_repository,
-        scope_matcher=scope_matcher,
+    tenant_repository: Annotated[BaseTenantRepository, Depends(get_tenant_repository)],
+) -> BundleBuilder:
+    return BundleBuilder(
+        user_repository,
+        user_role_repository,
+        user_group_repository,
+        group_repository,
+        group_role_repository,
+        tenant_member_repository,
+        tenant_repository,
     )
 
 
 def get_authorization_service(
-    permission_resolver: Annotated[
-        BasePermissionResolver, Depends(get_permission_resolver)
-    ],
+    snapshot_builder: Annotated[SnapshotBuilder, Depends(get_snapshot_builder)],
+    bundle_builder: Annotated[BundleBuilder, Depends(get_bundle_builder)],
 ) -> BaseAuthorizationService:
-    return AuthorizationService(permission_resolver=permission_resolver)
+    return AuthorizationService(
+        snapshot_builder=snapshot_builder, bundle_builder=bundle_builder
+    )
 
 
 # Type aliases for dependency injection
@@ -169,15 +257,21 @@ GroupRoleRepository = Annotated[
 ConstraintRepository = Annotated[
     BaseConstraintRepository, Depends(get_constraint_repository)
 ]
+ConditionRepository = Annotated[
+    BaseConditionRepository, Depends(get_condition_repository)
+]
 AccessLogRepository = Annotated[
     BaseAccessLogRepository, Depends(get_access_log_repository)
+]
+TenantRepository = Annotated[BaseTenantRepository, Depends(get_tenant_repository)]
+TenantMemberRepository = Annotated[
+    BaseTenantMemberRepository, Depends(get_tenant_member_repository)
 ]
 AuthorizationServiceDep = Annotated[
     BaseAuthorizationService, Depends(get_authorization_service)
 ]
-PermissionResolverDep = Annotated[
-    BasePermissionResolver, Depends(get_permission_resolver)
-]
+SnapshotBuilderDep = Annotated[SnapshotBuilder, Depends(get_snapshot_builder)]
+BundleBuilderDep = Annotated[BundleBuilder, Depends(get_bundle_builder)]
 ConstraintValidatorDep = Annotated[
     BaseConstraintValidator, Depends(get_constraint_validator)
 ]

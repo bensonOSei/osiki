@@ -1,0 +1,63 @@
+{
+  "name": "action_wildcard_allows",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r",
+        "name": "r",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "*:read",
+            "condition": null
+          }
+        ]
+      }
+    ],
+    "conditions": {
+      "own_team": {
+        "op": "eq",
+        "left": {
+          "ref": "record.team_id"
+        },
+        "right": {
+          "ref": "user.team_id"
+        }
+      }
+    },
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {
+      "team_id": "t1"
+    },
+    "tenants": {
+      "acme": {}
+    },
+    "assignments": [
+      {
+        "role_id": "r",
+        "scope": {},
+        "expires_at": null,
+        "via": "direct"
+      }
+    ]
+  },
+  "request": {
+    "resource": "files",
+    "action": "read",
+    "scope": {},
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "*:read",
+    "matched_via": "direct",
+    "condition": null,
+    "denial_reason": null
+  }
+}

@@ -24,7 +24,12 @@ class BaseUserRoleRepository(ABC):
     @abstractmethod
     async def find_assignment(
         self, user_id: str, role_id: str, tenant_id: str | None = None
-    ) -> UserRole | None: ...
+    ) -> UserRole | None:
+        """The active assignment scoped to ``tenant_id``.
+
+        ``tenant_id=None`` matches only the project-wide assignment (no tenant),
+        never a tenant-scoped one.
+        """
 
     @abstractmethod
     async def revoke(self, user_role_id: str) -> bool: ...
