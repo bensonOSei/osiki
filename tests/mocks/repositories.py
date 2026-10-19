@@ -2,6 +2,7 @@ import time
 
 from beanie import PydanticObjectId
 from pymongo.asynchronous.client_session import AsyncClientSession
+from pymongo.errors import DuplicateKeyError
 
 from osiki.decision.models import EndpointEntry, EnvironmentSettings
 from osiki.models.access_log import AccessLog
@@ -382,6 +383,12 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
     async def create(
         self, role: Role, *, session: AsyncClientSession | None = None
     ) -> Role:
+        # Mirrors the unique (environment, tenant, name) index, inactive included.
+        if any(
+            r.name == role.name and r.tenant_id == role.tenant_id
+            for r in self._scoped()
+        ):
+            raise DuplicateKeyError("E11000 duplicate key: role name")
         if role.id is None:
             role.id = PydanticObjectId()
         self._store(str(role.id), role)

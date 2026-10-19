@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.e2e.conftest import API
@@ -58,3 +59,128 @@ def test_owner_template_cannot_be_deleted(client: TestClient) -> None:
     owner = client.put(f"{API}/environment/bootstrap").json()["owner_role_id"]
     assert client.delete(f"{API}/roles/{owner}").status_code == 404
     assert client.get(f"{API}/roles/{owner}").json()["is_active"] is True
+
+
+def test_bootstrap_with_a_deactivated_owner_role_is_409(client: TestClient) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "Owner"}).json()["id"]
+    assert client.delete(f"{API}/roles/{rid}").status_code == 204
+
+    response = client.put(f"{API}/environment/bootstrap")
+
+    assert response.status_code == 409
+    assert "inactive role" in response.json()["message"]
+
+
+# --- The seeded Owner template stays editable, within limits ---
+
+
+def _owner(client: TestClient) -> dict[str, str]:
+    return _bootstrap_ids(client)
+
+
+def _bootstrap_ids(client: TestClient) -> dict[str, str]:
+    body: dict[str, str] = client.put(f"{API}/environment/bootstrap").json()
+    return body
+
+
+def test_owner_template_cannot_be_renamed(client: TestClient) -> None:
+    ids = _owner(client)
+    response = client.patch(
+        f"{API}/roles/{ids['owner_role_id']}", json={"name": "Chief"}
+    )
+    assert response.status_code == 422
+    assert client.get(f"{API}/roles/{ids['owner_role_id']}").json()["name"] == "Owner"
+    assert _bootstrap_ids(client) == ids
+
+
+def test_owner_template_must_stay_a_template(client: TestClient) -> None:
+    ids = _owner(client)
+    response = client.patch(
+        f"{API}/roles/{ids['owner_role_id']}", json={"is_template": False}
+    )
+    assert response.status_code == 422
+    assert client.get(f"{API}/roles/{ids['owner_role_id']}").json()["is_template"]
+    assert _bootstrap_ids(client) == ids
+
+
+@pytest.mark.parametrize("field", ["permission_ids", "grants"])
+def test_owner_template_must_keep_team_manage(client: TestClient, field: str) -> None:
+    ids = _owner(client)
+    other = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    ).json()["id"]
+    value: list[object] = (
+        [other] if field == "permission_ids" else [{"permission_id": other}]
+    )
+    for replacement in ([], value):
+        response = client.patch(
+            f"{API}/roles/{ids['owner_role_id']}", json={field: replacement}
+        )
+        assert response.status_code == 422
+    manage = ids["team_manage_permission_id"]
+    conditional = client.post(
+        f"{API}/conditions",
+        json={
+            "key": "c",
+            "name": "c",
+            "expression": {
+                "op": "eq",
+                "left": {"ref": "record.owner_id"},
+                "right": {"ref": "user.id"},
+            },
+        },
+    ).json()["id"]
+    response = client.patch(
+        f"{API}/roles/{ids['owner_role_id']}",
+        json={"grants": [{"permission_id": manage, "condition_id": conditional}]},
+    )
+    assert response.status_code == 422
+    grants = client.get(f"{API}/roles/{ids['owner_role_id']}").json()["grants"]
+    assert [g["permission_id"] for g in grants] == [manage]
+
+
+def test_owner_template_allows_adding_a_grant_and_a_description(
+    client: TestClient,
+) -> None:
+    ids = _owner(client)
+    other = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    ).json()["id"]
+    manage = ids["team_manage_permission_id"]
+
+    response = client.patch(
+        f"{API}/roles/{ids['owner_role_id']}",
+        json={
+            "name": "Owner",
+            "is_template": True,
+            "description": "Edited",
+            "permission_ids": [manage, other],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["description"] == "Edited"
+    assert {g["permission_id"] for g in body["grants"]} == {manage, other}
+    assert _bootstrap_ids(client) == ids
+
+
+def test_other_system_roles_are_not_restricted(client: TestClient) -> None:
+    rid = client.post(
+        f"{API}/roles", json={"name": "Platform", "is_system": True}
+    ).json()["id"]
+    response = client.patch(
+        f"{API}/roles/{rid}", json={"name": "Renamed", "grants": []}
+    )
+    assert response.status_code == 200
+
+
+def test_owner_template_description_only_edit_is_allowed(client: TestClient) -> None:
+    ids = _owner(client)
+    response = client.patch(
+        f"{API}/roles/{ids['owner_role_id']}", json={"description": "Only this"}
+    )
+    assert response.status_code == 200
+    assert [g["permission_id"] for g in response.json()["grants"]] == [
+        ids["team_manage_permission_id"]
+    ]

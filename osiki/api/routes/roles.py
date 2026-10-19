@@ -10,6 +10,7 @@ from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
 from osiki.models.role import Grant, Role
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.role import GrantSchema, RoleCreate, RoleRead, RoleUpdate
+from osiki.services.builtins import BUILTIN_TEAM_MANAGE, is_owner_template
 
 router = APIRouter(prefix="/roles", tags=["roles"])
 
@@ -131,6 +132,37 @@ def _to_grants(grants: list[GrantSchema]) -> list[Grant]:
     ]
 
 
+async def _protect_owner_template(
+    role: Role,
+    data: RoleUpdate,
+    new_grants: list[GrantSchema] | None,
+    permission_repo: PermissionRepository,
+) -> None:
+    """The seeded Owner template stays editable, but bootstrap must keep
+    finding it and it must keep granting osiki.team:manage."""
+    if data.name is not None and data.name != role.name:
+        raise ValidationError(
+            "The built-in Owner template cannot be renamed",
+            details={"role_id": str(role.id)},
+        )
+    if data.is_template is not None and data.is_template != role.is_template:
+        raise ValidationError(
+            "The built-in Owner template must stay a template",
+            details={"role_id": str(role.id)},
+        )
+    if new_grants is None:
+        return
+    manage = await permission_repo.get_by_resource_action(*BUILTIN_TEAM_MANAGE)
+    manage_id = str(manage.id) if manage is not None else None
+    if not any(
+        g.permission_id == manage_id and g.condition_id is None for g in new_grants
+    ):
+        raise ValidationError(
+            "The built-in Owner template must keep granting osiki.team:manage",
+            details={"role_id": str(role.id)},
+        )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_role(
     data: RoleCreate,
@@ -190,6 +222,11 @@ async def update_role(
 
     if data.parent_role_id is not None:
         await _reject_parent_cycle(role_id, data.parent_role_id, role_repo)
+
+    if is_owner_template(role):
+        await _protect_owner_template(
+            role, data, grants if replace_grants else None, permission_repo
+        )
 
     if data.name is not None:
         role.name = data.name

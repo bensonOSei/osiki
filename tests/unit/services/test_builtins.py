@@ -151,13 +151,23 @@ class _BrokenRoles(MockRoleRepository):
         raise DuplicateKeyError("E11000 duplicate key")
 
 
-async def test_a_duplicate_with_no_winner_is_not_swallowed(env: Env) -> None:
+async def test_a_permission_duplicate_with_no_winner_is_not_swallowed(
+    env: Env,
+) -> None:
     with pytest.raises(DuplicateKeyError):
         await ensure_builtins(_BrokenPermissions("default", env.state), env.roles)
 
-    permission = await env.permissions.create(make_permission(*BUILTIN_TEAM_MANAGE))
-    assert permission.id is not None
-    with pytest.raises(DuplicateKeyError):
+
+async def test_an_inactive_owner_role_is_a_conflict_not_a_crash(env: Env) -> None:
+    dead = await env.roles.create(make_role(name=OWNER_TEMPLATE_NAME))
+    await env.roles.deactivate(str(dead.id))
+
+    with pytest.raises(BuiltinConflictError, match="inactive role"):
+        await ensure_builtins(env.permissions, env.roles)
+
+
+async def test_a_role_duplicate_with_no_winner_is_a_conflict(env: Env) -> None:
+    with pytest.raises(BuiltinConflictError, match="inactive role"):
         await ensure_builtins(env.permissions, _BrokenRoles("default", env.state))
 
 

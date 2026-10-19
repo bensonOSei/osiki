@@ -60,8 +60,14 @@ async def _ensure_permission(permission_repo: BasePermissionRepository) -> Permi
         return winner
 
 
-def _is_owner_template(role: Role) -> bool:
-    return role.is_template and role.is_system
+def is_owner_template(role: Role) -> bool:
+    """True for the seeded Owner template (system + template, project-level)."""
+    return (
+        role.name == OWNER_TEMPLATE_NAME
+        and role.tenant_id is None
+        and role.is_template
+        and role.is_system
+    )
 
 
 async def _ensure_owner(role_repo: BaseRoleRepository, permission: Permission) -> Role:
@@ -79,15 +85,19 @@ async def _ensure_owner(role_repo: BaseRoleRepository, permission: Permission) -
                 is_template=True,
             )
         )
-    except DuplicateKeyError:
+    except DuplicateKeyError as exc:
         winner = await role_repo.get_by_name(OWNER_TEMPLATE_NAME)
         if winner is None:
-            raise
+            # The unique name index also covers deactivated roles.
+            raise BuiltinConflictError(
+                f"An inactive role named {OWNER_TEMPLATE_NAME!r} exists and blocks "
+                "the built-in template; rename it and bootstrap again"
+            ) from exc
         return _require_owner_template(winner)
 
 
 def _require_owner_template(role: Role) -> Role:
-    if not _is_owner_template(role):
+    if not is_owner_template(role):
         raise BuiltinConflictError(
             f"A role named {OWNER_TEMPLATE_NAME!r} already exists and is not the "
             "built-in template; rename it and bootstrap again"
