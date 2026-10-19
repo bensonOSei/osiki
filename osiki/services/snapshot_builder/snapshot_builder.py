@@ -2,13 +2,7 @@
 
 from loguru import logger
 
-from osiki.decision.models import (
-    ConstraintEntry,
-    GrantEntry,
-    RoleEntry,
-    Snapshot,
-)
-from osiki.models.role import Grant, Role
+from osiki.decision.models import ConstraintEntry, Snapshot
 from osiki.repositories.conditions.base_condition_repository import (
     BaseConditionRepository,
 )
@@ -25,8 +19,7 @@ from osiki.repositories.permissions.base_permission_repository import (
     BasePermissionRepository,
 )
 from osiki.repositories.roles.base_role_repository import BaseRoleRepository
-
-MISSING_CONDITION_PREFIX = "missing:"
+from osiki.services.snapshot_builder.render import role_entry
 
 
 class SnapshotCache:
@@ -126,7 +119,7 @@ class SnapshotBuilder:
         return Snapshot(
             environment_id=self._environment_id,
             version=version,
-            roles=[_role_entry(r, permissions, condition_keys) for r in roles],
+            roles=[role_entry(r, permissions, condition_keys) for r in roles],
             conditions={c.key: c.expression for c in conditions if c.is_active},
             constraints=[
                 ConstraintEntry(
@@ -141,28 +134,3 @@ class SnapshotBuilder:
             endpoints=[m.to_entry() for m in mappings],
             settings=settings,
         )
-
-
-def _role_entry(
-    role: Role, permissions: dict[str, str], condition_keys: dict[str, str]
-) -> RoleEntry:
-    return RoleEntry(
-        id=str(role.id),
-        name=role.name,
-        parent_id=str(role.parent_role_id) if role.parent_role_id else None,
-        grants=[
-            GrantEntry(
-                permission=permissions[str(g.permission_id)],
-                condition=_condition_key(g, condition_keys),
-            )
-            for g in role.grants
-            if str(g.permission_id) in permissions
-        ],
-    )
-
-
-def _condition_key(grant: Grant, condition_keys: dict[str, str]) -> str | None:
-    if grant.condition_id is None:
-        return None
-    condition_id = str(grant.condition_id)
-    return condition_keys.get(condition_id, f"{MISSING_CONDITION_PREFIX}{condition_id}")

@@ -175,6 +175,9 @@ def test_get_authorization_service() -> None:
         get_group_role_repository("default", _state()),
         get_tenant_member_repository("default", _state()),
         get_tenant_repository("default", _state()),
+        get_role_repository("default", _state()),
+        get_permission_repository("default", _state()),
+        get_condition_repository("default", _state()),
     )
     service = get_authorization_service(snapshot_builder, bundle_builder)
     assert isinstance(service, AuthorizationService)

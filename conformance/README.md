@@ -66,7 +66,8 @@ GrantEntry      {permission: "resource:action", condition: key|null}
 ConstraintEntry {id, name, type, config: object}      (not used by decide)
 UserBundle      {user_id: external id, attributes: object,
                  tenants: {tenant external id: attributes object},
-                 assignments: [AssignmentEntry]}
+                 assignments: [AssignmentEntry],
+                 roles: [RoleEntry]}   (roles optional, default [])
 AssignmentEntry {role_id, scope: {string: string},
                  expires_at: number|null, via: "direct"|"group"}
 DecisionRequest {resource, action, scope: {string: string},
@@ -81,6 +82,9 @@ FilterResult    {mode: "all"|"none"|"filter", filter: FilterNode|null}
 
 `decide` never returns `unknown_user`: callers return it when the user's bundle
 is `null`, matching the server's `/authorization/check`.
+
+`bundle.roles` is optional and defaults to `[]`. An SDK that ignores it sees
+tenant-owned roles as missing and so grants less, never more.
 
 A denial always has `matched_permission`, `matched_via` and `condition` set to
 `null`. An unconditional allow has `condition: null`. Readers must ignore
@@ -97,8 +101,11 @@ unknown fields so that a newer snapshot still loads.
    matches every request, and a tenant-scoped assignment never applies to a
    request without that tenant.
 3. **Role walk.** For each kept assignment, in list order, take the assigned
-   role's grants, then its parent's (`parent_id`), and so on. Stop silently
-   when a role id is missing from the snapshot or repeats (a cycle). Never
+   role's grants, then its parent's (`parent_id`), and so on. A role is looked
+   up in `snapshot.roles` and in `bundle.roles` (the user's tenant-owned
+   roles); on an id clash the snapshot's role wins, so a bundle can never
+   override a project role. Stop silently when a role id is missing from both
+   or repeats (a cycle). Never
    raise: a corrupted hierarchy can only grant less. Each grant carries the
    assignment's `via`.
 4. **Matching.** A grant matches when its `permission` is one of, from most

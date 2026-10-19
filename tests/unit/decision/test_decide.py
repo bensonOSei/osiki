@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from osiki.decision.decide import decide, effective_grants
-from osiki.decision.models import Decision, EffectiveGrant, GrantEntry
+from osiki.decision.models import Decision, EffectiveGrant, GrantEntry, UserBundle
 from tests.conftest import (
     make_assignment_entry,
     make_decision_request,
@@ -607,3 +607,58 @@ def test_direct_conditional_beats_group_conditional() -> None:
 def test_grant_condition_key_cannot_be_empty() -> None:
     with pytest.raises(ValidationError):
         GrantEntry(permission="docs:read", condition="")
+
+
+# --- Tenant-owned roles shipped in the bundle ---
+
+
+def test_bundle_role_grants_when_snapshot_lacks_it() -> None:
+    bundle = make_user_bundle(
+        assignments=[make_assignment_entry("tr1")],
+        roles=[make_role_entry("tr1", grants=[("docs:read", None)])],
+    )
+
+    assert decide(make_snapshot(), bundle, make_decision_request()) == _allow(
+        "docs:read"
+    )
+    assert effective_grants(make_snapshot(), bundle, {}, 1000) == [
+        EffectiveGrant(permission="docs:read", via="direct")
+    ]
+
+
+def test_snapshot_role_wins_over_bundle_role_with_same_id() -> None:
+    snapshot = make_snapshot(roles=[make_role_entry("r1")])
+    bundle = make_user_bundle(
+        assignments=[make_assignment_entry("r1")],
+        roles=[make_role_entry("r1", grants=[("docs:read", None)])],
+    )
+
+    assert decide(snapshot, bundle, make_decision_request()) == _deny("no_permission")
+
+
+def test_role_missing_from_snapshot_and_bundle_denies() -> None:
+    bundle = make_user_bundle(
+        assignments=[make_assignment_entry("tr9")],
+        roles=[make_role_entry("other", grants=[("docs:read", None)])],
+    )
+
+    assert decide(make_snapshot(), bundle, make_decision_request()) == _deny(
+        "no_permission"
+    )
+
+
+def test_bundle_role_inherits_from_a_snapshot_parent() -> None:
+    snapshot = make_snapshot(
+        roles=[make_role_entry("base", grants=[("docs:read", None)])]
+    )
+    bundle = make_user_bundle(
+        assignments=[make_assignment_entry("tr1")],
+        roles=[make_role_entry("tr1", parent_id="base")],
+    )
+
+    assert decide(snapshot, bundle, make_decision_request()) == _allow("docs:read")
+
+
+def test_bundle_without_roles_reads_as_empty() -> None:
+    assert make_user_bundle().roles == []
+    assert UserBundle.model_validate({"user_id": "u"}).roles == []

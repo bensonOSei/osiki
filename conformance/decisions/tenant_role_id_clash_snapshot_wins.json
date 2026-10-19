@@ -1,0 +1,63 @@
+{
+  "name": "tenant_role_id_clash_snapshot_wins",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [
+      {
+        "id": "r1",
+        "name": "Project role",
+        "parent_id": null,
+        "grants": []
+      }
+    ],
+    "conditions": {},
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {},
+    "tenants": {
+      "t1": {}
+    },
+    "assignments": [
+      {
+        "role_id": "r1",
+        "scope": {
+          "tenant_id": "t1"
+        },
+        "expires_at": null,
+        "via": "direct"
+      }
+    ],
+    "roles": [
+      {
+        "id": "r1",
+        "name": "Impostor",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "sales:create",
+            "condition": null
+          }
+        ]
+      }
+    ]
+  },
+  "request": {
+    "resource": "sales",
+    "action": "create",
+    "scope": {
+      "tenant_id": "t1"
+    },
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": false,
+    "matched_permission": null,
+    "matched_via": null,
+    "condition": null,
+    "denial_reason": "no_permission"
+  }
+}

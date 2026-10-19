@@ -256,6 +256,13 @@ def get_bundle_builder(
         BaseTenantMemberRepository, Depends(get_tenant_member_repository)
     ],
     tenant_repository: Annotated[BaseTenantRepository, Depends(get_tenant_repository)],
+    role_repository: Annotated[BaseRoleRepository, Depends(get_role_repository)],
+    permission_repository: Annotated[
+        BasePermissionRepository, Depends(get_permission_repository)
+    ],
+    condition_repository: Annotated[
+        BaseConditionRepository, Depends(get_condition_repository)
+    ],
 ) -> BundleBuilder:
     return BundleBuilder(
         user_repository,
@@ -265,6 +272,9 @@ def get_bundle_builder(
         group_role_repository,
         tenant_member_repository,
         tenant_repository,
+        role_repository,
+        permission_repository,
+        condition_repository,
     )
 
 

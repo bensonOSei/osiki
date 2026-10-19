@@ -261,12 +261,14 @@ def make_user_bundle(
     user_id: str = "user-1",
     attributes: dict[str, Any] | None = None,
     tenants: dict[str, dict[str, Any]] | None = None,
+    roles: list[RoleEntry] | None = None,
 ) -> UserBundle:
     return UserBundle(
         user_id=user_id,
         attributes=attributes or {},
         tenants=tenants or {},
         assignments=assignments or [],
+        roles=roles or [],
     )
 
 

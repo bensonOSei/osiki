@@ -315,6 +315,9 @@ def bundle_builder(
     mock_group_role_repository,
     mock_tenant_member_repository,
     mock_tenant_repository,
+    mock_role_repository,
+    mock_permission_repository,
+    mock_condition_repository,
 ) -> BundleBuilder:
     return BundleBuilder(
         mock_user_repository,
@@ -324,6 +327,9 @@ def bundle_builder(
         mock_group_role_repository,
         mock_tenant_member_repository,
         mock_tenant_repository,
+        mock_role_repository,
+        mock_permission_repository,
+        mock_condition_repository,
     )
 
 

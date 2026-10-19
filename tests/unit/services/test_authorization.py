@@ -500,6 +500,9 @@ async def test_inactive_user_denied(
     mock_group_role_repository,
     mock_tenant_member_repository,
     mock_tenant_repository,
+    mock_role_repository,
+    mock_permission_repository,
+    mock_condition_repository,
 ) -> None:
     from unittest.mock import AsyncMock
 
@@ -522,6 +525,9 @@ async def test_inactive_user_denied(
             mock_group_role_repository,
             mock_tenant_member_repository,
             mock_tenant_repository,
+            mock_role_repository,
+            mock_permission_repository,
+            mock_condition_repository,
         ),
     )
 

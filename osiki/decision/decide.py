@@ -9,8 +9,10 @@ Algorithm (``decide``):
     2. Assignments apply when unexpired (``expires_at`` is ``None`` or
        ``> now``) and their scope matches (``scope_matches``).
     3. Each applying assignment contributes its role's grants, then each
-       ancestor's via ``parent_id``. The walk stops silently at a missing role
-       or a repeated id, so a corrupted hierarchy can only grant less.
+       ancestor's via ``parent_id``. Roles are looked up in the bundle's
+       tenant roles and the snapshot; the snapshot wins on an id clash. The walk
+       stops silently at a missing role or a repeated id, so a corrupted
+       hierarchy can only grant less.
     4. A grant matches when its permission is, in specificity order,
        ``res:act``, ``res:*``, ``*:act`` or ``*:*``. Matches are ordered by
        specificity, then ``direct`` before ``group``, then encounter order
@@ -52,7 +54,7 @@ def effective_grants(
     """
     if not _is_member(bundle, scope):
         return []
-    roles = {role.id: role for role in snapshot.roles}
+    roles = _role_index(snapshot, bundle)
     grants: list[EffectiveGrant] = []
     seen: set[EffectiveGrant] = set()
     for assignment in bundle.assignments:
@@ -139,6 +141,14 @@ def list_filter(
         return FilterResult(mode="none")
     tree = filters[0] if len(filters) == 1 else {"or": filters}
     return FilterResult(mode="filter", filter=tree)
+
+
+def _role_index(snapshot: Snapshot, bundle: UserBundle) -> dict[str, RoleEntry]:
+    """Roles by id: the bundle's tenant roles, overridden by the snapshot's."""
+    return {
+        **{role.id: role for role in bundle.roles},
+        **{role.id: role for role in snapshot.roles},
+    }
 
 
 def _is_member(bundle: UserBundle, scope: Mapping[str, str]) -> bool:
