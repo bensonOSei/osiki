@@ -22,6 +22,12 @@ from osiki.repositories.constraints.base_constraint_repository import (
 from osiki.repositories.constraints.mongodb_constraint_repository import (
     MongoDBConstraintRepository,
 )
+from osiki.repositories.endpoints.base_endpoint_repository import (
+    BaseEndpointRepository,
+)
+from osiki.repositories.endpoints.mongodb_endpoint_repository import (
+    MongoDBEndpointRepository,
+)
 from osiki.repositories.environment_state.base_environment_state_repository import (
     BaseEnvironmentStateRepository,
 )
@@ -96,12 +102,16 @@ EnvironmentStateRepository = Annotated[
 ]
 
 
-def get_user_repository(environment_id: EnvironmentId) -> BaseUserRepository:
-    return MongoDBUserRepository(environment_id)
+def get_user_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseUserRepository:
+    return MongoDBUserRepository(environment_id, state)
 
 
-def get_group_repository(environment_id: EnvironmentId) -> BaseGroupRepository:
-    return MongoDBGroupRepository(environment_id)
+def get_group_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseGroupRepository:
+    return MongoDBGroupRepository(environment_id, state)
 
 
 def get_role_repository(
@@ -116,16 +126,22 @@ def get_permission_repository(
     return MongoDBPermissionRepository(environment_id, state)
 
 
-def get_user_role_repository(environment_id: EnvironmentId) -> BaseUserRoleRepository:
-    return MongoDBUserRoleRepository(environment_id)
+def get_user_role_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseUserRoleRepository:
+    return MongoDBUserRoleRepository(environment_id, state)
 
 
-def get_user_group_repository(environment_id: EnvironmentId) -> BaseUserGroupRepository:
-    return MongoDBUserGroupRepository(environment_id)
+def get_user_group_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseUserGroupRepository:
+    return MongoDBUserGroupRepository(environment_id, state)
 
 
-def get_group_role_repository(environment_id: EnvironmentId) -> BaseGroupRoleRepository:
-    return MongoDBGroupRoleRepository(environment_id)
+def get_group_role_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseGroupRoleRepository:
+    return MongoDBGroupRoleRepository(environment_id, state)
 
 
 def get_constraint_repository(
@@ -140,18 +156,26 @@ def get_condition_repository(
     return MongoDBConditionRepository(environment_id, state)
 
 
+def get_endpoint_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseEndpointRepository:
+    return MongoDBEndpointRepository(environment_id, state)
+
+
 def get_access_log_repository(environment_id: EnvironmentId) -> BaseAccessLogRepository:
     return MongoDBAccessLogRepository(environment_id)
 
 
-def get_tenant_repository(environment_id: EnvironmentId) -> BaseTenantRepository:
-    return MongoDBTenantRepository(environment_id)
+def get_tenant_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseTenantRepository:
+    return MongoDBTenantRepository(environment_id, state)
 
 
 def get_tenant_member_repository(
-    environment_id: EnvironmentId,
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
 ) -> BaseTenantMemberRepository:
-    return MongoDBTenantMemberRepository(environment_id)
+    return MongoDBTenantMemberRepository(environment_id, state)
 
 
 # Service dependencies
@@ -188,6 +212,9 @@ def get_snapshot_builder(
     constraint_repository: Annotated[
         BaseConstraintRepository, Depends(get_constraint_repository)
     ],
+    endpoint_repository: Annotated[
+        BaseEndpointRepository, Depends(get_endpoint_repository)
+    ],
     snapshot_cache: Annotated[SnapshotCache, Depends(get_snapshot_cache)],
 ) -> SnapshotBuilder:
     return SnapshotBuilder(
@@ -197,6 +224,7 @@ def get_snapshot_builder(
         permission_repository,
         condition_repository,
         constraint_repository,
+        endpoint_repository,
         cache=snapshot_cache,
     )
 
@@ -260,6 +288,7 @@ ConstraintRepository = Annotated[
 ConditionRepository = Annotated[
     BaseConditionRepository, Depends(get_condition_repository)
 ]
+EndpointRepository = Annotated[BaseEndpointRepository, Depends(get_endpoint_repository)]
 AccessLogRepository = Annotated[
     BaseAccessLogRepository, Depends(get_access_log_repository)
 ]

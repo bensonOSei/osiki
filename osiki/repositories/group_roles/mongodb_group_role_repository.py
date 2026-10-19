@@ -4,18 +4,25 @@ from beanie import PydanticObjectId
 from loguru import logger
 
 from osiki.models.group_role import GroupRole
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.group_roles.base_group_role_repository import (
     BaseGroupRoleRepository,
 )
 
 
 class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, group_role: GroupRole) -> GroupRole:
         group_role.environment_id = self.environment_id
         await group_role.insert()
+        await self._state.bump_assignments_version()
         logger.info(
             "Role assigned to group",
             group_role_id=str(group_role.id),
@@ -84,6 +91,7 @@ class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
         group_role.is_active = False
         group_role.updated_at = time.time()
         await group_role.save()
+        await self._state.bump_assignments_version()
         logger.info(
             "Role revoked from group",
             group_role_id=group_role_id,

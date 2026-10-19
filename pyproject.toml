@@ -27,10 +27,12 @@ osiki = "cli:app"
 [tool.black]
 line-length = 88
 target-version = ["py313"]
+extend-exclude = "sdks/"
 
 [tool.ruff]
 line-length = 88
 target-version = "py313"
+extend-exclude = ["sdks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
@@ -40,7 +42,7 @@ ignore = ["E712"]  # Beanie ODM requires == True/False for query building
 python_version = "3.13"
 strict = true
 ignore_missing_imports = true
-exclude = ["tests"]
+exclude = ["tests", "sdks"]
 plugins = ["pydantic.mypy"]
 
 [build-system]
@@ -56,6 +58,9 @@ dev = [
     "mongomock-motor (>=0.0.34,<1.0.0)",
     "httpx (>=0.28.1,<0.29.0)",
 ]
+
+[tool.poetry.group.sdk.dependencies]
+osiki-sdk = {path = "sdks/python", develop = true, extras = ["sqlalchemy"]}
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

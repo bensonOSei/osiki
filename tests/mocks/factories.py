@@ -14,6 +14,7 @@ from osiki.decision.models import (
 from osiki.models.base import AttributeValue, Scope
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintConfig, ConstraintType
+from osiki.models.endpoint import DiscoveredEndpoint, EndpointMapping
 from osiki.models.environment_state import EnvironmentState
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
@@ -44,6 +45,29 @@ def make_environment_state(
     )
     state.id = PydanticObjectId()
     return state
+
+
+def make_endpoint_mapping(
+    method: str = "GET",
+    path: str = "/invoices",
+    permission: str | None = "invoices:read",
+    public: bool = False,
+) -> EndpointMapping:
+    mapping = EndpointMapping(
+        method=method, path=path, permission=permission, public=public
+    )
+    mapping.id = PydanticObjectId()
+    return mapping
+
+
+def make_discovered_endpoint(
+    method: str = "GET", path: str = "/invoices", seen: float = 1.0
+) -> DiscoveredEndpoint:
+    found = DiscoveredEndpoint(
+        method=method, path=path, first_seen=seen, last_seen=seen
+    )
+    found.id = PydanticObjectId()
+    return found
 
 
 def make_tenant(

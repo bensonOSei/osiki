@@ -2,10 +2,12 @@ import time
 
 from beanie import PydanticObjectId
 
+from osiki.decision.models import EndpointEntry, EnvironmentSettings
 from osiki.models.access_log import AccessLog
-from osiki.models.base import AttributeValue, EnvironmentMixin
+from osiki.models.base import AttributeValue, EnvironmentMixin, attributes_equal
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintType
+from osiki.models.endpoint import DiscoveredEndpoint, EndpointMapping
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
@@ -23,6 +25,9 @@ from osiki.repositories.conditions.base_condition_repository import (
 )
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
+)
+from osiki.repositories.endpoints.base_endpoint_repository import (
+    BaseEndpointRepository,
 )
 from osiki.repositories.environment_state.base_environment_state_repository import (
     BaseEnvironmentStateRepository,
@@ -85,10 +90,25 @@ class _ConfigBound[T: EnvironmentMixin](_EnvironmentBound[T]):
         await self._state.bump_config_version()
 
 
+class _AssignmentBound[T: EnvironmentMixin](_EnvironmentBound[T]):
+    """A store whose writes bump the environment's assignments version."""
+
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
+        super().__init__(environment_id)
+        self._state = state
+
+    async def _bump(self) -> None:
+        await self._state.bump_assignments_version()
+
+
 class MockEnvironmentStateRepository(BaseEnvironmentStateRepository):
     def __init__(self, environment_id: str) -> None:
         self.environment_id = environment_id
         self._version = 0
+        self._assignments_version = 0
+        self.settings = EnvironmentSettings()
 
     async def get_config_version(self) -> int:
         return self._version
@@ -96,6 +116,75 @@ class MockEnvironmentStateRepository(BaseEnvironmentStateRepository):
     async def bump_config_version(self) -> int:
         self._version += 1
         return self._version
+
+    async def get_assignments_version(self) -> int:
+        return self._assignments_version
+
+    async def bump_assignments_version(self) -> int:
+        self._assignments_version += 1
+        return self._assignments_version
+
+    async def get_settings(self) -> EnvironmentSettings:
+        return self.settings
+
+    async def update_settings(
+        self, settings: EnvironmentSettings
+    ) -> EnvironmentSettings:
+        self.settings = settings
+        await self.bump_config_version()
+        return settings
+
+
+class MockEndpointRepository(_ConfigBound[EndpointMapping], BaseEndpointRepository):
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
+        super().__init__(environment_id, state)
+        self._discovered: dict[tuple[str, str, str], DiscoveredEndpoint] = {}
+
+    async def record_discovered(
+        self, endpoints: list[tuple[str, str]], now: float
+    ) -> int:
+        unique = list(dict.fromkeys(endpoints))
+        for method, path in unique:
+            key = (self.environment_id, method, path)
+            found = self._discovered.get(key)
+            if found is None:
+                self._discovered[key] = DiscoveredEndpoint(
+                    environment_id=self.environment_id,
+                    method=method,
+                    path=path,
+                    first_seen=now,
+                    last_seen=now,
+                )
+            else:
+                found.last_seen = now
+        return len(unique)
+
+    async def list_discovered(self) -> list[DiscoveredEndpoint]:
+        return [
+            d
+            for d in self._discovered.values()
+            if d.environment_id == self.environment_id
+        ]
+
+    async def upsert_mapping(self, entry: EndpointEntry) -> EndpointMapping:
+        mapping = EndpointMapping(
+            environment_id=self.environment_id, **entry.model_dump()
+        )
+        self._store(f"{entry.method} {entry.path}", mapping)
+        await self._bump()
+        return mapping
+
+    async def delete_mapping(self, method: str, path: str) -> bool:
+        if self._get(f"{method} {path}") is None:
+            return False
+        del self._data[f"{method} {path}"]
+        await self._bump()
+        return True
+
+    async def list_mappings(self) -> list[EndpointMapping]:
+        return self._scoped()
 
 
 def _grant(permission_id: str, condition_id: str | None) -> Grant:
@@ -105,11 +194,13 @@ def _grant(permission_id: str, condition_id: str | None) -> Grant:
     )
 
 
-class MockUserRoleRepository(_EnvironmentBound[UserRole], BaseUserRoleRepository):
+class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository):
     async def create(self, user_role: UserRole) -> UserRole:
         if user_role.id is None:
             user_role.id = PydanticObjectId()
-        return self._store(str(user_role.id), user_role)
+        self._store(str(user_role.id), user_role)
+        await self._bump()
+        return user_role
 
     async def get_by_id(self, user_role_id: str) -> UserRole | None:
         return self._get(user_role_id)
@@ -150,6 +241,7 @@ class MockUserRoleRepository(_EnvironmentBound[UserRole], BaseUserRoleRepository
     async def revoke(self, user_role_id: str) -> bool:
         if self._get(user_role_id) is not None:
             self._data[user_role_id].is_active = False
+            await self._bump()
             return True
         return False
 
@@ -163,11 +255,13 @@ class MockUserRoleRepository(_EnvironmentBound[UserRole], BaseUserRoleRepository
         ]
 
 
-class MockUserGroupRepository(_EnvironmentBound[UserGroup], BaseUserGroupRepository):
+class MockUserGroupRepository(_AssignmentBound[UserGroup], BaseUserGroupRepository):
     async def create(self, user_group: UserGroup) -> UserGroup:
         if user_group.id is None:
             user_group.id = PydanticObjectId()
-        return self._store(str(user_group.id), user_group)
+        self._store(str(user_group.id), user_group)
+        await self._bump()
+        return user_group
 
     async def get_by_id(self, user_group_id: str) -> UserGroup | None:
         return self._get(user_group_id)
@@ -195,15 +289,18 @@ class MockUserGroupRepository(_EnvironmentBound[UserGroup], BaseUserGroupReposit
     async def remove(self, user_group_id: str) -> bool:
         if self._get(user_group_id) is not None:
             self._data[user_group_id].is_active = False
+            await self._bump()
             return True
         return False
 
 
-class MockGroupRoleRepository(_EnvironmentBound[GroupRole], BaseGroupRoleRepository):
+class MockGroupRoleRepository(_AssignmentBound[GroupRole], BaseGroupRoleRepository):
     async def create(self, group_role: GroupRole) -> GroupRole:
         if group_role.id is None:
             group_role.id = PydanticObjectId()
-        return self._store(str(group_role.id), group_role)
+        self._store(str(group_role.id), group_role)
+        await self._bump()
+        return group_role
 
     async def get_by_id(self, group_role_id: str) -> GroupRole | None:
         return self._get(group_role_id)
@@ -241,6 +338,7 @@ class MockGroupRoleRepository(_EnvironmentBound[GroupRole], BaseGroupRoleReposit
     async def revoke(self, group_role_id: str) -> bool:
         if self._get(group_role_id) is not None:
             self._data[group_role_id].is_active = False
+            await self._bump()
             return True
         return False
 
@@ -423,11 +521,13 @@ class MockConstraintRepository(_ConfigBound[Constraint], BaseConstraintRepositor
         return False
 
 
-class MockUserRepository(_EnvironmentBound[User], BaseUserRepository):
+class MockUserRepository(_AssignmentBound[User], BaseUserRepository):
     async def create(self, user: User) -> User:
         if user.id is None:
             user.id = PydanticObjectId()
-        return self._store(str(user.id), user)
+        self._store(str(user.id), user)
+        await self._bump()
+        return user
 
     async def get_by_id(self, user_id: str) -> User | None:
         return self._get(user_id)
@@ -447,17 +547,20 @@ class MockUserRepository(_EnvironmentBound[User], BaseUserRepository):
     async def update(self, user: User) -> User:
         user.updated_at = time.time()
         self._data[str(user.id)] = user
+        await self._bump()
         return user
 
     async def deactivate(self, user_id: str) -> bool:
         if self._get(user_id) is not None:
             self._data[user_id].is_active = False
+            await self._bump()
             return True
         return False
 
     async def reactivate(self, user_id: str) -> bool:
         if self._get(user_id) is not None:
             self._data[user_id].is_active = True
+            await self._bump()
             return True
         return False
 
@@ -474,6 +577,15 @@ class MockUserRepository(_EnvironmentBound[User], BaseUserRepository):
     ) -> User:
         for user in self._scoped():
             if user.external_id == external_id:
+                if (
+                    (name is None or name == user.name)
+                    and (email is None or email == user.email)
+                    and (
+                        attributes is None
+                        or attributes_equal(attributes, user.attributes)
+                    )
+                ):
+                    return user
                 if name is not None:
                     user.name = name
                 if email is not None:
@@ -481,6 +593,7 @@ class MockUserRepository(_EnvironmentBound[User], BaseUserRepository):
                 if attributes is not None:
                     user.attributes = attributes
                 user.updated_at = time.time()
+                await self._bump()
                 return user
         return await self.create(
             User(
@@ -492,19 +605,26 @@ class MockUserRepository(_EnvironmentBound[User], BaseUserRepository):
         )
 
 
-class MockTenantRepository(_EnvironmentBound[Tenant], BaseTenantRepository):
+class MockTenantRepository(_AssignmentBound[Tenant], BaseTenantRepository):
     async def upsert(
         self, external_id: str, name: str, attributes: dict[str, AttributeValue]
     ) -> Tenant:
         for tenant in self._scoped():
             if tenant.external_id == external_id:
+                if tenant.name == name and attributes_equal(
+                    tenant.attributes, attributes
+                ):
+                    return tenant
                 tenant.name = name
                 tenant.attributes = attributes
                 tenant.updated_at = time.time()
+                await self._bump()
                 return tenant
         tenant = Tenant(external_id=external_id, name=name, attributes=attributes)
         tenant.id = PydanticObjectId()
-        return self._store(str(tenant.id), tenant)
+        self._store(str(tenant.id), tenant)
+        await self._bump()
+        return tenant
 
     async def get_by_external_id(self, external_id: str) -> Tenant | None:
         for tenant in self._scoped():
@@ -519,7 +639,7 @@ class MockTenantRepository(_EnvironmentBound[Tenant], BaseTenantRepository):
 
 
 class MockTenantMemberRepository(
-    _EnvironmentBound[TenantMember], BaseTenantMemberRepository
+    _AssignmentBound[TenantMember], BaseTenantMemberRepository
 ):
     def _key(self, tenant_id: str, user_id: str) -> str:
         return f"{tenant_id}\x00{user_id}"
@@ -528,12 +648,14 @@ class MockTenantMemberRepository(
         key = self._key(tenant_id, user_id)
         if self._get(key) is None:
             self._store(key, TenantMember(tenant_id=tenant_id, user_id=user_id))
+            await self._bump()
 
     async def remove(self, tenant_id: str, user_id: str) -> bool:
         key = self._key(tenant_id, user_id)
         if self._get(key) is None:
             return False
         del self._data[key]
+        await self._bump()
         return True
 
     async def is_member(self, tenant_id: str, user_id: str) -> bool:
@@ -547,11 +669,13 @@ class MockTenantMemberRepository(
         return found[skip : skip + limit]
 
 
-class MockGroupRepository(_EnvironmentBound[Group], BaseGroupRepository):
+class MockGroupRepository(_AssignmentBound[Group], BaseGroupRepository):
     async def create(self, group: Group) -> Group:
         if group.id is None:
             group.id = PydanticObjectId()
-        return self._store(str(group.id), group)
+        self._store(str(group.id), group)
+        await self._bump()
+        return group
 
     async def get_by_id(self, group_id: str) -> Group | None:
         return self._get(group_id)
@@ -575,12 +699,14 @@ class MockGroupRepository(_EnvironmentBound[Group], BaseGroupRepository):
     async def deactivate(self, group_id: str) -> bool:
         if self._get(group_id) is not None:
             self._data[group_id].is_active = False
+            await self._bump()
             return True
         return False
 
     async def reactivate(self, group_id: str) -> bool:
         if self._get(group_id) is not None:
             self._data[group_id].is_active = True
+            await self._bump()
             return True
         return False
 

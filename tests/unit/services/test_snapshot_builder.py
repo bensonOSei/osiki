@@ -6,13 +6,20 @@ import pytest
 from beanie import PydanticObjectId
 
 from osiki.decision.decide import decide
-from osiki.decision.models import ConstraintEntry, GrantEntry, RoleEntry
+from osiki.decision.models import (
+    ConstraintEntry,
+    EndpointEntry,
+    EnvironmentSettings,
+    GrantEntry,
+    RoleEntry,
+)
 from osiki.models.constraint import ConstraintConfig, ConstraintType
 from osiki.models.role import Grant
 from osiki.services.snapshot_builder import SnapshotBuilder, SnapshotCache
 from tests.mocks import (
     MockConditionRepository,
     MockConstraintRepository,
+    MockEndpointRepository,
     MockEnvironmentStateRepository,
     MockPermissionRepository,
     MockRoleRepository,
@@ -35,6 +42,7 @@ class Env:
         self.permissions = MockPermissionRepository(environment_id, self.state)
         self.conditions = MockConditionRepository(environment_id, self.state)
         self.constraints = MockConstraintRepository(environment_id, self.state)
+        self.endpoints = MockEndpointRepository(environment_id, self.state)
         self.cache = SnapshotCache()
         self.environment_id = environment_id
 
@@ -46,6 +54,7 @@ class Env:
             self.permissions,
             self.conditions,
             self.constraints,
+            self.endpoints,
             cache=self.cache,
         )
 
@@ -63,6 +72,16 @@ async def test_empty_environment_builds_empty_snapshot(env: Env) -> None:
     assert snapshot.roles == []
     assert snapshot.conditions == {}
     assert snapshot.constraints == []
+    assert snapshot.endpoints == []
+    assert snapshot.settings == EnvironmentSettings(unmapped="deny")
+
+
+async def test_snapshot_renders_the_stored_settings(env: Env) -> None:
+    env.state.settings = EnvironmentSettings(unmapped="allow")
+
+    snapshot = await env.builder().build()
+
+    assert snapshot.settings.unmapped == "allow"
 
 
 async def test_snapshot_renders_roles_grants_conditions_and_constraints(
@@ -250,3 +269,18 @@ async def test_snapshot_cache_get_and_put() -> None:
     cache.put(snapshot)
 
     assert cache.get("default") is snapshot
+
+
+async def test_mappings_render_into_the_snapshot_sorted(env: Env) -> None:
+    for method, path in [("POST", "/b"), ("GET", "/b"), ("GET", "/a")]:
+        await env.endpoints.upsert_mapping(
+            EndpointEntry(method=method, path=path, permission="x:y")
+        )
+
+    snapshot = await env.builder().build()
+
+    assert [(e.path, e.method) for e in snapshot.endpoints] == [
+        ("/a", "GET"),
+        ("/b", "GET"),
+        ("/b", "POST"),
+    ]

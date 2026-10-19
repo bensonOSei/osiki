@@ -2,13 +2,21 @@
 
 from loguru import logger
 
-from osiki.decision.models import ConstraintEntry, GrantEntry, RoleEntry, Snapshot
+from osiki.decision.models import (
+    ConstraintEntry,
+    GrantEntry,
+    RoleEntry,
+    Snapshot,
+)
 from osiki.models.role import Grant, Role
 from osiki.repositories.conditions.base_condition_repository import (
     BaseConditionRepository,
 )
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
+)
+from osiki.repositories.endpoints.base_endpoint_repository import (
+    BaseEndpointRepository,
 )
 from osiki.repositories.environment_state.base_environment_state_repository import (
     BaseEnvironmentStateRepository,
@@ -63,6 +71,7 @@ class SnapshotBuilder:
         permission_repo: BasePermissionRepository,
         condition_repo: BaseConditionRepository,
         constraint_repo: BaseConstraintRepository,
+        endpoint_repo: BaseEndpointRepository,
         *,
         cache: SnapshotCache,
     ) -> None:
@@ -72,6 +81,7 @@ class SnapshotBuilder:
         self._permission_repo = permission_repo
         self._condition_repo = condition_repo
         self._constraint_repo = constraint_repo
+        self._endpoint_repo = endpoint_repo
         self._cache = cache
 
     async def build(self) -> Snapshot:
@@ -102,6 +112,11 @@ class SnapshotBuilder:
         }
         condition_keys = {str(c.id): c.key for c in conditions}
         constraints = await self._constraint_repo.get_active()
+        settings = await self._state_repo.get_settings()
+        mappings = sorted(
+            await self._endpoint_repo.list_mappings(),
+            key=lambda m: (m.path, m.method),
+        )
         return Snapshot(
             environment_id=self._environment_id,
             version=version,
@@ -117,6 +132,8 @@ class SnapshotBuilder:
                 for c in constraints
                 if c.is_active
             ],
+            endpoints=[m.to_entry() for m in mappings],
+            settings=settings,
         )
 
 

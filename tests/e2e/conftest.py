@@ -10,6 +10,7 @@ from osiki.api.dependencies import (
     get_access_log_repository,
     get_condition_repository,
     get_constraint_repository,
+    get_endpoint_repository,
     get_environment_state_repository,
     get_group_repository,
     get_group_role_repository,
@@ -34,10 +35,12 @@ from osiki.api.routes import (
     authorization_router,
     conditions_router,
     constraints_router,
+    endpoints_router,
     groups_router,
     health_router,
     permissions_router,
     roles_router,
+    settings_router,
     snapshot_router,
     tenants_router,
     users_router,
@@ -48,6 +51,7 @@ from tests.mocks.repositories import (
     MockAccessLogRepository,
     MockConditionRepository,
     MockConstraintRepository,
+    MockEndpointRepository,
     MockEnvironmentStateRepository,
     MockGroupRepository,
     MockGroupRoleRepository,
@@ -74,6 +78,7 @@ _condition_repos: dict[str, MockConditionRepository] = {}
 _access_log_repos: dict[str, MockAccessLogRepository] = {}
 _tenant_repos: dict[str, MockTenantRepository] = {}
 _tenant_member_repos: dict[str, MockTenantMemberRepository] = {}
+_endpoint_repos: dict[str, MockEndpointRepository] = {}
 _state_repos: dict[str, MockEnvironmentStateRepository] = {}
 # Replaced per test: the mock state repos restart at version 0, so a cache
 # kept across tests would serve the previous test's snapshot.
@@ -130,6 +135,7 @@ def _reset_all_repos() -> None:
         _access_log_repos,
         _tenant_repos,
         _tenant_member_repos,
+        _endpoint_repos,
         _state_repos,
     ):
         store.clear()
@@ -154,6 +160,8 @@ def _create_test_app() -> FastAPI:
     test_app.include_router(authorization_router, prefix=settings.api_prefix)
     test_app.include_router(snapshot_router, prefix=settings.api_prefix)
     test_app.include_router(access_logs_router, prefix=settings.api_prefix)
+    test_app.include_router(endpoints_router, prefix=settings.api_prefix)
+    test_app.include_router(settings_router, prefix=settings.api_prefix)
 
     @test_app.get("/_test/authorization-error")
     async def _trigger_authorization_error() -> None:
@@ -167,10 +175,10 @@ def _create_test_app() -> FastAPI:
     async def _trigger_internal_error() -> None:
         raise RuntimeError("unexpected failure")
 
-    test_app.dependency_overrides[get_user_repository] = _repo_provider(
+    test_app.dependency_overrides[get_user_repository] = _config_repo_provider(
         _user_repos, MockUserRepository
     )
-    test_app.dependency_overrides[get_group_repository] = _repo_provider(
+    test_app.dependency_overrides[get_group_repository] = _config_repo_provider(
         _group_repos, MockGroupRepository
     )
     test_app.dependency_overrides[get_role_repository] = _config_repo_provider(
@@ -179,13 +187,13 @@ def _create_test_app() -> FastAPI:
     test_app.dependency_overrides[get_permission_repository] = _config_repo_provider(
         _permission_repos, MockPermissionRepository
     )
-    test_app.dependency_overrides[get_user_role_repository] = _repo_provider(
+    test_app.dependency_overrides[get_user_role_repository] = _config_repo_provider(
         _user_role_repos, MockUserRoleRepository
     )
-    test_app.dependency_overrides[get_user_group_repository] = _repo_provider(
+    test_app.dependency_overrides[get_user_group_repository] = _config_repo_provider(
         _user_group_repos, MockUserGroupRepository
     )
-    test_app.dependency_overrides[get_group_role_repository] = _repo_provider(
+    test_app.dependency_overrides[get_group_role_repository] = _config_repo_provider(
         _group_role_repos, MockGroupRoleRepository
     )
     test_app.dependency_overrides[get_constraint_repository] = _config_repo_provider(
@@ -197,11 +205,14 @@ def _create_test_app() -> FastAPI:
     test_app.dependency_overrides[get_access_log_repository] = _repo_provider(
         _access_log_repos, MockAccessLogRepository
     )
-    test_app.dependency_overrides[get_tenant_repository] = _repo_provider(
+    test_app.dependency_overrides[get_tenant_repository] = _config_repo_provider(
         _tenant_repos, MockTenantRepository
     )
-    test_app.dependency_overrides[get_tenant_member_repository] = _repo_provider(
+    test_app.dependency_overrides[get_tenant_member_repository] = _config_repo_provider(
         _tenant_member_repos, MockTenantMemberRepository
+    )
+    test_app.dependency_overrides[get_endpoint_repository] = _config_repo_provider(
+        _endpoint_repos, MockEndpointRepository
     )
     test_app.dependency_overrides[get_environment_state_repository] = _provide_state
     test_app.dependency_overrides[get_snapshot_cache] = _provide_snapshot_cache

@@ -10,6 +10,7 @@ from osiki.api.dependencies import (
     get_condition_repository,
     get_constraint_repository,
     get_constraint_validator,
+    get_endpoint_repository,
     get_environment_state_repository,
     get_group_repository,
     get_group_role_repository,
@@ -66,11 +67,11 @@ def _state() -> MongoDBEnvironmentStateRepository:
 
 
 def test_get_user_repository() -> None:
-    assert isinstance(get_user_repository("default"), MongoDBUserRepository)
+    assert isinstance(get_user_repository("default", _state()), MongoDBUserRepository)
 
 
 def test_get_group_repository() -> None:
-    assert isinstance(get_group_repository("default"), MongoDBGroupRepository)
+    assert isinstance(get_group_repository("default", _state()), MongoDBGroupRepository)
 
 
 def test_get_role_repository() -> None:
@@ -84,15 +85,21 @@ def test_get_permission_repository() -> None:
 
 
 def test_get_user_role_repository() -> None:
-    assert isinstance(get_user_role_repository("default"), MongoDBUserRoleRepository)
+    assert isinstance(
+        get_user_role_repository("default", _state()), MongoDBUserRoleRepository
+    )
 
 
 def test_get_user_group_repository() -> None:
-    assert isinstance(get_user_group_repository("default"), MongoDBUserGroupRepository)
+    assert isinstance(
+        get_user_group_repository("default", _state()), MongoDBUserGroupRepository
+    )
 
 
 def test_get_group_role_repository() -> None:
-    assert isinstance(get_group_role_repository("default"), MongoDBGroupRoleRepository)
+    assert isinstance(
+        get_group_role_repository("default", _state()), MongoDBGroupRoleRepository
+    )
 
 
 def test_get_constraint_repository() -> None:
@@ -147,16 +154,17 @@ def test_get_authorization_service() -> None:
         get_permission_repository("default", state),
         get_condition_repository("default", state),
         get_constraint_repository("default", state),
+        get_endpoint_repository("default", state),
         get_snapshot_cache(),
     )
     bundle_builder = get_bundle_builder(
-        get_user_repository("default"),
-        get_user_role_repository("default"),
-        get_user_group_repository("default"),
-        get_group_repository("default"),
-        get_group_role_repository("default"),
-        get_tenant_member_repository("default"),
-        get_tenant_repository("default"),
+        get_user_repository("default", _state()),
+        get_user_role_repository("default", _state()),
+        get_user_group_repository("default", _state()),
+        get_group_repository("default", _state()),
+        get_group_role_repository("default", _state()),
+        get_tenant_member_repository("default", _state()),
+        get_tenant_repository("default", _state()),
     )
     service = get_authorization_service(snapshot_builder, bundle_builder)
     assert isinstance(service, AuthorizationService)
@@ -164,16 +172,18 @@ def test_get_authorization_service() -> None:
 
 def test_get_constraint_validator() -> None:
     constraint_repo = get_constraint_repository("default", _state())
-    user_role_repo = get_user_role_repository("default")
+    user_role_repo = get_user_role_repository("default", _state())
     validator = get_constraint_validator(constraint_repo, user_role_repo)
     assert isinstance(validator, ConstraintValidator)
 
 
 def test_get_tenant_repository() -> None:
-    assert isinstance(get_tenant_repository("default"), MongoDBTenantRepository)
+    assert isinstance(
+        get_tenant_repository("default", _state()), MongoDBTenantRepository
+    )
 
 
 def test_get_tenant_member_repository() -> None:
     assert isinstance(
-        get_tenant_member_repository("default"), MongoDBTenantMemberRepository
+        get_tenant_member_repository("default", _state()), MongoDBTenantMemberRepository
     )

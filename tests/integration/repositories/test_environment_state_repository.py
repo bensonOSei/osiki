@@ -15,6 +15,9 @@ from osiki.repositories.conditions.mongodb_condition_repository import (
 from osiki.repositories.constraints.mongodb_constraint_repository import (
     MongoDBConstraintRepository,
 )
+from osiki.repositories.endpoints.mongodb_endpoint_repository import (
+    MongoDBEndpointRepository,
+)
 from osiki.repositories.environment_state.mongodb_environment_state_repository import (
     MongoDBEnvironmentStateRepository,
 )
@@ -222,6 +225,7 @@ async def test_snapshot_over_mongo_rebuilds_after_a_write() -> None:
         _perms(state),
         _conds(state),
         _cons(state),
+        MongoDBEndpointRepository(ENV, state),
         cache=SnapshotCache(),
     )
     perm = await _perm(state)

@@ -6,13 +6,18 @@ from beanie import PydanticObjectId
 
 from osiki.models.base import Scope
 from osiki.models.user_role import UserRole
+from osiki.repositories.environment_state.mongodb_environment_state_repository import (
+    MongoDBEnvironmentStateRepository,
+)
 from osiki.repositories.user_roles.mongodb_user_role_repository import (
     MongoDBUserRoleRepository,
 )
 
 
 async def test_create() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     ur = UserRole(
         user_id=PydanticObjectId(),
         role_id=PydanticObjectId(),
@@ -23,7 +28,9 @@ async def test_create() -> None:
 
 
 async def test_get_user_roles() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     user_id = PydanticObjectId()
     await repo.create(
         UserRole(user_id=user_id, role_id=PydanticObjectId(), assigned_by="admin")
@@ -36,7 +43,9 @@ async def test_get_user_roles() -> None:
 
 
 async def test_get_users_with_role() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     role_id = PydanticObjectId()
     await repo.create(
         UserRole(user_id=PydanticObjectId(), role_id=role_id, assigned_by="admin")
@@ -49,7 +58,9 @@ async def test_get_users_with_role() -> None:
 
 
 async def test_get_by_tenant() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     role_id = PydanticObjectId()
     await repo.create(
         UserRole(
@@ -72,7 +83,9 @@ async def test_get_by_tenant() -> None:
 
 
 async def test_get_by_tenant_with_role_filter() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     role_id = PydanticObjectId()
     await repo.create(
         UserRole(
@@ -95,7 +108,9 @@ async def test_get_by_tenant_with_role_filter() -> None:
 
 
 async def test_find_assignment() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     user_id = PydanticObjectId()
     role_id = PydanticObjectId()
     await repo.create(
@@ -111,7 +126,9 @@ async def test_find_assignment() -> None:
 
 
 async def test_revoke() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     ur = await repo.create(
         UserRole(
             user_id=PydanticObjectId(), role_id=PydanticObjectId(), assigned_by="admin"
@@ -125,13 +142,17 @@ async def test_revoke() -> None:
 
 
 async def test_revoke_not_found() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     result = await repo.revoke(str(PydanticObjectId()))
     assert result is False
 
 
 async def test_get_expired() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     now = time.time()
     await repo.create(
         UserRole(
@@ -146,7 +167,9 @@ async def test_get_expired() -> None:
 
 
 async def test_find_assignment_without_tenant_is_project_wide_only() -> None:
-    repo = MongoDBUserRoleRepository("default")
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     user_id, role_id = PydanticObjectId(), PydanticObjectId()
     await repo.create(
         UserRole(

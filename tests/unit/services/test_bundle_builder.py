@@ -8,6 +8,7 @@ from osiki.models.base import Scope
 from osiki.models.user import User
 from osiki.services.bundle_builder import BundleBuilder
 from tests.mocks import (
+    MockEnvironmentStateRepository,
     MockGroupRepository,
     MockGroupRoleRepository,
     MockTenantMemberRepository,
@@ -25,13 +26,14 @@ from tests.mocks import (
 
 class Env:
     def __init__(self) -> None:
-        self.users = MockUserRepository("default")
-        self.groups = MockGroupRepository("default")
-        self.user_roles = MockUserRoleRepository("default")
-        self.user_groups = MockUserGroupRepository("default")
-        self.group_roles = MockGroupRoleRepository("default")
-        self.members = MockTenantMemberRepository("default")
-        self.tenants = MockTenantRepository("default")
+        self.state = MockEnvironmentStateRepository("default")
+        self.users = MockUserRepository("default", self.state)
+        self.groups = MockGroupRepository("default", self.state)
+        self.user_roles = MockUserRoleRepository("default", self.state)
+        self.user_groups = MockUserGroupRepository("default", self.state)
+        self.group_roles = MockGroupRoleRepository("default", self.state)
+        self.members = MockTenantMemberRepository("default", self.state)
+        self.tenants = MockTenantRepository("default", self.state)
 
     def builder(self) -> BundleBuilder:
         return BundleBuilder(

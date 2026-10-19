@@ -11,10 +11,12 @@ from osiki.api.routes import (
     authorization_router,
     conditions_router,
     constraints_router,
+    endpoints_router,
     groups_router,
     health_router,
     permissions_router,
     roles_router,
+    settings_router,
     snapshot_router,
     tenants_router,
     users_router,
@@ -67,6 +69,8 @@ app.include_router(tenants_router, prefix=settings.api_prefix)
 app.include_router(authorization_router, prefix=settings.api_prefix)
 app.include_router(snapshot_router, prefix=settings.api_prefix)
 app.include_router(access_logs_router, prefix=settings.api_prefix)
+app.include_router(endpoints_router, prefix=settings.api_prefix)
+app.include_router(settings_router, prefix=settings.api_prefix)
 
 
 @app.get("/")

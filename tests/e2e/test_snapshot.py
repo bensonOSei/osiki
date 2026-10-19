@@ -93,6 +93,128 @@ def test_snapshot_version_endpoint_tracks_writes(client: TestClient) -> None:
     assert client.get(f"{API}/snapshot").json()["version"] == after
 
 
+def test_snapshot_version_endpoint_returns_both(client: TestClient) -> None:
+    assert client.get(f"{API}/snapshot/version").json() == {
+        "version": 0,
+        "assignments_version": 0,
+    }
+    _role(client)
+
+    body = client.get(f"{API}/snapshot/version").json()
+
+    assert body["version"] > 0
+    assert body["assignments_version"] == 0
+
+
+def _assignments_version(client: TestClient) -> int:
+    version: int = client.get(f"{API}/snapshot/version").json()["assignments_version"]
+    return version
+
+
+def test_assignment_writes_bump_assignments_version(client: TestClient) -> None:
+    role_id = _role(client)
+    user_id = client.put(f"{API}/users/by-external/user-1", json={}).json()["id"]
+    group_id = client.post(f"{API}/groups", json={"name": "g"}).json()["id"]
+    seen = _assignments_version(client)
+    config_before = client.get(f"{API}/snapshot/version").json()["version"]
+
+    def bumped(step: str) -> None:
+        nonlocal seen
+        now = _assignments_version(client)
+        assert now > seen, step
+        seen = now
+
+    client.put(f"{API}/tenants/acme", json={"name": "Acme"})
+    bumped("tenant upsert")
+    client.put(f"{API}/tenants/acme/members/user-1")
+    bumped("member add")
+    assert (
+        client.post(
+            f"{API}/users/{user_id}/roles",
+            json={
+                "role_id": role_id,
+                "assigned_by": "a",
+                "scope": {"tenant_id": "acme"},
+            },
+        ).status_code
+        == 201
+    )
+    bumped("user role assign")
+    assert (
+        client.delete(
+            f"{API}/users/{user_id}/roles/{role_id}?tenant_id=acme"
+        ).status_code
+        == 204
+    )
+    bumped("user role revoke")
+    assert (
+        client.post(
+            f"{API}/groups/{group_id}/roles",
+            json={"role_id": role_id, "assigned_by": "a"},
+        ).status_code
+        == 201
+    )
+    bumped("group role assign")
+    assert client.delete(f"{API}/groups/{group_id}/roles/{role_id}").status_code == 204
+    bumped("group role revoke")
+    assert (
+        client.post(
+            f"{API}/users/{user_id}/groups",
+            json={"group_id": group_id, "added_by": "a"},
+        ).status_code
+        == 201
+    )
+    bumped("user group add")
+    assert client.delete(f"{API}/users/{user_id}/groups/{group_id}").status_code == 204
+    bumped("user group remove")
+    client.delete(f"{API}/tenants/acme/members/user-1")
+    bumped("member remove")
+    client.put(f"{API}/users/by-external/user-1", json={"attributes": {"a": "b"}})
+    bumped("user upsert")
+    assert client.delete(f"{API}/users/{user_id}").status_code == 204
+    bumped("user deactivate")
+    assert client.delete(f"{API}/groups/{group_id}").status_code == 204
+    bumped("group deactivate")
+    assert client.get(f"{API}/snapshot/version").json()["version"] == config_before
+
+
+def test_noop_upserts_do_not_bump_assignments_version(client: TestClient) -> None:
+    user = {"name": "Kofi", "email": "k@test.com", "attributes": {"team": "t1"}}
+    tenant = {"name": "Acme", "attributes": {"plan": "pro"}}
+    assert client.put(f"{API}/users/by-external/kofi", json=user).status_code == 200
+    assert client.put(f"{API}/tenants/acme", json=tenant).status_code == 200
+    before = _assignments_version(client)
+
+    assert client.put(f"{API}/users/by-external/kofi", json=user).status_code == 200
+    assert client.put(f"{API}/users/by-external/kofi", json={}).status_code == 200
+    assert client.put(f"{API}/tenants/acme", json=tenant).status_code == 200
+    assert _assignments_version(client) == before
+
+    changed = {**user, "attributes": {"team": "t2"}}
+    client.put(f"{API}/users/by-external/kofi", json=changed)
+    after_user = _assignments_version(client)
+    assert after_user > before
+    client.put(f"{API}/tenants/acme", json={**tenant, "name": "Acme Ltd"})
+    assert _assignments_version(client) > after_user
+
+
+def test_failed_assignment_writes_do_not_bump(client: TestClient) -> None:
+    fake = "507f1f77bcf86cd799439011"
+    before = _assignments_version(client)
+
+    assert client.delete(f"{API}/users/{fake}/roles/{fake}").status_code == 404
+    assert client.delete(f"{API}/tenants/acme/members/ghost").status_code == 404
+
+    assert _assignments_version(client) == before
+
+
+def test_snapshot_includes_default_settings(client: TestClient) -> None:
+    body = client.get(f"{API}/snapshot").json()
+
+    assert body["settings"] == {"unmapped": "deny"}
+    assert body["endpoints"] == []
+
+
 def test_bundle_404_unknown_user(client: TestClient) -> None:
     response = client.get(f"{API}/users/by-external/ghost/bundle")
     assert response.status_code == 404

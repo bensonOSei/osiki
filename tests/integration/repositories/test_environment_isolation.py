@@ -10,10 +10,16 @@ from osiki.repositories.users.mongodb_user_repository import MongoDBUserReposito
 
 
 async def test_same_external_id_in_two_envs() -> None:
-    await MongoDBUserRepository("a").create(User(external_id="u1"))
-    await MongoDBUserRepository("b").create(User(external_id="u1"))
+    await MongoDBUserRepository("a", MongoDBEnvironmentStateRepository("a")).create(
+        User(external_id="u1")
+    )
+    await MongoDBUserRepository("b", MongoDBEnvironmentStateRepository("b")).create(
+        User(external_id="u1")
+    )
 
-    found = await MongoDBUserRepository("b").get_by_external_id("u1")
+    found = await MongoDBUserRepository(
+        "b", MongoDBEnvironmentStateRepository("b")
+    ).get_by_external_id("u1")
 
     assert found is not None
     assert found.environment_id == "b"

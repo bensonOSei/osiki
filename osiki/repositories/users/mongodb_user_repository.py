@@ -3,18 +3,25 @@ import time
 from beanie import PydanticObjectId
 from loguru import logger
 
-from osiki.models.base import AttributeValue
+from osiki.models.base import AttributeValue, attributes_equal
 from osiki.models.user import User
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.users.base_user_repository import BaseUserRepository
 
 
 class MongoDBUserRepository(BaseUserRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, user: User) -> User:
         user.environment_id = self.environment_id
         await user.insert()
+        await self._state.bump_assignments_version()
         logger.debug("User created", user_id=str(user.id), external_id=user.external_id)
         return user
 
@@ -42,6 +49,7 @@ class MongoDBUserRepository(BaseUserRepository):
     async def update(self, user: User) -> User:
         user.updated_at = time.time()
         await user.save()
+        await self._state.bump_assignments_version()
         logger.debug("User updated", user_id=str(user.id))
         return user
 
@@ -53,6 +61,7 @@ class MongoDBUserRepository(BaseUserRepository):
         user.is_active = False
         user.updated_at = time.time()
         await user.save()
+        await self._state.bump_assignments_version()
         logger.info("User deactivated", user_id=user_id)
         return True
 
@@ -64,6 +73,7 @@ class MongoDBUserRepository(BaseUserRepository):
         user.is_active = True
         user.updated_at = time.time()
         await user.save()
+        await self._state.bump_assignments_version()
         logger.info("User reactivated", user_id=user_id)
         return True
 
@@ -95,10 +105,15 @@ class MongoDBUserRepository(BaseUserRepository):
                 attributes=attributes or {},
             )
             return await self.create(user)
-        if name is not None:
-            user.name = name
-        if email is not None:
-            user.email = email
-        if attributes is not None:
-            user.attributes = attributes
+        changed = False
+        if name is not None and name != user.name:
+            user.name, changed = name, True
+        if email is not None and email != user.email:
+            user.email, changed = email, True
+        if attributes is not None and not attributes_equal(attributes, user.attributes):
+            user.attributes, changed = attributes, True
+        if not changed:
+            # A no-op sync must not bump the version: that flushes every
+            # SDK's bundle cache.
+            return user
         return await self.update(user)

@@ -6,13 +6,18 @@ from beanie import PydanticObjectId
 
 from osiki.models.base import Scope
 from osiki.models.group_role import GroupRole
+from osiki.repositories.environment_state.mongodb_environment_state_repository import (
+    MongoDBEnvironmentStateRepository,
+)
 from osiki.repositories.group_roles.mongodb_group_role_repository import (
     MongoDBGroupRoleRepository,
 )
 
 
 async def test_create() -> None:
-    repo = MongoDBGroupRoleRepository("default")
+    repo = MongoDBGroupRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     gr = GroupRole(
         group_id=PydanticObjectId(), role_id=PydanticObjectId(), assigned_by="admin"
     )
@@ -21,7 +26,9 @@ async def test_create() -> None:
 
 
 async def test_get_group_roles() -> None:
-    repo = MongoDBGroupRoleRepository("default")
+    repo = MongoDBGroupRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     group_id = PydanticObjectId()
     await repo.create(
         GroupRole(group_id=group_id, role_id=PydanticObjectId(), assigned_by="admin")
@@ -34,7 +41,9 @@ async def test_get_group_roles() -> None:
 
 
 async def test_get_roles_for_groups() -> None:
-    repo = MongoDBGroupRoleRepository("default")
+    repo = MongoDBGroupRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     group1 = PydanticObjectId()
     group2 = PydanticObjectId()
     await repo.create(
@@ -48,7 +57,9 @@ async def test_get_roles_for_groups() -> None:
 
 
 async def test_get_groups_with_role() -> None:
-    repo = MongoDBGroupRoleRepository("default")
+    repo = MongoDBGroupRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     role_id = PydanticObjectId()
     await repo.create(
         GroupRole(group_id=PydanticObjectId(), role_id=role_id, assigned_by="admin")
@@ -61,7 +72,9 @@ async def test_get_groups_with_role() -> None:
 
 
 async def test_find_assignment() -> None:
-    repo = MongoDBGroupRoleRepository("default")
+    repo = MongoDBGroupRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     group_id = PydanticObjectId()
     role_id = PydanticObjectId()
     await repo.create(
@@ -77,7 +90,9 @@ async def test_find_assignment() -> None:
 
 
 async def test_revoke() -> None:
-    repo = MongoDBGroupRoleRepository("default")
+    repo = MongoDBGroupRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     gr = await repo.create(
         GroupRole(
             group_id=PydanticObjectId(), role_id=PydanticObjectId(), assigned_by="admin"
@@ -88,13 +103,17 @@ async def test_revoke() -> None:
 
 
 async def test_revoke_not_found() -> None:
-    repo = MongoDBGroupRoleRepository("default")
+    repo = MongoDBGroupRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     result = await repo.revoke(str(PydanticObjectId()))
     assert result is False
 
 
 async def test_get_expired() -> None:
-    repo = MongoDBGroupRoleRepository("default")
+    repo = MongoDBGroupRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     now = time.time()
     await repo.create(
         GroupRole(
@@ -109,7 +128,9 @@ async def test_get_expired() -> None:
 
 
 async def test_find_assignment_without_tenant_is_project_wide_only() -> None:
-    repo = MongoDBGroupRoleRepository("default")
+    repo = MongoDBGroupRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
     group_id, role_id = PydanticObjectId(), PydanticObjectId()
     await repo.create(
         GroupRole(

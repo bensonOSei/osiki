@@ -55,7 +55,12 @@ user holds `docs:read` with condition `"rule"`, and the request reads
 ```
 Snapshot        {environment_id: string, version: int,
                  roles: [RoleEntry], conditions: {key: Rule},
-                 constraints: [ConstraintEntry]}
+                 constraints: [ConstraintEntry],
+                 endpoints: [EndpointEntry], settings: EnvironmentSettings}
+EndpointEntry   {method, path, permission: "res:act"|null, record_type,
+                 record_id_param, public: bool,
+                 on_unavailable: "deny"|"allow"|null}   (not used by decide)
+EnvironmentSettings {unmapped: "deny"|"allow"}          (not used by decide)
 RoleEntry       {id, name, parent_id: string|null, grants: [GrantEntry]}
 GrantEntry      {permission: "resource:action", condition: key|null}
 ConstraintEntry {id, name, type, config: object}      (not used by decide)
@@ -69,9 +74,13 @@ DecisionRequest {resource, action, scope: {string: string},
 Decision        {allowed: bool, matched_permission: string|null,
                  matched_via: "direct"|"group"|null, condition: key|null,
                  denial_reason: "no_permission"|"not_tenant_member"|
-                                "condition_failed"|"record_required"|null}
+                                "condition_failed"|"record_required"|
+                                "unknown_user"|null}
 FilterResult    {mode: "all"|"none"|"filter", filter: FilterNode|null}
 ```
+
+`decide` never returns `unknown_user`: callers return it when the user's bundle
+is `null`, matching the server's `/authorization/check`.
 
 A denial always has `matched_permission`, `matched_via` and `condition` set to
 `null`. An unconditional allow has `condition: null`. Readers must ignore
