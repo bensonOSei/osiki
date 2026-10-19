@@ -10,9 +10,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from osiki_sdk._decision.models import EndpointEntry, Snapshot
+from osiki_sdk._decision.models import Decision, EndpointEntry, Snapshot
 from osiki_sdk.client import EngineUnavailable
 from osiki_sdk.osiki import Osiki
+from osiki_sdk.records import to_record
 from osiki_sdk.routes import Matched, NoMatch, match_route
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,14 @@ def _unauthenticated() -> Response:
 
 class _UnresolvedError(Exception):
     """A resolver raised or returned no usable value."""
+
+
+class _Halt(Exception):  # noqa: N818
+    """Ends the request with ``response`` (``None`` calls the app)."""
+
+    def __init__(self, response: Response | None) -> None:
+        super().__init__()
+        self.response = response
 
 
 async def _resolve(resolver: Callable[[Request], Any], request: Request) -> Any:
@@ -186,47 +195,24 @@ class OsikiGuard:
                 logger.info("osiki resolver raised; answering 401: %r", exc)
             return _unauthenticated()
 
-        # 10. The record, through the registered loader.
-        record = None
-        if entry.record_type is not None:
-            loader = osiki.get_loader(entry.record_type)
-            record_id = params.get(entry.record_id_param or "")
-            if loader is None or record_id is None:
-                if entry.record_type not in self._warned_loaders:
-                    self._warned_loaders.add(entry.record_type)
-                    logger.error(
-                        "osiki has no loader for record type %r or no path "
-                        "parameter %r on %s %s",
-                        entry.record_type,
-                        entry.record_id_param,
-                        entry.method,
-                        entry.path,
-                    )
-                return _misconfigured()
-            try:
-                record = await loader(record_id)
-            except Exception:
-                logger.exception(
-                    "osiki loader for %r raised; answering 503", entry.record_type
-                )
-                return _unavailable()
-            if record is None:
-                return _json(404, {"detail": "not found"})
-            scope.setdefault("state", {})["osiki_record"] = record
-
-        # 11. Decide locally (a missing bundle is "unknown_user").
+        # 10. Decide before touching the record: a caller the first answer
+        # already denies never reaches the loader (no existence oracle, no
+        # query on their behalf). Only "record_required" needs the record.
         resource, _, action = entry.permission.partition(":")
-        started = time.perf_counter()
         try:
-            decision = await osiki.check(
-                user_id, resource, action, tenant=tenant, record=record
+            decision, latency_ms = await self._decide(
+                user_id, resource, action, tenant, None, lookup_method, entry
             )
-        except EngineUnavailable as exc:
-            # The engine is down and this user's bundle is not cached: no
-            # decision was made, so nothing is logged.
-            logger.warning("osiki could not fetch a bundle: %r", exc)
-            return self._when_unavailable(lookup_method, entry)
-        latency_ms = (time.perf_counter() - started) * 1000
+            needs_record = decision.denial_reason == "record_required"
+            # 11. The record, through the registered loader.
+            if entry.record_type is not None and (decision.allowed or needs_record):
+                record = await self._load(entry, params, scope)
+                if needs_record:
+                    decision, latency_ms = await self._decide(
+                        user_id, resource, action, tenant, record, lookup_method, entry
+                    )
+        except _Halt as halt:
+            return halt.response
 
         # 12. Log the decision; the batcher never blocks.
         osiki._batcher.record(
@@ -246,3 +232,67 @@ class OsikiGuard:
         if decision.allowed:
             return None
         return _forbidden(decision.denial_reason or "no_permission")
+
+    async def _decide(
+        self,
+        user_id: str,
+        resource: str,
+        action: str,
+        tenant: str | None,
+        record: dict[str, Any] | None,
+        lookup_method: str,
+        entry: EndpointEntry,
+    ) -> tuple[Decision, float]:
+        """Decide locally (a missing bundle is "unknown_user").
+
+        Returns the decision and its latency in ms. When the bundle cannot be
+        fetched, halts with the failure mode's answer (``None`` lets the
+        request through undecided and unlogged).
+        """
+        started = time.perf_counter()
+        try:
+            decision = await self.osiki.check(
+                user_id, resource, action, tenant=tenant, record=record
+            )
+        except EngineUnavailable as exc:
+            # The engine is down and this user's bundle is not cached: no
+            # decision was made, so nothing is logged.
+            logger.warning("osiki could not fetch a bundle: %r", exc)
+            raise _Halt(self._when_unavailable(lookup_method, entry)) from exc
+        return decision, (time.perf_counter() - started) * 1000
+
+    async def _load(
+        self, entry: EndpointEntry, params: dict[str, str], scope: Scope
+    ) -> dict[str, Any]:
+        """Load the mapping's record and share it on ``request.state``.
+
+        Returns the converted record, or halts with the response that ends
+        the request.
+        """
+        record_type = entry.record_type or ""
+        loader = self.osiki.get_loader(record_type)
+        record_id = params.get(entry.record_id_param or "")
+        if loader is None or record_id is None:
+            if record_type not in self._warned_loaders:
+                self._warned_loaders.add(record_type)
+                logger.error(
+                    "osiki has no loader for record type %r or no path "
+                    "parameter %r on %s %s",
+                    record_type,
+                    entry.record_id_param,
+                    entry.method,
+                    entry.path,
+                )
+            raise _Halt(_misconfigured())
+        try:
+            record = await loader(record_id)
+        except Exception as exc:
+            logger.exception("osiki loader for %r raised; answering 503", record_type)
+            raise _Halt(_unavailable()) from exc
+        if record is None:
+            raise _Halt(_json(404, {"detail": "not found"}))
+        # Converted even when the first decision already allowed, so an
+        # unconvertible record fails closed on every path.
+        converted = to_record(record)
+        scope.setdefault("state", {})["osiki_record"] = record
+        return converted

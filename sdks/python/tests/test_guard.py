@@ -5,7 +5,14 @@ from typing import Any
 
 import httpx
 import pytest
-from conftest import OWN_TEAM, FakeClient, ManualClock, make_osiki, make_snapshot
+from conftest import (
+    OWN_TEAM,
+    FakeClient,
+    ManualClock,
+    make_bundle,
+    make_osiki,
+    make_snapshot,
+)
 from fastapi import APIRouter, FastAPI, Request
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
@@ -60,7 +67,12 @@ def guard_snapshot(
                     {"permission": "invoices:delete", "condition": "own_team"},
                     {"permission": "orders:read"},
                 ],
-            }
+            },
+            {
+                "id": "admin",
+                "name": "admin",
+                "grants": [{"permission": "invoices:delete"}],
+            },
         ],
         conditions={"own_team": OWN_TEAM},
         endpoints=ENDPOINTS if endpoints is None else endpoints,
@@ -498,17 +510,118 @@ async def test_record_rule_allows_own_team_denies_other(env: Env) -> None:
     assert denied["denial_reason"] == "condition_failed"
 
 
-async def test_loader_none_404(env: Env) -> None:
+async def test_loader_none_404_for_a_conditional_grant(env: Env) -> None:
+    # kofi's delete grant is conditional: the first decision needs the record.
     response = await env.http.delete("/invoices/missing", headers=bearer())
     assert response.status_code == 404 and response.json() == {"detail": "not found"}
+    assert env.loads == ["missing"]
     assert env.logged() == []
 
 
-async def test_loader_raises_503(env: Env, caplog: pytest.LogCaptureFixture) -> None:
+async def test_loader_raises_503_for_a_conditional_grant(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
     with caplog.at_level(logging.ERROR, logger="osiki_sdk.guard"):
         response = await env.http.delete("/invoices/explode", headers=bearer())
     assert response.status_code == 503 and response.json() == UNAVAILABLE
+    assert env.loads == ["explode"]
     assert "loader" in caplog.text
+
+
+async def test_zero_grant_caller_denied_before_the_loader_runs(env: Env) -> None:
+    env.fake.bundles["zero"] = make_bundle("zero", role="nobody")
+    existing = await env.http.delete("/invoices/1", headers=bearer("zero"))
+    missing = await env.http.delete("/invoices/missing", headers=bearer("zero"))
+    # The same answer for an existing and a missing id: no existence oracle.
+    for response in (existing, missing):
+        assert response.status_code == 403
+        assert response.json() == forbidden("no_permission")
+    assert env.loads == []
+    logged = env.logged()
+    assert [e["denial_reason"] for e in logged] == ["no_permission"] * 2
+    assert all(e["user_id"] == "zero" and not e["allowed"] for e in logged)
+
+
+async def test_unknown_user_denied_before_the_loader_runs(env: Env) -> None:
+    existing = await env.http.delete("/invoices/1", headers=bearer("ghost"))
+    missing = await env.http.delete("/invoices/missing", headers=bearer("ghost"))
+    for response in (existing, missing):
+        assert response.status_code == 403
+        assert response.json() == forbidden("unknown_user")
+    assert env.loads == []
+    assert [e["denial_reason"] for e in env.logged()] == ["unknown_user"] * 2
+
+
+async def test_unconditional_grant_still_loads_and_shares_the_record(
+    env: Env,
+) -> None:
+    env.fake.bundles["boss"] = make_bundle("boss", role="admin")
+    response = await env.http.delete("/invoices/2", headers=bearer("boss"))
+    assert response.status_code == 200 and response.json()["same"] is True
+    assert env.loads == ["2"]
+    assert env.app.state.seen == [INVOICES["2"]]
+    [entry] = env.logged()
+    assert entry["allowed"] and entry["matched_permission"] == "invoices:delete"
+    assert entry["condition"] is None
+    missing = await env.http.delete("/invoices/missing", headers=bearer("boss"))
+    assert missing.status_code == 404
+    broken = await env.http.delete("/invoices/explode", headers=bearer("boss"))
+    assert broken.status_code == 503
+
+
+async def test_outage_on_the_record_decision_follows_the_failure_mode(
+    fake: FakeClient, clock: ManualClock
+) -> None:
+    fake.snapshot = guard_snapshot()
+    env = make_env(fake, clock, with_loader=False)
+
+    @env.osiki.loader("invoice")
+    async def load_invoice(invoice_id: str) -> Any:
+        # A revocation lands while loading and the engine then goes down: the
+        # second decision cannot fetch the bundle again.
+        env.osiki._store.invalidate_user("kofi")
+        fake.fail.add("get_bundle")
+        return INVOICES[invoice_id]
+
+    async with env.http:
+        response = await env.http.delete("/invoices/1", headers=bearer())
+    assert response.status_code == 503 and response.json() == UNAVAILABLE
+    assert env.logged() == []
+    assert env.app.state.seen == []
+    await env.osiki.aclose()
+
+
+async def test_zero_grant_caller_denied_even_without_a_loader(
+    fake: FakeClient, clock: ManualClock
+) -> None:
+    fake.snapshot = guard_snapshot()
+    fake.bundles["zero"] = make_bundle("zero", role="nobody")
+    env = make_env(fake, clock, with_loader=False)
+    async with env.http:
+        response = await env.http.delete("/invoices/1", headers=bearer("zero"))
+    assert response.status_code == 403 and response.json() == forbidden("no_permission")
+    await env.osiki.aclose()
+
+
+async def test_record_required_without_a_record_type_is_denied(
+    fake: FakeClient, clock: ManualClock
+) -> None:
+    endpoints = [
+        {
+            "method": "DELETE",
+            "path": "/invoices/{invoice_id}",
+            "permission": "invoices:delete",
+        }
+    ]
+    fake.snapshot = guard_snapshot(endpoints=endpoints)
+    env = make_env(fake, clock)
+    async with env.http:
+        response = await env.http.delete("/invoices/1", headers=bearer())
+    assert response.status_code == 403
+    assert response.json() == forbidden("record_required")
+    assert env.loads == []
+    assert [e["denial_reason"] for e in env.logged()] == ["record_required"]
+    await env.osiki.aclose()
 
 
 async def test_missing_loader_503(
@@ -687,6 +800,7 @@ async def test_bundle_fetch_unavailable_write_without_policy_503(
     async with env.http:
         response = await env.http.delete("/invoices/1", headers=bearer())
         assert response.status_code == 503 and response.json() == UNAVAILABLE
+    assert env.loads == []
     await env.osiki.aclose()
 
 

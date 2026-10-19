@@ -160,6 +160,13 @@ async def load_invoice(invoice_id: str) -> Invoice | None:
     return await db.get(Invoice, int(invoice_id))
 ```
 
+The guard decides **before** it loads. A caller with no matching grant, or
+unknown to Osiki, is denied (and logged) without the loader running, so they
+get the same 403 for an id that exists and one that does not. The loader runs
+only when the caller holds a matching grant: an unconditional grant still loads
+the record (for the handler), and a conditional one is decided again against
+it.
+
 - `None` gives `404 {"detail":"not found"}`.
 - An exception gives `503 {"detail":"authorization unavailable"}`.
 - A missing loader gives `503 {"detail":"authorization misconfigured"}`,
