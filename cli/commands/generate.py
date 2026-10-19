@@ -10,7 +10,7 @@ from cli.generators.service import generate_service
 app = typer.Typer(no_args_is_help=True, rich_markup_mode=None)
 
 
-@app.command("model")  # type: ignore[misc]
+@app.command("model")
 def model(
     name: Annotated[
         str, typer.Argument(help="Model name in PascalCase (e.g., Product)")
@@ -32,7 +32,7 @@ def model(
     generate_model(name, fields, force)
 
 
-@app.command("repository")  # type: ignore[misc]
+@app.command("repository")
 def repository(
     name: Annotated[
         str, typer.Argument(help="Entity name in PascalCase (e.g., Product)")
@@ -46,7 +46,7 @@ def repository(
     generate_repository(name, force)
 
 
-@app.command("service")  # type: ignore[misc]
+@app.command("service")
 def service(
     name: Annotated[
         str, typer.Argument(help="Service name in PascalCase (e.g., ProductCatalog)")
@@ -60,7 +60,7 @@ def service(
     generate_service(name, force)
 
 
-@app.command("route")  # type: ignore[misc]
+@app.command("route")
 def route(
     name: Annotated[str, typer.Argument(help="Route name (e.g., products)")],
     force: Annotated[
@@ -72,7 +72,7 @@ def route(
     generate_route(name, force)
 
 
-@app.command("all")  # type: ignore[misc]
+@app.command("all")
 def all_scaffolds(
     name: Annotated[
         str, typer.Argument(help="Entity name in PascalCase (e.g., Product)")
