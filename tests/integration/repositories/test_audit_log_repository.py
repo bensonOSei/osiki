@@ -119,3 +119,13 @@ async def test_list_is_environment_scoped() -> None:
     await MongoDBAuditLogRepository("env-a").create(_log("t1", 1.0))
     assert await MongoDBAuditLogRepository("env-b").list("t1", 0, 10) == []
     assert await MongoDBAuditLogRepository("env-b").list(None, 0, 10) == []
+
+
+async def test_count_matches_list_filters() -> None:
+    repo = MongoDBAuditLogRepository("count-env")
+    for tenant, ts in (("t1", 1.0), ("t2", 2.0), ("t1", 3.0)):
+        await repo.create(_log(tenant, ts))
+    await MongoDBAuditLogRepository("count-other").create(_log("t1", 4.0))
+    assert await repo.count("t1") == 2
+    assert await repo.count(None) == 3
+    assert await repo.count("nobody") == 0

@@ -791,6 +791,11 @@ class MockAuditLogRepository(_EnvironmentBound[AuditLog], BaseAuditLogRepository
     async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AuditLog]:
         return self._newest_first()[skip : skip + limit]
 
+    async def count(
+        self, tenant_id: str | None, session: AsyncClientSession | None = None
+    ) -> int:
+        return sum(1 for a in self._scoped() if tenant_id in (None, a.tenant_id))
+
     async def list(
         self,
         tenant_id: str | None,

@@ -30,6 +30,12 @@ class BaseAuditLogRepository(ABC):
     async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AuditLog]: ...
 
     @abstractmethod
+    async def count(
+        self, tenant_id: str | None, session: AsyncClientSession | None = None
+    ) -> int:
+        """Entries ``list`` ranges over; ``tenant_id=None`` counts every entry."""
+
+    @abstractmethod
     async def list(
         self,
         tenant_id: str | None,

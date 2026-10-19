@@ -19,8 +19,8 @@ async def list_audit_logs(
     skip = (page - 1) * page_size
     logs = await audit_repo.list(tenant_id=tenant_id, skip=skip, limit=page_size)
     items = [AuditLogRead.from_model(log) for log in logs]
-    # No count method on the repository yet; estimate like the other list routes.
-    return PaginatedResponse.create(items, len(items) + skip, page, page_size)
+    total = await audit_repo.count(tenant_id=tenant_id)
+    return PaginatedResponse.create(items, total, page, page_size)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

@@ -80,6 +80,16 @@ def test_list_paginates(client: TestClient, seed_audit: MockAuditLogRepository) 
     assert (body["page"], body["page_size"]) == (2, 2)
 
 
+def test_list_total_counts_all_pages(
+    client: TestClient, seed_audit: MockAuditLogRepository
+) -> None:
+    body = client.get(URL, params={"page": 1, "page_size": 2}).json()
+    assert len(body["items"]) == 2
+    assert (body["total"], body["total_pages"]) == (3, 2)
+    scoped = client.get(URL, params={"tenant_id": "t1", "page_size": 1}).json()
+    assert (scoped["total"], scoped["total_pages"]) == (2, 2)
+
+
 def test_list_is_environment_scoped(
     client: TestClient, seed_audit: MockAuditLogRepository
 ) -> None:
