@@ -167,10 +167,10 @@ def _create_test_app() -> FastAPI:
     async def _trigger_internal_error() -> None:
         raise RuntimeError("unexpected failure")
 
-    test_app.dependency_overrides[get_user_repository] = _repo_provider(
+    test_app.dependency_overrides[get_user_repository] = _config_repo_provider(
         _user_repos, MockUserRepository
     )
-    test_app.dependency_overrides[get_group_repository] = _repo_provider(
+    test_app.dependency_overrides[get_group_repository] = _config_repo_provider(
         _group_repos, MockGroupRepository
     )
     test_app.dependency_overrides[get_role_repository] = _config_repo_provider(
@@ -179,13 +179,13 @@ def _create_test_app() -> FastAPI:
     test_app.dependency_overrides[get_permission_repository] = _config_repo_provider(
         _permission_repos, MockPermissionRepository
     )
-    test_app.dependency_overrides[get_user_role_repository] = _repo_provider(
+    test_app.dependency_overrides[get_user_role_repository] = _config_repo_provider(
         _user_role_repos, MockUserRoleRepository
     )
-    test_app.dependency_overrides[get_user_group_repository] = _repo_provider(
+    test_app.dependency_overrides[get_user_group_repository] = _config_repo_provider(
         _user_group_repos, MockUserGroupRepository
     )
-    test_app.dependency_overrides[get_group_role_repository] = _repo_provider(
+    test_app.dependency_overrides[get_group_role_repository] = _config_repo_provider(
         _group_role_repos, MockGroupRoleRepository
     )
     test_app.dependency_overrides[get_constraint_repository] = _config_repo_provider(
@@ -197,10 +197,10 @@ def _create_test_app() -> FastAPI:
     test_app.dependency_overrides[get_access_log_repository] = _repo_provider(
         _access_log_repos, MockAccessLogRepository
     )
-    test_app.dependency_overrides[get_tenant_repository] = _repo_provider(
+    test_app.dependency_overrides[get_tenant_repository] = _config_repo_provider(
         _tenant_repos, MockTenantRepository
     )
-    test_app.dependency_overrides[get_tenant_member_repository] = _repo_provider(
+    test_app.dependency_overrides[get_tenant_member_repository] = _config_repo_provider(
         _tenant_member_repos, MockTenantMemberRepository
     )
     test_app.dependency_overrides[get_environment_state_repository] = _provide_state
