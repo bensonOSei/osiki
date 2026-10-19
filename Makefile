@@ -1,4 +1,4 @@
-.PHONY: help install dev up down build logs shell lint format typecheck pre-commit clean test test-unit test-integration test-cov
+.PHONY: help install dev up down build logs shell lint format typecheck pre-commit clean test test-unit test-integration test-cov sdk-sync sdk-test
 
 help:
 	@echo "Available commands:"
@@ -18,6 +18,8 @@ help:
 	@echo "  make test-unit        - Run unit tests only"
 	@echo "  make test-integration - Run integration tests only"
 	@echo "  make test-cov         - Run tests with coverage report"
+	@echo "  make sdk-sync         - Regenerate the SDK's vendored decision core"
+	@echo "  make sdk-test         - Run the Python SDK checks (needs poetry install in sdks/python)"
 
 install:
 	poetry install
@@ -70,3 +72,10 @@ test-integration:
 
 test-cov:
 	poetry run pytest --cov=osiki --cov-report=term-missing
+
+sdk-sync:
+	python scripts/sync_sdk_decision.py
+
+sdk-test:
+	python scripts/sync_sdk_decision.py --check
+	cd sdks/python && poetry run black --check . && poetry run ruff check . && poetry run mypy src && poetry run pytest --cov=osiki_sdk
