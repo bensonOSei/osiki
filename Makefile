@@ -1,4 +1,4 @@
-.PHONY: help install dev up down build logs shell lint format typecheck pre-commit clean test test-unit test-integration test-cov sdk-sync sdk-test
+.PHONY: help install dev up down build logs shell lint format typecheck pre-commit clean test test-unit test-integration test-cov sdk-sync sdk-test docker-smoke
 
 help:
 	@echo "Available commands:"
@@ -19,6 +19,7 @@ help:
 	@echo "  make test-integration - Run integration tests only"
 	@echo "  make test-cov         - Run tests with coverage report"
 	@echo "  make sdk-sync         - Regenerate the SDK's vendored decision core"
+	@echo "  make docker-smoke     - Build the image and check it serves /health"
 	@echo "  make sdk-test         - Run the Python SDK checks (needs poetry install in sdks/python)"
 
 install:
@@ -79,3 +80,6 @@ sdk-sync:
 sdk-test:
 	python scripts/sync_sdk_decision.py --check
 	cd sdks/python && poetry run black --check . && poetry run ruff check . && poetry run mypy src && poetry run pytest --cov=osiki_sdk
+
+docker-smoke:
+	bash scripts/docker-smoke.sh
