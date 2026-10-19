@@ -8,6 +8,7 @@ from beanie import PydanticObjectId
 from osiki.decision.decide import decide
 from osiki.decision.models import (
     ConstraintEntry,
+    EndpointEntry,
     EnvironmentSettings,
     GrantEntry,
     RoleEntry,
@@ -18,6 +19,7 @@ from osiki.services.snapshot_builder import SnapshotBuilder, SnapshotCache
 from tests.mocks import (
     MockConditionRepository,
     MockConstraintRepository,
+    MockEndpointRepository,
     MockEnvironmentStateRepository,
     MockPermissionRepository,
     MockRoleRepository,
@@ -40,6 +42,7 @@ class Env:
         self.permissions = MockPermissionRepository(environment_id, self.state)
         self.conditions = MockConditionRepository(environment_id, self.state)
         self.constraints = MockConstraintRepository(environment_id, self.state)
+        self.endpoints = MockEndpointRepository(environment_id, self.state)
         self.cache = SnapshotCache()
         self.environment_id = environment_id
 
@@ -51,6 +54,7 @@ class Env:
             self.permissions,
             self.conditions,
             self.constraints,
+            self.endpoints,
             cache=self.cache,
         )
 
@@ -265,3 +269,18 @@ async def test_snapshot_cache_get_and_put() -> None:
     cache.put(snapshot)
 
     assert cache.get("default") is snapshot
+
+
+async def test_mappings_render_into_the_snapshot_sorted(env: Env) -> None:
+    for method, path in [("POST", "/b"), ("GET", "/b"), ("GET", "/a")]:
+        await env.endpoints.upsert_mapping(
+            EndpointEntry(method=method, path=path, permission="x:y")
+        )
+
+    snapshot = await env.builder().build()
+
+    assert [(e.path, e.method) for e in snapshot.endpoints] == [
+        ("/a", "GET"),
+        ("/b", "GET"),
+        ("/b", "POST"),
+    ]

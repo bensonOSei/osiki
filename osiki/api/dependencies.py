@@ -22,6 +22,12 @@ from osiki.repositories.constraints.base_constraint_repository import (
 from osiki.repositories.constraints.mongodb_constraint_repository import (
     MongoDBConstraintRepository,
 )
+from osiki.repositories.endpoints.base_endpoint_repository import (
+    BaseEndpointRepository,
+)
+from osiki.repositories.endpoints.mongodb_endpoint_repository import (
+    MongoDBEndpointRepository,
+)
 from osiki.repositories.environment_state.base_environment_state_repository import (
     BaseEnvironmentStateRepository,
 )
@@ -150,6 +156,12 @@ def get_condition_repository(
     return MongoDBConditionRepository(environment_id, state)
 
 
+def get_endpoint_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseEndpointRepository:
+    return MongoDBEndpointRepository(environment_id, state)
+
+
 def get_access_log_repository(environment_id: EnvironmentId) -> BaseAccessLogRepository:
     return MongoDBAccessLogRepository(environment_id)
 
@@ -200,6 +212,9 @@ def get_snapshot_builder(
     constraint_repository: Annotated[
         BaseConstraintRepository, Depends(get_constraint_repository)
     ],
+    endpoint_repository: Annotated[
+        BaseEndpointRepository, Depends(get_endpoint_repository)
+    ],
     snapshot_cache: Annotated[SnapshotCache, Depends(get_snapshot_cache)],
 ) -> SnapshotBuilder:
     return SnapshotBuilder(
@@ -209,6 +224,7 @@ def get_snapshot_builder(
         permission_repository,
         condition_repository,
         constraint_repository,
+        endpoint_repository,
         cache=snapshot_cache,
     )
 
@@ -272,6 +288,7 @@ ConstraintRepository = Annotated[
 ConditionRepository = Annotated[
     BaseConditionRepository, Depends(get_condition_repository)
 ]
+EndpointRepository = Annotated[BaseEndpointRepository, Depends(get_endpoint_repository)]
 AccessLogRepository = Annotated[
     BaseAccessLogRepository, Depends(get_access_log_repository)
 ]

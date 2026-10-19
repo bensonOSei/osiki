@@ -37,6 +37,20 @@ class MongoDBEnvironmentStateRepository(BaseEnvironmentStateRepository):
             return EnvironmentSettings()
         return EnvironmentSettings(unmapped=state.unmapped_policy)
 
+    async def update_settings(
+        self, settings: EnvironmentSettings
+    ) -> EnvironmentSettings:
+        # One atomic update: the setting and the version bump never diverge.
+        await EnvironmentState.get_pymongo_collection().update_one(
+            {"environment_id": self.environment_id},
+            {
+                "$set": {"unmapped_policy": settings.unmapped},
+                "$inc": {"config_version": 1},
+            },
+            upsert=True,
+        )
+        return settings
+
     async def _bump(self, field: str) -> int:
         # One atomic $inc with upsert: concurrent writers never lose a bump.
         doc = await EnvironmentState.get_pymongo_collection().find_one_and_update(

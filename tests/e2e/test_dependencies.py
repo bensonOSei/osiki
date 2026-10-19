@@ -10,6 +10,7 @@ from osiki.api.dependencies import (
     get_condition_repository,
     get_constraint_repository,
     get_constraint_validator,
+    get_endpoint_repository,
     get_environment_state_repository,
     get_group_repository,
     get_group_role_repository,
@@ -153,6 +154,7 @@ def test_get_authorization_service() -> None:
         get_permission_repository("default", state),
         get_condition_repository("default", state),
         get_constraint_repository("default", state),
+        get_endpoint_repository("default", state),
         get_snapshot_cache(),
     )
     bundle_builder = get_bundle_builder(

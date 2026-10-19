@@ -11,6 +11,7 @@ from osiki.models.access_log import AccessLog
 from osiki.models.audit_log import AuditLog
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint
+from osiki.models.endpoint import DiscoveredEndpoint, EndpointMapping
 from osiki.models.environment_state import EnvironmentState
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
@@ -51,6 +52,7 @@ from osiki.services.snapshot_builder.snapshot_builder import (
 from tests.mocks import (
     MockConditionRepository,
     MockConstraintRepository,
+    MockEndpointRepository,
     MockEnvironmentStateRepository,
     MockGroupRepository,
     MockGroupRoleRepository,
@@ -153,6 +155,8 @@ async def init_db(mongo_client: AsyncMongoMockClient) -> None:
             Tenant,
             TenantMember,
             EnvironmentState,
+            DiscoveredEndpoint,
+            EndpointMapping,
         ],
     )
     # mongomock's create_indexes() drops partialFilterExpression, which would turn
@@ -229,6 +233,13 @@ def mock_environment_state_repository() -> MockEnvironmentStateRepository:
 
 
 @pytest.fixture
+def mock_endpoint_repository(
+    mock_environment_state_repository,
+) -> MockEndpointRepository:
+    return MockEndpointRepository("default", mock_environment_state_repository)
+
+
+@pytest.fixture
 def mock_role_repository(mock_environment_state_repository) -> BaseRoleRepository:
     return MockRoleRepository("default", mock_environment_state_repository)
 
@@ -281,6 +292,7 @@ def snapshot_builder(
     mock_permission_repository,
     mock_condition_repository,
     mock_constraint_repository,
+    mock_endpoint_repository,
 ) -> SnapshotBuilder:
     return SnapshotBuilder(
         "default",
@@ -289,6 +301,7 @@ def snapshot_builder(
         mock_permission_repository,
         mock_condition_repository,
         mock_constraint_repository,
+        mock_endpoint_repository,
         cache=SnapshotCache(),
     )
 

@@ -2,11 +2,12 @@ import time
 
 from beanie import PydanticObjectId
 
-from osiki.decision.models import EnvironmentSettings
+from osiki.decision.models import EndpointEntry, EnvironmentSettings
 from osiki.models.access_log import AccessLog
 from osiki.models.base import AttributeValue, EnvironmentMixin
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintType
+from osiki.models.endpoint import DiscoveredEndpoint, EndpointMapping
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
@@ -24,6 +25,9 @@ from osiki.repositories.conditions.base_condition_repository import (
 )
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
+)
+from osiki.repositories.endpoints.base_endpoint_repository import (
+    BaseEndpointRepository,
 )
 from osiki.repositories.environment_state.base_environment_state_repository import (
     BaseEnvironmentStateRepository,
@@ -122,6 +126,65 @@ class MockEnvironmentStateRepository(BaseEnvironmentStateRepository):
 
     async def get_settings(self) -> EnvironmentSettings:
         return self.settings
+
+    async def update_settings(
+        self, settings: EnvironmentSettings
+    ) -> EnvironmentSettings:
+        self.settings = settings
+        await self.bump_config_version()
+        return settings
+
+
+class MockEndpointRepository(_ConfigBound[EndpointMapping], BaseEndpointRepository):
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
+        super().__init__(environment_id, state)
+        self._discovered: dict[tuple[str, str, str], DiscoveredEndpoint] = {}
+
+    async def record_discovered(
+        self, endpoints: list[tuple[str, str]], now: float
+    ) -> int:
+        unique = list(dict.fromkeys(endpoints))
+        for method, path in unique:
+            key = (self.environment_id, method, path)
+            found = self._discovered.get(key)
+            if found is None:
+                self._discovered[key] = DiscoveredEndpoint(
+                    environment_id=self.environment_id,
+                    method=method,
+                    path=path,
+                    first_seen=now,
+                    last_seen=now,
+                )
+            else:
+                found.last_seen = now
+        return len(unique)
+
+    async def list_discovered(self) -> list[DiscoveredEndpoint]:
+        return [
+            d
+            for d in self._discovered.values()
+            if d.environment_id == self.environment_id
+        ]
+
+    async def upsert_mapping(self, entry: EndpointEntry) -> EndpointMapping:
+        mapping = EndpointMapping(
+            environment_id=self.environment_id, **entry.model_dump()
+        )
+        self._store(f"{entry.method} {entry.path}", mapping)
+        await self._bump()
+        return mapping
+
+    async def delete_mapping(self, method: str, path: str) -> bool:
+        if self._get(f"{method} {path}") is None:
+            return False
+        del self._data[f"{method} {path}"]
+        await self._bump()
+        return True
+
+    async def list_mappings(self) -> list[EndpointMapping]:
+        return self._scoped()
 
 
 def _grant(permission_id: str, condition_id: str | None) -> Grant:

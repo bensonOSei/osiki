@@ -23,3 +23,9 @@ class BaseEnvironmentStateRepository(ABC):
     @abstractmethod
     async def get_settings(self) -> EnvironmentSettings:
         """The environment's settings; defaults when none are stored."""
+
+    @abstractmethod
+    async def update_settings(
+        self, settings: EnvironmentSettings
+    ) -> EnvironmentSettings:
+        """Store the settings and bump the config version."""
