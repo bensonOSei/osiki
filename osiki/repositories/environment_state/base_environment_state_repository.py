@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 
+from osiki.decision.models import EnvironmentSettings
+
 
 class BaseEnvironmentStateRepository(ABC):
     @abstractmethod
@@ -9,3 +11,15 @@ class BaseEnvironmentStateRepository(ABC):
     @abstractmethod
     async def bump_config_version(self) -> int:
         """Atomically increment the config version and return the new value."""
+
+    @abstractmethod
+    async def get_assignments_version(self) -> int:
+        """The environment's assignments version; 0 when never bumped."""
+
+    @abstractmethod
+    async def bump_assignments_version(self) -> int:
+        """Atomically increment the assignments version; return the new value."""
+
+    @abstractmethod
+    async def get_settings(self) -> EnvironmentSettings:
+        """The environment's settings; defaults when none are stored."""

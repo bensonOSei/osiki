@@ -4,12 +4,18 @@ from beanie import PydanticObjectId
 from loguru import logger
 
 from osiki.models.group import Group
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.groups.base_group_repository import BaseGroupRepository
 
 
 class MongoDBGroupRepository(BaseGroupRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, group: Group) -> Group:
         group.environment_id = self.environment_id
@@ -53,6 +59,7 @@ class MongoDBGroupRepository(BaseGroupRepository):
         group.is_active = False
         group.updated_at = time.time()
         await group.save()
+        await self._state.bump_assignments_version()
         logger.info("Group deactivated", group_id=group_id)
         return True
 
@@ -66,6 +73,7 @@ class MongoDBGroupRepository(BaseGroupRepository):
         group.is_active = True
         group.updated_at = time.time()
         await group.save()
+        await self._state.bump_assignments_version()
         logger.info("Group reactivated", group_id=group_id)
         return True
 

@@ -2,6 +2,7 @@ import time
 
 from beanie import PydanticObjectId
 
+from osiki.decision.models import EnvironmentSettings
 from osiki.models.access_log import AccessLog
 from osiki.models.base import AttributeValue, EnvironmentMixin
 from osiki.models.condition import Condition
@@ -89,6 +90,8 @@ class MockEnvironmentStateRepository(BaseEnvironmentStateRepository):
     def __init__(self, environment_id: str) -> None:
         self.environment_id = environment_id
         self._version = 0
+        self._assignments_version = 0
+        self.settings = EnvironmentSettings()
 
     async def get_config_version(self) -> int:
         return self._version
@@ -96,6 +99,16 @@ class MockEnvironmentStateRepository(BaseEnvironmentStateRepository):
     async def bump_config_version(self) -> int:
         self._version += 1
         return self._version
+
+    async def get_assignments_version(self) -> int:
+        return self._assignments_version
+
+    async def bump_assignments_version(self) -> int:
+        self._assignments_version += 1
+        return self._assignments_version
+
+    async def get_settings(self) -> EnvironmentSettings:
+        return self.settings
 
 
 def _grant(permission_id: str, condition_id: str | None) -> Grant:

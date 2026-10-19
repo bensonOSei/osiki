@@ -93,6 +93,26 @@ def test_snapshot_version_endpoint_tracks_writes(client: TestClient) -> None:
     assert client.get(f"{API}/snapshot").json()["version"] == after
 
 
+def test_snapshot_version_endpoint_returns_both(client: TestClient) -> None:
+    assert client.get(f"{API}/snapshot/version").json() == {
+        "version": 0,
+        "assignments_version": 0,
+    }
+    _role(client)
+
+    body = client.get(f"{API}/snapshot/version").json()
+
+    assert body["version"] > 0
+    assert body["assignments_version"] == 0
+
+
+def test_snapshot_includes_default_settings(client: TestClient) -> None:
+    body = client.get(f"{API}/snapshot").json()
+
+    assert body["settings"] == {"unmapped": "deny"}
+    assert body["endpoints"] == []
+
+
 def test_bundle_404_unknown_user(client: TestClient) -> None:
     response = client.get(f"{API}/users/by-external/ghost/bundle")
     assert response.status_code == 404

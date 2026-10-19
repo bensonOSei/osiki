@@ -33,4 +33,7 @@ async def get_snapshot(
 
 @router.get("/version")
 async def get_snapshot_version(state: EnvironmentStateRepository) -> dict[str, int]:
-    return {"version": await state.get_config_version()}
+    return {
+        "version": await state.get_config_version(),
+        "assignments_version": await state.get_assignments_version(),
+    }

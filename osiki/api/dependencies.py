@@ -96,12 +96,16 @@ EnvironmentStateRepository = Annotated[
 ]
 
 
-def get_user_repository(environment_id: EnvironmentId) -> BaseUserRepository:
-    return MongoDBUserRepository(environment_id)
+def get_user_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseUserRepository:
+    return MongoDBUserRepository(environment_id, state)
 
 
-def get_group_repository(environment_id: EnvironmentId) -> BaseGroupRepository:
-    return MongoDBGroupRepository(environment_id)
+def get_group_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseGroupRepository:
+    return MongoDBGroupRepository(environment_id, state)
 
 
 def get_role_repository(
@@ -116,16 +120,22 @@ def get_permission_repository(
     return MongoDBPermissionRepository(environment_id, state)
 
 
-def get_user_role_repository(environment_id: EnvironmentId) -> BaseUserRoleRepository:
-    return MongoDBUserRoleRepository(environment_id)
+def get_user_role_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseUserRoleRepository:
+    return MongoDBUserRoleRepository(environment_id, state)
 
 
-def get_user_group_repository(environment_id: EnvironmentId) -> BaseUserGroupRepository:
-    return MongoDBUserGroupRepository(environment_id)
+def get_user_group_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseUserGroupRepository:
+    return MongoDBUserGroupRepository(environment_id, state)
 
 
-def get_group_role_repository(environment_id: EnvironmentId) -> BaseGroupRoleRepository:
-    return MongoDBGroupRoleRepository(environment_id)
+def get_group_role_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseGroupRoleRepository:
+    return MongoDBGroupRoleRepository(environment_id, state)
 
 
 def get_constraint_repository(
@@ -144,14 +154,16 @@ def get_access_log_repository(environment_id: EnvironmentId) -> BaseAccessLogRep
     return MongoDBAccessLogRepository(environment_id)
 
 
-def get_tenant_repository(environment_id: EnvironmentId) -> BaseTenantRepository:
-    return MongoDBTenantRepository(environment_id)
+def get_tenant_repository(
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
+) -> BaseTenantRepository:
+    return MongoDBTenantRepository(environment_id, state)
 
 
 def get_tenant_member_repository(
-    environment_id: EnvironmentId,
+    environment_id: EnvironmentId, state: EnvironmentStateRepository
 ) -> BaseTenantMemberRepository:
-    return MongoDBTenantMemberRepository(environment_id)
+    return MongoDBTenantMemberRepository(environment_id, state)
 
 
 # Service dependencies

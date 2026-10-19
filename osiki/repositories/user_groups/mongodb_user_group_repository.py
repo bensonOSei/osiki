@@ -4,18 +4,25 @@ from beanie import PydanticObjectId
 from loguru import logger
 
 from osiki.models.user_group import UserGroup
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.user_groups.base_user_group_repository import (
     BaseUserGroupRepository,
 )
 
 
 class MongoDBUserGroupRepository(BaseUserGroupRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, user_group: UserGroup) -> UserGroup:
         user_group.environment_id = self.environment_id
         await user_group.insert()
+        await self._state.bump_assignments_version()
         logger.info(
             "User added to group",
             user_group_id=str(user_group.id),
@@ -65,6 +72,7 @@ class MongoDBUserGroupRepository(BaseUserGroupRepository):
         user_group.is_active = False
         user_group.updated_at = time.time()
         await user_group.save()
+        await self._state.bump_assignments_version()
         logger.info(
             "User removed from group",
             user_group_id=user_group_id,

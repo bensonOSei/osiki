@@ -5,16 +5,23 @@ from loguru import logger
 
 from osiki.models.base import AttributeValue
 from osiki.models.user import User
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.users.base_user_repository import BaseUserRepository
 
 
 class MongoDBUserRepository(BaseUserRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, user: User) -> User:
         user.environment_id = self.environment_id
         await user.insert()
+        await self._state.bump_assignments_version()
         logger.debug("User created", user_id=str(user.id), external_id=user.external_id)
         return user
 
@@ -42,6 +49,7 @@ class MongoDBUserRepository(BaseUserRepository):
     async def update(self, user: User) -> User:
         user.updated_at = time.time()
         await user.save()
+        await self._state.bump_assignments_version()
         logger.debug("User updated", user_id=str(user.id))
         return user
 
@@ -53,6 +61,7 @@ class MongoDBUserRepository(BaseUserRepository):
         user.is_active = False
         user.updated_at = time.time()
         await user.save()
+        await self._state.bump_assignments_version()
         logger.info("User deactivated", user_id=user_id)
         return True
 
@@ -64,6 +73,7 @@ class MongoDBUserRepository(BaseUserRepository):
         user.is_active = True
         user.updated_at = time.time()
         await user.save()
+        await self._state.bump_assignments_version()
         logger.info("User reactivated", user_id=user_id)
         return True
 

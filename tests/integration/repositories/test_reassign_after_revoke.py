@@ -24,6 +24,9 @@ from osiki.models.group_role import GroupRole
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
+from osiki.repositories.environment_state.mongodb_environment_state_repository import (
+    MongoDBEnvironmentStateRepository,
+)
 from osiki.repositories.group_roles.mongodb_group_role_repository import (
     MongoDBGroupRoleRepository,
 )
@@ -48,13 +51,13 @@ ENV = "default"
 
 async def _bundle(external_id: str) -> UserBundle:
     builder = BundleBuilder(
-        MongoDBUserRepository(ENV),
-        MongoDBUserRoleRepository(ENV),
-        MongoDBUserGroupRepository(ENV),
-        MongoDBGroupRepository(ENV),
-        MongoDBGroupRoleRepository(ENV),
-        MongoDBTenantMemberRepository(ENV),
-        MongoDBTenantRepository(ENV),
+        MongoDBUserRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
+        MongoDBUserRoleRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
+        MongoDBUserGroupRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
+        MongoDBGroupRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
+        MongoDBGroupRoleRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
+        MongoDBTenantMemberRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
+        MongoDBTenantRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
     )
     bundle = await builder.build(external_id)
     assert bundle is not None
@@ -78,9 +81,11 @@ def _allowed(bundle: UserBundle, role_id: PydanticObjectId) -> bool:
 
 
 async def test_user_role_assign_revoke_twice() -> None:
-    user = await MongoDBUserRepository(ENV).create(User(external_id="u1"))
+    user = await MongoDBUserRepository(
+        ENV, MongoDBEnvironmentStateRepository(ENV)
+    ).create(User(external_id="u1"))
     assert user.id is not None
-    repo = MongoDBUserRoleRepository(ENV)
+    repo = MongoDBUserRoleRepository(ENV, MongoDBEnvironmentStateRepository(ENV))
     role_id = PydanticObjectId()
 
     for _ in range(2):
@@ -97,7 +102,7 @@ async def test_user_role_assign_revoke_twice() -> None:
 
 
 async def test_tenant_scoped_user_role_assign_revoke_twice() -> None:
-    repo = MongoDBUserRoleRepository(ENV)
+    repo = MongoDBUserRoleRepository(ENV, MongoDBEnvironmentStateRepository(ENV))
     user_id, role_id = PydanticObjectId(), PydanticObjectId()
 
     for _ in range(2):
@@ -115,13 +120,17 @@ async def test_tenant_scoped_user_role_assign_revoke_twice() -> None:
 
 
 async def test_group_role_assign_revoke_twice() -> None:
-    user = await MongoDBUserRepository(ENV).create(User(external_id="u1"))
-    group = await MongoDBGroupRepository(ENV).create(Group(name="g"))
+    user = await MongoDBUserRepository(
+        ENV, MongoDBEnvironmentStateRepository(ENV)
+    ).create(User(external_id="u1"))
+    group = await MongoDBGroupRepository(
+        ENV, MongoDBEnvironmentStateRepository(ENV)
+    ).create(Group(name="g"))
     assert user.id is not None and group.id is not None
-    await MongoDBUserGroupRepository(ENV).create(
-        UserGroup(user_id=user.id, group_id=group.id, added_by="admin")
-    )
-    repo = MongoDBGroupRoleRepository(ENV)
+    await MongoDBUserGroupRepository(
+        ENV, MongoDBEnvironmentStateRepository(ENV)
+    ).create(UserGroup(user_id=user.id, group_id=group.id, added_by="admin"))
+    repo = MongoDBGroupRoleRepository(ENV, MongoDBEnvironmentStateRepository(ENV))
     role_id = PydanticObjectId()
 
     for _ in range(2):
@@ -137,14 +146,18 @@ async def test_group_role_assign_revoke_twice() -> None:
 
 
 async def test_group_membership_add_remove_twice() -> None:
-    user = await MongoDBUserRepository(ENV).create(User(external_id="u1"))
-    group = await MongoDBGroupRepository(ENV).create(Group(name="g"))
+    user = await MongoDBUserRepository(
+        ENV, MongoDBEnvironmentStateRepository(ENV)
+    ).create(User(external_id="u1"))
+    group = await MongoDBGroupRepository(
+        ENV, MongoDBEnvironmentStateRepository(ENV)
+    ).create(Group(name="g"))
     assert user.id is not None and group.id is not None
     role_id = PydanticObjectId()
-    await MongoDBGroupRoleRepository(ENV).create(
-        GroupRole(group_id=group.id, role_id=role_id, assigned_by="admin")
-    )
-    repo = MongoDBUserGroupRepository(ENV)
+    await MongoDBGroupRoleRepository(
+        ENV, MongoDBEnvironmentStateRepository(ENV)
+    ).create(GroupRole(group_id=group.id, role_id=role_id, assigned_by="admin"))
+    repo = MongoDBUserGroupRepository(ENV, MongoDBEnvironmentStateRepository(ENV))
 
     for _ in range(2):
         membership = await repo.create(
@@ -160,7 +173,7 @@ async def test_group_membership_add_remove_twice() -> None:
 
 async def test_second_active_assignment_is_still_rejected() -> None:
     """The partial index still forbids two active rows for the same key."""
-    repo = MongoDBUserRoleRepository(ENV)
+    repo = MongoDBUserRoleRepository(ENV, MongoDBEnvironmentStateRepository(ENV))
     user_id, role_id = PydanticObjectId(), PydanticObjectId()
     await repo.create(UserRole(user_id=user_id, role_id=role_id, assigned_by="a"))
 

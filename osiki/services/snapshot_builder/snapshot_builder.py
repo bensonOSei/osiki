@@ -102,6 +102,7 @@ class SnapshotBuilder:
         }
         condition_keys = {str(c.id): c.key for c in conditions}
         constraints = await self._constraint_repo.get_active()
+        settings = await self._state_repo.get_settings()
         return Snapshot(
             environment_id=self._environment_id,
             version=version,
@@ -117,6 +118,8 @@ class SnapshotBuilder:
                 for c in constraints
                 if c.is_active
             ],
+            endpoints=[],
+            settings=settings,
         )
 
 

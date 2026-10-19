@@ -4,18 +4,25 @@ from beanie import PydanticObjectId
 from loguru import logger
 
 from osiki.models.user_role import UserRole
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.user_roles.base_user_role_repository import (
     BaseUserRoleRepository,
 )
 
 
 class MongoDBUserRoleRepository(BaseUserRoleRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def create(self, user_role: UserRole) -> UserRole:
         user_role.environment_id = self.environment_id
         await user_role.insert()
+        await self._state.bump_assignments_version()
         logger.info(
             "Role assigned to user",
             user_role_id=str(user_role.id),
@@ -87,6 +94,7 @@ class MongoDBUserRoleRepository(BaseUserRoleRepository):
         user_role.is_active = False
         user_role.updated_at = time.time()
         await user_role.save()
+        await self._state.bump_assignments_version()
         logger.info(
             "Role revoked from user",
             user_role_id=user_role_id,

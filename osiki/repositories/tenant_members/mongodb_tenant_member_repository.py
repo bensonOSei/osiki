@@ -1,12 +1,18 @@
 from osiki.models.tenant_member import TenantMember
+from osiki.repositories.environment_state.base_environment_state_repository import (
+    BaseEnvironmentStateRepository,
+)
 from osiki.repositories.tenant_members.base_tenant_member_repository import (
     BaseTenantMemberRepository,
 )
 
 
 class MongoDBTenantMemberRepository(BaseTenantMemberRepository):
-    def __init__(self, environment_id: str) -> None:
+    def __init__(
+        self, environment_id: str, state: BaseEnvironmentStateRepository
+    ) -> None:
         self.environment_id = environment_id
+        self._state = state
 
     async def _find(self, tenant_id: str, user_id: str) -> TenantMember | None:
         return await TenantMember.find_one(
@@ -21,12 +27,14 @@ class MongoDBTenantMemberRepository(BaseTenantMemberRepository):
         await TenantMember(
             environment_id=self.environment_id, tenant_id=tenant_id, user_id=user_id
         ).insert()
+        await self._state.bump_assignments_version()
 
     async def remove(self, tenant_id: str, user_id: str) -> bool:
         member = await self._find(tenant_id, user_id)
         if member is None:
             return False
         await member.delete()
+        await self._state.bump_assignments_version()
         return True
 
     async def is_member(self, tenant_id: str, user_id: str) -> bool:

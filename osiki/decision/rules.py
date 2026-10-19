@@ -67,12 +67,12 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, TypeAlias
 
 MAX_DEPTH = 16
 MAX_NODES = 256
 
-type FilterNode = dict[str, Any]
+FilterNode: TypeAlias = dict[str, Any]  # noqa: UP040
 
 _TYPE_CLASSES = ("string", "number", "boolean")
 _REF_PATTERN = re.compile(r"(record|user|tenant)\.[A-Za-z_][A-Za-z0-9_]{0,63}")

@@ -5,15 +5,19 @@ They are frozen and ignore unknown fields, so an older SDK keeps reading a
 snapshot that a newer server extended.
 """
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .rules import FilterNode
 
-type Via = Literal["direct", "group"]
-type DenialReason = Literal[
-    "no_permission", "not_tenant_member", "condition_failed", "record_required"
+Via: TypeAlias = Literal["direct", "group"]  # noqa: UP040
+DenialReason: TypeAlias = Literal[  # noqa: UP040
+    "no_permission",
+    "not_tenant_member",
+    "condition_failed",
+    "record_required",
+    "unknown_user",
 ]
 
 
@@ -46,6 +50,30 @@ class ConstraintEntry(_Frozen):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class EndpointEntry(_Frozen):
+    """One HTTP endpoint's permission mapping, for the SDK's route guard.
+
+    ``path`` is the route template exactly as the framework declares it (for
+    example ``"/api/v1/invoices/{invoice_id}"`` or ``"/files/{name:path}"``).
+    ``permission`` is ``"res:act"`` and is ``None`` only when ``public``.
+    ``on_unavailable`` ``None`` means the SDK default.
+    """
+
+    method: str
+    path: str
+    permission: str | None
+    record_type: str | None = None
+    record_id_param: str | None = None
+    public: bool = False
+    on_unavailable: Literal["deny", "allow"] | None = None
+
+
+class EnvironmentSettings(_Frozen):
+    """Per-environment SDK behaviour; ``unmapped`` covers unmapped endpoints."""
+
+    unmapped: Literal["deny", "allow"] = "deny"
+
+
 class Snapshot(_Frozen):
     """An environment's authorization config at one ``version``.
 
@@ -57,6 +85,8 @@ class Snapshot(_Frozen):
     roles: list[RoleEntry] = Field(default_factory=list)
     conditions: dict[str, dict[str, Any]] = Field(default_factory=dict)
     constraints: list[ConstraintEntry] = Field(default_factory=list)
+    endpoints: list[EndpointEntry] = Field(default_factory=list)
+    settings: EnvironmentSettings = Field(default_factory=EnvironmentSettings)
 
 
 class AssignmentEntry(_Frozen):
@@ -90,6 +120,13 @@ class DecisionRequest(_Frozen):
 
 
 class Decision(_Frozen):
+    """The outcome of ``decide``.
+
+    ``denial_reason`` ``"unknown_user"`` is never returned by ``decide``:
+    callers return it when the user's bundle is ``None``, matching the
+    server's ``/authorization/check``.
+    """
+
     allowed: bool
     matched_permission: str | None = None
     matched_via: Via | None = None
