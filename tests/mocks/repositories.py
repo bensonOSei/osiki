@@ -9,7 +9,7 @@ from osiki.models.constraint import Constraint, ConstraintType
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
-from osiki.models.role import Role
+from osiki.models.role import Grant, Role
 from osiki.models.tenant import Tenant
 from osiki.models.tenant_member import TenantMember
 from osiki.models.user import User
@@ -67,6 +67,13 @@ class _EnvironmentBound[T: EnvironmentMixin]:
         doc.environment_id = self.environment_id
         self._data[key] = doc
         return doc
+
+
+def _grant(permission_id: str, condition_id: str | None) -> Grant:
+    return Grant(
+        permission_id=PydanticObjectId(permission_id),
+        condition_id=PydanticObjectId(condition_id) if condition_id else None,
+    )
 
 
 class MockUserRoleRepository(_EnvironmentBound[UserRole], BaseUserRoleRepository):
@@ -258,19 +265,35 @@ class MockRoleRepository(_EnvironmentBound[Role], BaseRoleRepository):
         active = [r for r in self._scoped() if r.is_active]
         return active[skip : skip + limit]
 
-    async def add_permission(self, role_id: str, permission_id: str) -> bool:
-        if self._get(role_id) is not None:
-            self._data[role_id].permission_ids.append(PydanticObjectId(permission_id))
-            return True
-        return False
+    async def add_permission(
+        self, role_id: str, permission_id: str, condition_id: str | None = None
+    ) -> bool:
+        role = self._get(role_id)
+        if role is None:
+            return False
+        grant = _grant(permission_id, condition_id)
+        if grant not in role.grants:
+            role.grants.append(grant)
+        return True
 
-    async def remove_permission(self, role_id: str, permission_id: str) -> bool:
-        if self._get(role_id) is not None:
-            pid = PydanticObjectId(permission_id)
-            if pid in self._data[role_id].permission_ids:
-                self._data[role_id].permission_ids.remove(pid)
-                return True
-        return False
+    async def remove_permission(
+        self, role_id: str, permission_id: str, condition_id: str | None = None
+    ) -> bool:
+        role = self._get(role_id)
+        if role is None:
+            return False
+        grant = _grant(permission_id, condition_id)
+        if grant in role.grants:
+            role.grants.remove(grant)
+        return True
+
+    async def is_condition_in_use(self, condition_id: str) -> bool:
+        return any(
+            g.condition_id is not None and str(g.condition_id) == condition_id
+            for role in self._scoped()
+            if role.is_active
+            for g in role.grants
+        )
 
 
 class MockPermissionRepository(_EnvironmentBound[Permission], BasePermissionRepository):

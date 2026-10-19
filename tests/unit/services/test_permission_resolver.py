@@ -2,6 +2,7 @@ import pytest
 from beanie import PydanticObjectId
 
 from osiki.models.base import Scope
+from osiki.models.role import Grant
 from tests.conftest import (
     make_group_role,
     make_permission,
@@ -378,3 +379,52 @@ async def test_tenant_scoped_assignments_excluded_without_request_scope(
             str(user_id), scope=request_scope
         )
         assert permissions == {"wiki:read"}
+
+
+async def test_conditional_only_grant_does_not_grant_via_resolver(
+    permission_resolver,
+    mock_user_role_repository,
+    mock_role_repository,
+    mock_permission_repository,
+) -> None:
+    user_id = PydanticObjectId()
+    perm = make_permission(resource="invoices", action="read")
+    await mock_permission_repository.create(perm)
+    role = make_role(
+        name="own-team",
+        grants=[Grant(permission_id=perm.id, condition_id=PydanticObjectId())],
+    )
+    await mock_role_repository.create(role)
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user_id, role_id=role.id)
+    )
+
+    assert await permission_resolver.get_effective_permissions(str(user_id)) == set()
+
+
+async def test_unconditional_grant_beside_conditional_still_grants(
+    permission_resolver,
+    mock_user_role_repository,
+    mock_role_repository,
+    mock_permission_repository,
+) -> None:
+    user_id = PydanticObjectId()
+    cond_perm = make_permission(resource="invoices", action="read")
+    open_perm = make_permission(resource="docs", action="read")
+    await mock_permission_repository.create(cond_perm)
+    await mock_permission_repository.create(open_perm)
+    role = make_role(
+        name="mixed",
+        grants=[
+            Grant(permission_id=cond_perm.id, condition_id=PydanticObjectId()),
+            Grant(permission_id=open_perm.id),
+        ],
+    )
+    await mock_role_repository.create(role)
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user_id, role_id=role.id)
+    )
+
+    assert await permission_resolver.get_effective_permissions(str(user_id)) == {
+        "docs:read"
+    }

@@ -1,6 +1,8 @@
 import pytest
+from beanie import PydanticObjectId
 
 from osiki.models.base import Scope
+from osiki.models.role import Grant
 from osiki.models.user import User
 from tests.conftest import make_permission, make_role, make_user, make_user_role
 
@@ -498,3 +500,29 @@ async def test_inactive_user_denied(
     result = await service.authorize(user_id="gone", resource="docs", action="read")
     assert result.allowed is False
     assert result.denial_reason == "unknown_user"
+
+
+async def test_authorize_denies_conditional_only_grant(
+    authorization_service,
+    user,
+    mock_user_role_repository,
+    mock_role_repository,
+    mock_permission_repository,
+) -> None:
+    perm = make_permission(resource="invoices", action="read")
+    await mock_permission_repository.create(perm)
+    role = make_role(
+        name="own-team",
+        grants=[Grant(permission_id=perm.id, condition_id=PydanticObjectId())],
+    )
+    await mock_role_repository.create(role)
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user.id, role_id=role.id)
+    )
+
+    result = await authorization_service.authorize(
+        user_id=user.external_id, resource="invoices", action="read"
+    )
+
+    assert result.allowed is False
+    assert result.denial_reason == "no_permission"

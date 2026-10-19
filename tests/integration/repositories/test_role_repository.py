@@ -3,7 +3,7 @@
 from beanie import PydanticObjectId
 
 from osiki.models.permission import Permission
-from osiki.models.role import Role
+from osiki.models.role import Grant, Role
 from osiki.repositories.permissions.mongodb_permission_repository import (
     MongoDBPermissionRepository,
 )
@@ -77,7 +77,7 @@ async def test_add_permission() -> None:
     assert result is True
     updated = await repo.get_by_id(str(role.id))
     assert updated is not None
-    assert perm.id in updated.permission_ids
+    assert updated.grants == [Grant(permission_id=perm.id)]
 
 
 async def test_add_permission_not_found() -> None:
@@ -89,12 +89,14 @@ async def test_add_permission_not_found() -> None:
 async def test_remove_permission() -> None:
     repo = MongoDBRoleRepository("default")
     perm_id = PydanticObjectId()
-    role = await repo.create(Role(name="role-with-perm-2", permission_ids=[perm_id]))
+    role = await repo.create(
+        Role(name="role-with-perm-2", grants=[Grant(permission_id=perm_id)])
+    )
     result = await repo.remove_permission(str(role.id), str(perm_id))
     assert result is True
     updated = await repo.get_by_id(str(role.id))
     assert updated is not None
-    assert perm_id not in updated.permission_ids
+    assert updated.grants == []
 
 
 async def test_remove_permission_not_found() -> None:
@@ -134,3 +136,71 @@ async def test_list_active() -> None:
     await repo.create(Role(name="active-role-2"))
     result = await repo.list_active()
     assert len(result) >= 2
+
+
+async def test_add_permission_is_idempotent_per_exact_grant() -> None:
+    repo = MongoDBRoleRepository("default")
+    pid, cid = PydanticObjectId(), PydanticObjectId()
+    role = await repo.create(Role(name="idem-role"))
+
+    assert await repo.add_permission(str(role.id), str(pid)) is True
+    assert await repo.add_permission(str(role.id), str(pid)) is True
+    assert await repo.add_permission(str(role.id), str(pid), str(cid)) is True
+
+    updated = await repo.get_by_id(str(role.id))
+    assert updated is not None
+    assert updated.grants == [
+        Grant(permission_id=pid),
+        Grant(permission_id=pid, condition_id=cid),
+    ]
+
+
+async def test_remove_exact_grant_only() -> None:
+    repo = MongoDBRoleRepository("default")
+    pid, cid = PydanticObjectId(), PydanticObjectId()
+    role = await repo.create(
+        Role(
+            name="exact-role",
+            grants=[
+                Grant(permission_id=pid),
+                Grant(permission_id=pid, condition_id=cid),
+            ],
+        )
+    )
+
+    assert await repo.remove_permission(str(role.id), str(pid), str(cid)) is True
+
+    updated = await repo.get_by_id(str(role.id))
+    assert updated is not None
+    assert updated.grants == [Grant(permission_id=pid)]
+
+
+async def test_remove_missing_grant_is_noop() -> None:
+    repo = MongoDBRoleRepository("default")
+    role = await repo.create(Role(name="noop-role"))
+
+    assert await repo.remove_permission(str(role.id), str(PydanticObjectId())) is True
+
+
+async def test_is_condition_in_use() -> None:
+    repo = MongoDBRoleRepository("default")
+    cid = PydanticObjectId()
+    await repo.create(
+        Role(
+            name="uses-cond",
+            grants=[Grant(permission_id=PydanticObjectId(), condition_id=cid)],
+        )
+    )
+    inactive = PydanticObjectId()
+    gone = await repo.create(
+        Role(
+            name="gone",
+            grants=[Grant(permission_id=PydanticObjectId(), condition_id=inactive)],
+        )
+    )
+    await repo.deactivate(str(gone.id))
+
+    assert await repo.is_condition_in_use(str(cid)) is True
+    assert await repo.is_condition_in_use(str(inactive)) is False
+    assert await repo.is_condition_in_use(str(PydanticObjectId())) is False
+    assert await MongoDBRoleRepository("other").is_condition_in_use(str(cid)) is False

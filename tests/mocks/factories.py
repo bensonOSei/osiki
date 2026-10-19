@@ -8,7 +8,7 @@ from osiki.models.constraint import Constraint, ConstraintConfig, ConstraintType
 from osiki.models.group import Group
 from osiki.models.group_role import GroupRole
 from osiki.models.permission import Permission
-from osiki.models.role import Role
+from osiki.models.role import Grant, Role
 from osiki.models.tenant import Tenant
 from osiki.models.tenant_member import TenantMember
 from osiki.models.user import User
@@ -47,13 +47,17 @@ def make_tenant_member(
 def make_role(
     name: str = "test-role",
     permission_ids: list[PydanticObjectId] | None = None,
+    grants: list[Grant] | None = None,
     parent_role_id: PydanticObjectId | None = None,
     role_id: PydanticObjectId | None = None,
     is_active: bool = True,
 ) -> Role:
     role = Role(
         name=name,
-        permission_ids=permission_ids or [],
+        grants=[
+            *[Grant(permission_id=pid) for pid in (permission_ids or [])],
+            *(grants or []),
+        ],
         parent_role_id=parent_role_id,
         is_active=is_active,
     )

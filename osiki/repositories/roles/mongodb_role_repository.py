@@ -3,7 +3,7 @@ import time
 from beanie import PydanticObjectId
 from loguru import logger
 
-from osiki.models.role import Role
+from osiki.models.role import Grant, Role
 from osiki.repositories.roles.base_role_repository import BaseRoleRepository
 
 
@@ -76,38 +76,63 @@ class MongoDBRoleRepository(BaseRoleRepository):
             .to_list()
         )
 
-    async def add_permission(self, role_id: str, permission_id: str) -> bool:
+    async def add_permission(
+        self, role_id: str, permission_id: str, condition_id: str | None = None
+    ) -> bool:
         role = await self.get_by_id(role_id)
         if not role:
             logger.warning(
                 "Attempted to add permission to non-existent role", role_id=role_id
             )
             return False
-        perm_oid = PydanticObjectId(permission_id)
-        if perm_oid not in role.permission_ids:
-            role.permission_ids.append(perm_oid)
+        grant = _grant(permission_id, condition_id)
+        if grant not in role.grants:
+            role.grants.append(grant)
             role.updated_at = time.time()
             await role.save()
             logger.info(
-                "Permission added to role", role_id=role_id, permission_id=permission_id
+                "Permission added to role",
+                role_id=role_id,
+                permission_id=permission_id,
+                condition_id=condition_id,
             )
         return True
 
-    async def remove_permission(self, role_id: str, permission_id: str) -> bool:
+    async def remove_permission(
+        self, role_id: str, permission_id: str, condition_id: str | None = None
+    ) -> bool:
         role = await self.get_by_id(role_id)
         if not role:
             logger.warning(
                 "Attempted to remove permission from non-existent role", role_id=role_id
             )
             return False
-        perm_oid = PydanticObjectId(permission_id)
-        if perm_oid in role.permission_ids:
-            role.permission_ids.remove(perm_oid)
+        grant = _grant(permission_id, condition_id)
+        if grant in role.grants:
+            role.grants.remove(grant)
             role.updated_at = time.time()
             await role.save()
             logger.info(
                 "Permission removed from role",
                 role_id=role_id,
                 permission_id=permission_id,
+                condition_id=condition_id,
             )
         return True
+
+    async def is_condition_in_use(self, condition_id: str) -> bool:
+        role = await Role.find_one(
+            Role.environment_id == self.environment_id,
+            {
+                "is_active": True,
+                "grants.condition_id": PydanticObjectId(condition_id),
+            },
+        )
+        return role is not None
+
+
+def _grant(permission_id: str, condition_id: str | None) -> Grant:
+    return Grant(
+        permission_id=PydanticObjectId(permission_id),
+        condition_id=PydanticObjectId(condition_id) if condition_id else None,
+    )

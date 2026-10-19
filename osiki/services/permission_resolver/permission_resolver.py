@@ -96,7 +96,11 @@ class PermissionResolver(BasePermissionResolver):
             for role in roles:
                 if not role.is_active:
                     continue
-                perm_ids = [str(pid) for pid in role.permission_ids]
+                # Conditional grants grant nothing here: this resolver cannot
+                # evaluate conditions, so granting them would widen access.
+                perm_ids = [
+                    str(g.permission_id) for g in role.grants if g.condition_id is None
+                ]
                 if perm_ids:
                     perms = await self._permission_repo.get_by_ids(perm_ids)
                     for perm in perms:

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query, status
 
-from osiki.api.dependencies import ConditionRepository
+from osiki.api.dependencies import ConditionRepository, RoleRepository
 from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
 from osiki.decision.rules import RuleError, validate_rule
 from osiki.models.condition import Condition
@@ -92,7 +92,12 @@ async def update_condition(
 async def delete_condition(
     condition_id: str,
     condition_repo: ConditionRepository,
+    role_repo: RoleRepository,
 ) -> None:
+    if await role_repo.is_condition_in_use(condition_id):
+        raise ConflictError(
+            "Condition is in use", details={"condition_id": condition_id}
+        )
     if not await condition_repo.deactivate(condition_id):
         raise NotFoundError(
             "Condition not found", details={"condition_id": condition_id}
