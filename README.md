@@ -164,7 +164,7 @@ Osiki can let a business that uses your product manage its own staff: create rol
 
 Osiki has no login of its own. Your own front door authenticates the person and tells the engine who it is with the `X-Osiki-Actor` header, either `developer:<id>` or `tenant_user:<id>` (the id is 1 to 128 characters of `A-Z a-z 0-9 . _ @ -`). A `tenant_user` id is the engine's external user id.
 
-> **Never expose the engine without a front door that sets `X-Osiki-Actor`.** The engine trusts the header. A missing header means `developer:anonymous`, and a developer passes the team-manager and no-escalation checks (they still get `not_assignable`, `not_offered`, `constraint` and `last_manager`). A malformed header returns `422`.
+> **Never expose the engine without a front door that sets `X-Osiki-Actor`.** The engine trusts the header. A missing header means `developer:anonymous` (set `REQUIRE_ACTOR=true` to refuse it with `403` and `details.reason` `missing_actor` instead, so a front door that drops the header fails closed), and a developer passes the team-manager and no-escalation checks (they still get `not_assignable`, `not_offered`, `constraint` and `last_manager`). A malformed header returns `422`.
 >
 > No engine route has authentication. Every route outside `/team` is developer-only, including `GET /audit-logs`, which lists all tenants' logs. Two of them read the header without protecting anything: `GET /tenants` refuses a `tenant_user` with 403, and `POST /audit-logs` records the header's actor as given. Your front door must expose **only** `/api/v1/tenants/{their tenant}/team/...` to tenant users, pin `X-Osiki-Environment` itself, and set `X-Osiki-Actor` itself (strip any value a client sends).
 
