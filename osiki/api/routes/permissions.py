@@ -15,19 +15,6 @@ from osiki.services.builtins import RESERVED_PREFIX, is_builtin
 router = APIRouter(prefix="/permissions", tags=["permissions"])
 
 
-def _to_read(permission: Permission) -> PermissionRead:
-    return PermissionRead(
-        id=str(permission.id),
-        resource=permission.resource,
-        action=permission.action,
-        description=permission.description,
-        assignable=permission.assignable,
-        is_active=permission.is_active,
-        created_at=permission.created_at,
-        metadata=permission.metadata,
-    )
-
-
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_permission(
     data: PermissionCreate,
@@ -51,7 +38,7 @@ async def create_permission(
         description=data.description,
         metadata=data.metadata or {},
     )
-    return _to_read(await permission_repo.create(permission))
+    return PermissionRead.from_model(await permission_repo.create(permission))
 
 
 @router.get("/{permission_id}")
@@ -65,7 +52,7 @@ async def get_permission(
             "Permission not found", details={"permission_id": permission_id}
         )
 
-    return _to_read(permission)
+    return PermissionRead.from_model(permission)
 
 
 @router.patch("/{permission_id}")
@@ -88,7 +75,7 @@ async def update_permission(
         permission.assignable = data.assignable
     if data.description is not None:
         permission.description = data.description
-    return _to_read(await permission_repo.update(permission))
+    return PermissionRead.from_model(await permission_repo.update(permission))
 
 
 @router.delete("/{permission_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -118,7 +105,7 @@ async def list_permissions(
     skip = (page - 1) * page_size
     permissions = await permission_repo.list_active(skip=skip, limit=page_size)
 
-    items = [_to_read(p) for p in permissions]
+    items = [PermissionRead.from_model(p) for p in permissions]
 
     total = len(items) + skip
     return PaginatedResponse.create(items, total, page, page_size)

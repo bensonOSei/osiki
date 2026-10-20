@@ -543,3 +543,24 @@ def test_list_tenants_developer_only_with_search(
     denied = client.get(f"{API}/tenants", headers=OWNER)
     assert denied.status_code == 403
     assert denied.json()["details"] == {"reason": "developer_only"}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [f"{T1}/members", f"{T1}/audit-logs", f"{API}/tenants"],
+)
+@pytest.mark.parametrize(
+    "params",
+    [{"page": 0}, {"page_size": 101}, {"page_size": 0}, {"page": 10**18}],
+)
+def test_paging_bounds_are_422(
+    client: TestClient, world: World, path: str, params: dict[str, int]
+) -> None:
+    assert client.get(path, headers=DEV, params=params).status_code == 422
+
+
+def test_tenant_search_query_is_length_limited(
+    client: TestClient, world: World
+) -> None:
+    assert client.get(f"{API}/tenants", params={"q": "x" * 101}).status_code == 422
+    assert client.get(f"{API}/tenants", params={"q": "x" * 100}).status_code == 200

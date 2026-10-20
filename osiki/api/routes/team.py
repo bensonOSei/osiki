@@ -16,7 +16,6 @@ from osiki.api.dependencies import (
     TenantRepository,
 )
 from osiki.api.exceptions import NotFoundError
-from osiki.api.routes.permissions import _to_read as permission_read
 from osiki.schemas.audit_log import AuditLogRead
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.permission import PermissionRead
@@ -88,7 +87,7 @@ async def list_members(
     tenant_id: str,
     team: Team,
     member_repo: TenantMemberRepository,
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=10000),
     page_size: int = Query(20, ge=1, le=100),
 ) -> PaginatedResponse[TeamMemberRead]:
     members = await team.list_members((page - 1) * page_size, page_size)
@@ -141,15 +140,16 @@ async def validate(data: ValidateRequest, team: Team) -> ValidateResponse:
 
 @router.get("/permissions")
 async def list_permissions(team: Team) -> list[PermissionRead]:
-    return [permission_read(p) for p in await team.list_assignable_permissions()]
+    return [
+        PermissionRead.from_model(p) for p in await team.list_assignable_permissions()
+    ]
 
 
-@router.get("/audit-logs")
+@router.get("/audit-logs", dependencies=[Depends(managed_team)])
 async def list_audit_logs(
     tenant_id: str,
-    team: Team,
     audit_repo: AuditLogRepository,
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=10000),
     page_size: int = Query(20, ge=1, le=100),
 ) -> PaginatedResponse[AuditLogRead]:
     logs = await audit_repo.list(tenant_id, (page - 1) * page_size, page_size)

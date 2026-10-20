@@ -29,8 +29,10 @@ async def list_tenants(
     actor: ActorDep,
     tenant_repo: TenantRepository,
     member_repo: TenantMemberRepository,
-    q: str | None = Query(None, description="Prefix of the name or external id."),
-    page: int = Query(1, ge=1),
+    q: str | None = Query(
+        None, max_length=100, description="Prefix of the name or external id."
+    ),
+    page: int = Query(1, ge=1, le=10000),
     page_size: int = Query(20, ge=1, le=100),
 ) -> PaginatedResponse[TenantSummaryRead]:
     """Every business, with its member count. Developers only."""
@@ -102,7 +104,7 @@ async def remove_tenant_member(
 async def list_tenant_members(
     tenant_id: str,
     member_repo: TenantMemberRepository,
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=10000),
     page_size: int = Query(20, ge=1, le=100),
 ) -> PaginatedResponse[str]:
     skip = (page - 1) * page_size
