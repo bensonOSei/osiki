@@ -11,6 +11,7 @@ from osiki.api.routes.permissions import router as permissions_router
 from osiki.api.routes.roles import router as roles_router
 from osiki.api.routes.settings import router as settings_router
 from osiki.api.routes.snapshot import router as snapshot_router
+from osiki.api.routes.team import router as team_router
 from osiki.api.routes.tenants import router as tenants_router
 from osiki.api.routes.users import router as users_router
 
@@ -28,6 +29,7 @@ __all__ = [
     "roles_router",
     "settings_router",
     "snapshot_router",
+    "team_router",
     "tenants_router",
     "users_router",
 ]

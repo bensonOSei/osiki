@@ -1127,3 +1127,27 @@ def test_team_error_shapes() -> None:
 def test_team_role_defaults() -> None:
     role = TeamRole(id="1", name="n", kind="tenant", grants=[])
     assert (role.copied_from, role.holders) == (None, 0)
+
+
+async def test_list_assignable_permissions_offers_only_what_a_role_may_hold(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osiki.services.team.team_service as module
+
+    # A page of 2 forces the listing to walk several pages.
+    monkeypatch.setattr(module, "_MEMBER_PAGE", 2)
+    good = [await env.permission("sales", a) for a in ("create", "read", "void")]
+    await env.permission("hidden", "read", assignable=False)
+    await env.permission("old", "read", active=False)
+    await env.permission("*", "read")
+    await env.permission("osiki.team", "manage", assignable=True)
+    found = await env.service().list_assignable_permissions()
+    assert sorted(p.permission_string for p in found) == sorted(
+        p.permission_string for p in good
+    )
+
+
+async def test_list_assignable_permissions_needs_a_manager(env: Env) -> None:
+    actor = await env.manager("plain", manage=False)
+    with pytest.raises(NotManager):
+        await env.service(actor).list_assignable_permissions()

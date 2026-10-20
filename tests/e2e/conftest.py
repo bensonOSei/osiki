@@ -47,6 +47,7 @@ from osiki.api.routes import (
     roles_router,
     settings_router,
     snapshot_router,
+    team_router,
     tenants_router,
     users_router,
 )
@@ -168,6 +169,7 @@ def _create_test_app() -> FastAPI:
     test_app.include_router(permissions_router, prefix=settings.api_prefix)
     test_app.include_router(conditions_router, prefix=settings.api_prefix)
     test_app.include_router(constraints_router, prefix=settings.api_prefix)
+    test_app.include_router(team_router, prefix=settings.api_prefix)
     test_app.include_router(tenants_router, prefix=settings.api_prefix)
     test_app.include_router(authorization_router, prefix=settings.api_prefix)
     test_app.include_router(snapshot_router, prefix=settings.api_prefix)

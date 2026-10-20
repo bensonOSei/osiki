@@ -70,3 +70,9 @@ class MongoDBTenantMemberRepository(BaseTenantMemberRepository):
             .to_list()
         )
         return [row.user_id for row in rows]
+
+    async def count(self, tenant_id: str) -> int:
+        return await TenantMember.find(
+            TenantMember.environment_id == self.environment_id,
+            TenantMember.tenant_id == tenant_id,
+        ).count()

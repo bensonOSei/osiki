@@ -171,6 +171,16 @@ class TeamService:
         own = await self._role_repo.list_tenant(self._tenant_id)
         return await self._render([*offered, *own])
 
+    async def list_assignable_permissions(self) -> list[Permission]:
+        """Permissions the role editor may offer: the ones a tenant role may hold."""
+        await self.require_manager()
+        found: list[Permission] = []
+        skip = 0
+        while page := await self._permission_repo.list_active(skip, _MEMBER_PAGE):
+            found.extend(p for p in page if _assignable(p))
+            skip += _MEMBER_PAGE
+        return found
+
     async def _offered_templates(self) -> list[Role]:
         """Active project templates whose every grant is assignable or built-in."""
         offered: list[Role] = []

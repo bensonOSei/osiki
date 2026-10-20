@@ -766,6 +766,27 @@ class MockTenantRepository(_AssignmentBound[Tenant], BaseTenantRepository):
             t for t in self._scoped() if t.external_id in external_ids and t.is_active
         ]
 
+    def _matching(self, q: str | None) -> list[Tenant]:
+        prefix = (q or "").lower()
+        return sorted(
+            (
+                t
+                for t in self._scoped()
+                if t.is_active
+                and (
+                    t.name.lower().startswith(prefix)
+                    or t.external_id.lower().startswith(prefix)
+                )
+            ),
+            key=lambda t: (t.created_at, str(t.id)),
+        )
+
+    async def search(self, q: str | None, skip: int, limit: int) -> list[Tenant]:
+        return self._matching(q)[skip : skip + limit]
+
+    async def count(self, q: str | None) -> int:
+        return len(self._matching(q))
+
 
 class MockTenantMemberRepository(
     _AssignmentBound[TenantMember], BaseTenantMemberRepository
@@ -798,6 +819,9 @@ class MockTenantMemberRepository(
 
     async def tenants_for_user(self, user_id: str) -> list[str]:
         return [m.tenant_id for m in self._scoped() if m.user_id == user_id]
+
+    async def count(self, tenant_id: str) -> int:
+        return len([m for m in self._scoped() if m.tenant_id == tenant_id])
 
     async def members(self, tenant_id: str, skip: int, limit: int) -> list[str]:
         found = [m.user_id for m in self._scoped() if m.tenant_id == tenant_id]

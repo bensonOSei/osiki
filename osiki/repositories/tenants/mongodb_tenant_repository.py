@@ -1,6 +1,8 @@
+import re
 import time
+from typing import Any
 
-from beanie.operators import In
+from beanie.operators import In, Or, RegEx
 from loguru import logger
 
 from osiki.models.base import AttributeValue, attributes_equal
@@ -61,3 +63,30 @@ class MongoDBTenantRepository(BaseTenantRepository):
             In(Tenant.external_id, external_ids),
             Tenant.is_active == True,
         ).to_list()
+
+    def _conditions(self, q: str | None) -> list[Any]:
+        conditions: list[Any] = [
+            Tenant.environment_id == self.environment_id,
+            Tenant.is_active == True,
+        ]
+        if q:
+            prefix = f"^{re.escape(q)}"
+            conditions.append(
+                Or(
+                    RegEx(Tenant.name, prefix, options="i"),
+                    RegEx(Tenant.external_id, prefix, options="i"),
+                )
+            )
+        return conditions
+
+    async def search(self, q: str | None, skip: int, limit: int) -> list[Tenant]:
+        return (
+            await Tenant.find(*self._conditions(q))
+            .sort("+created_at", "+_id")
+            .skip(skip)
+            .limit(limit)
+            .to_list()
+        )
+
+    async def count(self, q: str | None) -> int:
+        return await Tenant.find(*self._conditions(q)).count()
