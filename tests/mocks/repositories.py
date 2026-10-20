@@ -591,6 +591,7 @@ class MockPermissionRepository(_ConfigBound[Permission], BasePermissionRepositor
         if self._get(permission_id) is not None:
             self._data[permission_id].is_active = False
             await self._bump()
+            await self._state.bump_assignments_version()
             return True
         return False
 

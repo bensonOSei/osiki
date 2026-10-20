@@ -113,3 +113,18 @@ async def test_update_persists_assignable_and_bumps_config_version() -> None:
     assert loaded is not None
     assert (loaded.assignable, loaded.description) == (True, "changed")
     assert await state.get_config_version() == before + 1
+
+
+async def test_deactivate_bumps_both_versions() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBPermissionRepository("default", state)
+    perm = await repo.create(Permission(resource="bump", action="me"))
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+
+    assert await repo.deactivate(str(perm.id)) is True
+
+    assert await state.get_config_version() == config + 1
+    assert await state.get_assignments_version() == assignments + 1

@@ -84,6 +84,9 @@ class MongoDBPermissionRepository(BasePermissionRepository):
         permission.is_active = False
         await permission.save()
         await self._state.bump_config_version()
+        # Tenant roles are rendered per user, so a dead permission changes
+        # bundles even though the snapshot moves too.
+        await self._state.bump_assignments_version()
         logger.info("Permission deactivated", permission_id=permission_id)
         return True
 
