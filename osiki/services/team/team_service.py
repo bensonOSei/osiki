@@ -454,12 +454,7 @@ class TeamService:
             role, stale = await self._check_add_member(
                 user_id, role_id, name=name, email=email, session=session
             )
-            try:
-                user = await self._user_repo.upsert_by_external_id(
-                    user_id, name, email, None, session=session
-                )
-            except DuplicateKeyError as exc:
-                raise _email_taken(email) from exc
+            user = await self._existing_or_new_user(user_id, name, email, session)
             await self._member_repo.add(self._tenant_id, user_id, session=session)
             await self._assign(user, role, stale, session)
             await self._audit.record(
@@ -537,6 +532,33 @@ class TeamService:
 
         await self._team_write(operation)
 
+    async def _existing_or_new_user(
+        self,
+        user_id: str,
+        name: str | None,
+        email: str | None,
+        session: AsyncClientSession | None,
+    ) -> User:
+        """The user, created with ``name`` and ``email`` only if missing.
+
+        Users are environment-wide: one tenant's manager must never rewrite a
+        profile another tenant may share, so an existing user is left as is.
+        """
+        user = await self._user_repo.get_by_external_id(user_id)
+        if user is not None:
+            return user
+        try:
+            return await self._user_repo.create(
+                User(external_id=user_id, name=name, email=email), session=session
+            )
+        except DuplicateKeyError as exc:
+            # A concurrent add created the same user first: use theirs.
+            # Otherwise the email belongs to someone else.
+            winner = await self._user_repo.get_by_external_id(user_id)
+            if winner is None:
+                raise _email_taken(email) from exc
+            return winner
+
     async def _team_write(self, operation: Operation[None]) -> None:
         """Run a member write as one unit of work that first bumps the tenant's
         lock, so concurrent team writes in the tenant write-conflict and the
@@ -589,7 +611,9 @@ class TeamService:
         """The user need not exist yet: the write upserts it."""
         held = await self._held_grants()
         user = await self._user_repo.get_by_external_id(user_id)
-        if email is not None:
+        # An existing user's profile is never changed, so their email is not
+        # checked: only a user about to be created takes the given email.
+        if user is None and email is not None:
             owner = await self._user_repo.get_by_email(email)
             if owner is not None and owner.external_id != user_id:
                 raise _email_taken(email)

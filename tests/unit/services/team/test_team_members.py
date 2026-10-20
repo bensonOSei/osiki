@@ -246,12 +246,61 @@ async def test_add_member_maps_an_email_race_to_conflict(
     async def collide(*args: object, **kwargs: object) -> User:
         raise DuplicateKeyError("email")
 
-    monkeypatch.setattr(env.users, "upsert_by_external_id", collide)
+    monkeypatch.setattr(env.users, "create", collide)
     with pytest.raises(ConflictError) as caught:
         await env.service().add_member(
             "u-new", name=None, email=None, role_id=str(cashier.id)
         )
     assert caught.value.details == {"email": ""}
+
+
+async def test_add_member_uses_the_user_a_concurrent_add_created(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    racer = make_user(external_id="u-new")
+    racer.name = "Racer"
+    real_create = env.users.create
+
+    async def lose_the_race(user: User, **kwargs: Any) -> User:
+        await real_create(racer)
+        raise DuplicateKeyError("external_id")
+
+    monkeypatch.setattr(env.users, "create", lose_the_race)
+    result = await env.service().add_member(
+        "u-new", name="Mine", email=None, role_id=str(cashier.id)
+    )
+    assert result.name == "Racer"
+    assert await active_assignment(env, "u-new", cashier) is not None
+
+
+async def test_add_member_does_not_overwrite_an_existing_users_profile(
+    env: Env,
+) -> None:
+    """Users are environment-wide: adding tenant B's user to tenant A must not
+    rewrite their name or email (ruling M3A-15)."""
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    theirs = make_user(external_id="shared")
+    theirs.name, theirs.email = "Abena", "abena@b.example"
+    await env.users.create(theirs)
+    await env.members.add("tenant-b", "shared")
+    taken = make_user(external_id="other")
+    taken.email = "taken@example.com"
+    await env.users.create(taken)
+    version = await env.state.get_assignments_version()
+
+    # Even an email another user holds is ignored rather than refused.
+    result = await env.service().add_member(
+        "shared", name="Hijack", email="taken@example.com", role_id=str(cashier.id)
+    )
+
+    stored = await env.users.get_by_external_id("shared")
+    assert stored is not None
+    assert (stored.name, stored.email) == ("Abena", "abena@b.example")
+    assert (result.name, result.email) == ("Abena", "abena@b.example")
+    assert await env.members.is_member(TENANT, "shared")
+    # Membership and assignment bump the version; no user write does.
+    assert await env.state.get_assignments_version() == version + 2
 
 
 # -- which roles may be assigned ---------------------------------------------
