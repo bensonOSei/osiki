@@ -564,3 +564,40 @@ def test_tenant_search_query_is_length_limited(
 ) -> None:
     assert client.get(f"{API}/tenants", params={"q": "x" * 101}).status_code == 422
     assert client.get(f"{API}/tenants", params={"q": "x" * 100}).status_code == 200
+
+
+def _tenant_role_body(role: str, scope: dict[str, str] | None) -> dict[str, Any]:
+    body: dict[str, Any] = {"role_id": role, "assigned_by": "dev"}
+    if scope is not None:
+        body["scope"] = scope
+    return body
+
+
+@pytest.mark.parametrize("scope", [None, {}, {"tenant_id": "t2"}])
+def test_developer_cannot_assign_a_tenant_role_outside_its_tenant(
+    client: TestClient, world: World, scope: dict[str, str] | None
+) -> None:
+    role = world.role("Cashier", world.sales_create, headers=OWNER)
+    user = world.user("u-other")  # a member of t2 only
+    group = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+    body = _tenant_role_body(role, scope)
+
+    for url in (f"{API}/users/{user}/roles", f"{API}/groups/{group}/roles"):
+        r = client.post(url, json=body)
+        assert r.status_code == 422, r.text
+        assert r.json()["error"] == "validation_error"
+        assert r.json()["details"] == {"role_id": role, "tenant_id": "t1"}
+
+
+def test_developer_can_assign_a_tenant_role_in_its_own_tenant(
+    client: TestClient, world: World
+) -> None:
+    role = world.role("Cashier", world.sales_create, headers=OWNER)
+    group = client.post(f"{API}/groups", json={"name": "eng"}).json()["id"]
+
+    r = client.post(
+        f"{API}/groups/{group}/roles",
+        json=_tenant_role_body(role, {"tenant_id": "t1"}),
+    )
+    assert r.status_code == 201, r.text
+    world.assign(world.owner_user, role, "t1")

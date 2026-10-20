@@ -220,9 +220,15 @@ async def test_bundle_carries_only_referenced_active_tenant_roles(
     )
     group = (await env.groups.create(make_group())).id
     await env.user_groups.create(make_user_group(user_id=user.id, group_id=group))
-    await env.group_roles.create(make_group_role(group_id=group, role_id=grouped.id))
+    await env.group_roles.create(
+        make_group_role(group_id=group, role_id=grouped.id, scope=Scope(tenant_id="t1"))
+    )
     for role in (direct, project, inactive):
-        await env.user_roles.create(make_user_role(user_id=user.id, role_id=role.id))
+        await env.user_roles.create(
+            make_user_role(
+                user_id=user.id, role_id=role.id, scope=Scope(tenant_id="t1")
+            )
+        )
 
     bundle = await env.builder().build("ext-1")
 
@@ -239,3 +245,54 @@ async def test_bundle_carries_only_referenced_active_tenant_roles(
             grants=[GrantEntry(permission="sales:create")],
         ),
     ]
+
+
+async def test_tenant_role_assigned_outside_its_tenant_is_dropped(
+    env: Env, user: User
+) -> None:
+    sales = await env.permissions.create(make_permission("sales", "create"))
+    role = await env.roles.create(
+        make_role("Cashier", permission_ids=[sales.id], tenant_id="t1")
+    )
+    other = await env.roles.create(
+        make_role("Other", permission_ids=[sales.id], tenant_id="t2")
+    )
+    # Rows the API refuses but a stray write could leave: no scope, wrong tenant.
+    for scope in (Scope(), Scope(tenant_id="t2")):
+        await env.user_roles.create(
+            make_user_role(user_id=user.id, role_id=role.id, scope=scope)
+        )
+    await env.user_roles.create(
+        make_user_role(user_id=user.id, role_id=other.id, scope=Scope(tenant_id="t2"))
+    )
+    group = (await env.groups.create(make_group())).id
+    await env.user_groups.create(make_user_group(user_id=user.id, group_id=group))
+    await env.group_roles.create(
+        make_group_role(group_id=group, role_id=role.id, scope=Scope(tenant_id="t3"))
+    )
+
+    bundle = await env.builder().build("ext-1")
+
+    assert bundle is not None
+    assert [(a.role_id, a.scope) for a in bundle.assignments] == [
+        (str(other.id), {"tenant_id": "t2"})
+    ]
+    assert [r.id for r in bundle.roles] == [str(other.id)]
+
+
+async def test_tenant_role_in_its_own_tenant_keeps_its_assignment(
+    env: Env, user: User
+) -> None:
+    sales = await env.permissions.create(make_permission("sales", "create"))
+    role = await env.roles.create(
+        make_role("Cashier", permission_ids=[sales.id], tenant_id="t1")
+    )
+    await env.user_roles.create(
+        make_user_role(user_id=user.id, role_id=role.id, scope=Scope(tenant_id="t1"))
+    )
+
+    bundle = await env.builder().build("ext-1")
+
+    assert bundle is not None
+    assert [a.role_id for a in bundle.assignments] == [str(role.id)]
+    assert [r.id for r in bundle.roles] == [str(role.id)]

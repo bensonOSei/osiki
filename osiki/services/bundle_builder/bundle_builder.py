@@ -2,6 +2,7 @@
 
 from osiki.decision.models import AssignmentEntry, RoleEntry, UserBundle, Via
 from osiki.models.group_role import GroupRole
+from osiki.models.role import Role
 from osiki.models.user_role import UserRole
 from osiki.repositories.conditions.base_condition_repository import (
     BaseConditionRepository,
@@ -94,6 +95,17 @@ class BundleBuilder:
             *_entries(via_group, "group"),
         ]
 
+        roles = await self._tenant_roles(assignments)
+        owner = {str(r.id): r.tenant_id for r in roles}
+        # Fail closed: a tenant role counts only in its own tenant, however the
+        # assignment row got there. Drop the stray assignment as well, so no
+        # decision can apply it.
+        assignments = [
+            a
+            for a in assignments
+            if a.role_id not in owner or a.scope.get("tenant_id") == owner[a.role_id]
+        ]
+        kept = {a.role_id for a in assignments}
         return UserBundle(
             user_id=user_external_id,
             attributes=dict(user.attributes),
@@ -103,23 +115,21 @@ class BundleBuilder:
                 if t.is_active and t.external_id in tenant_ids
             },
             assignments=assignments,
-            roles=await self._tenant_roles(assignments),
+            roles=await self._render_roles([r for r in roles if str(r.id) in kept]),
         )
 
-    async def _tenant_roles(
-        self, assignments: list[AssignmentEntry]
-    ) -> list[RoleEntry]:
+    async def _tenant_roles(self, assignments: list[AssignmentEntry]) -> list[Role]:
         # ``get_by_ids`` returns active roles only.
         role_ids = list(dict.fromkeys(a.role_id for a in assignments))
-        roles = (
-            [
-                r
-                for r in await self._role_repo.get_by_ids(role_ids)
-                if r.tenant_id is not None
-            ]
-            if role_ids
-            else []
-        )
+        if not role_ids:
+            return []
+        return [
+            r
+            for r in await self._role_repo.get_by_ids(role_ids)
+            if r.tenant_id is not None
+        ]
+
+    async def _render_roles(self, roles: list[Role]) -> list[RoleEntry]:
         if not roles:
             return []
         permission_ids = list(
