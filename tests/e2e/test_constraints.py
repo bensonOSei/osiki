@@ -1,7 +1,10 @@
+import pytest
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
 
-from tests.e2e.conftest import API
+from osiki.api.dependencies import get_role_repository
+from tests.e2e.conftest import API, app
+from tests.mocks.factories import make_role
 
 MUTUAL_EXCLUSION_DATA = {
     "name": "no-dual-signing",
@@ -192,3 +195,77 @@ def test_list_constraints_pagination(client: TestClient) -> None:
 
     response = client.get(f"{API}/constraints", params={"page": 2, "page_size": 2})
     assert len(response.json()["items"]) == 1
+
+
+# --- Constraints target project roles and templates, never tenant roles ---
+
+
+def _tenant_role() -> str:
+    role = make_role(name="Tenant Role", tenant_id="acme")
+    app.dependency_overrides[get_role_repository]("default")._store(str(role.id), role)
+    return str(role.id)
+
+
+def _config_with(field: str, role_id: str) -> dict:
+    other = str(PydanticObjectId())
+    return {
+        "role_ids": {"role_ids": [other, role_id]},
+        "role_id": {"role_id": role_id, "max_assignments": 1},
+        "requires_role_id": {"role_id": other, "requires_role_id": role_id},
+    }[field]
+
+
+@pytest.mark.parametrize(
+    ("field", "kind"),
+    [
+        ("role_ids", "mutual_exclusion"),
+        ("role_id", "cardinality"),
+        ("requires_role_id", "prerequisite"),
+    ],
+)
+def test_create_rejects_tenant_role(client: TestClient, field: str, kind: str) -> None:
+    tenant_role = _tenant_role()
+
+    response = client.post(
+        f"{API}/constraints",
+        json={"name": "bad", "type": kind, "config": _config_with(field, tenant_role)},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["details"]["role_id"] == tenant_role
+    assert client.get(f"{API}/constraints").json()["items"] == []
+
+
+def test_create_accepts_project_role_and_template(client: TestClient) -> None:
+    project = client.post(f"{API}/roles", json={"name": "plain"}).json()["id"]
+    template = make_role(name="Tmpl", is_template=True)
+    app.dependency_overrides[get_role_repository]("default")._store(
+        str(template.id), template
+    )
+
+    response = client.post(
+        f"{API}/constraints",
+        json={
+            "name": "ok",
+            "type": "mutual_exclusion",
+            "config": {"role_ids": [project, str(template.id)]},
+        },
+    )
+
+    assert response.status_code == 201
+
+
+def test_update_rejects_tenant_role(client: TestClient) -> None:
+    created = client.post(f"{API}/constraints", json=MUTUAL_EXCLUSION_DATA).json()
+    tenant_role = _tenant_role()
+
+    response = client.patch(
+        f"{API}/constraints/{created['id']}",
+        json={"config": {"role_ids": [str(PydanticObjectId()), tenant_role]}},
+    )
+
+    assert response.status_code == 422
+    unchanged = client.get(f"{API}/constraints/{created['id']}").json()
+    assert (
+        unchanged["config"]["role_ids"] == MUTUAL_EXCLUSION_DATA["config"]["role_ids"]
+    )

@@ -5,6 +5,7 @@ from osiki.models.base import Scope
 from osiki.models.constraint import ConstraintConfig, ConstraintType, ScopeLevel
 from tests.conftest import (
     make_constraint,
+    make_group,
     make_group_role,
     make_role,
     make_user_group,
@@ -315,6 +316,7 @@ async def test_prerequisite_passes_has_required_role(
     constraint_validator,
     mock_constraint_repository,
     mock_user_role_repository,
+    mock_role_repository,
 ) -> None:
     user_id = PydanticObjectId()
     prereq_role = PydanticObjectId()
@@ -327,6 +329,7 @@ async def test_prerequisite_passes_has_required_role(
     )
     await mock_constraint_repository.create(constraint)
 
+    await _active_role(mock_role_repository, prereq_role)
     ur = make_user_role(user_id=user_id, role_id=prereq_role)
     await mock_user_role_repository.create(ur)
 
@@ -415,6 +418,7 @@ async def test_validate_checks_all_constraint_types(
     constraint_validator,
     mock_constraint_repository,
     mock_user_role_repository,
+    mock_role_repository,
 ) -> None:
     user_id = PydanticObjectId()
     role_a = PydanticObjectId()
@@ -442,6 +446,7 @@ async def test_validate_checks_all_constraint_types(
     await mock_constraint_repository.create(c2)
     await mock_constraint_repository.create(c3)
 
+    await _active_role(mock_role_repository, prereq_role)
     ur = make_user_role(user_id=user_id, role_id=prereq_role)
     await mock_user_role_repository.create(ur)
 
@@ -492,6 +497,7 @@ async def test_validate_success_all_pass(
     constraint_validator,
     mock_constraint_repository,
     mock_user_role_repository,
+    mock_role_repository,
 ) -> None:
     user_id = PydanticObjectId()
     role_a = PydanticObjectId()
@@ -512,6 +518,7 @@ async def test_validate_success_all_pass(
     await mock_constraint_repository.create(c1)
     await mock_constraint_repository.create(c2)
 
+    await _active_role(mock_role_repository, prereq_role)
     ur = make_user_role(user_id=user_id, role_id=prereq_role)
     await mock_user_role_repository.create(ur)
 
@@ -582,6 +589,7 @@ async def test_prerequisite_respects_tenant_scope(
     constraint_validator,
     mock_constraint_repository,
     mock_user_role_repository,
+    mock_role_repository,
     held: str | None,
     assigned: str | None,
     satisfied: bool,
@@ -595,6 +603,7 @@ async def test_prerequisite_respects_tenant_scope(
             config=ConstraintConfig(role_id=TARGET, requires_role_id=PREREQ),
         )
     )
+    await _active_role(mock_role_repository, PREREQ)
     await _hold(mock_user_role_repository, user_id, held)
 
     result = await constraint_validator.validate(
@@ -643,17 +652,29 @@ def _exclusive(role_a: PydanticObjectId, role_b: PydanticObjectId):
 
 
 async def _join_group_with_role(
-    env, user_id: PydanticObjectId, role_id: PydanticObjectId, **kwargs
+    env,
+    user_id: PydanticObjectId,
+    role_id: PydanticObjectId,
+    *,
+    group_active: bool = True,
+    **kwargs,
 ) -> None:
-    group_id = PydanticObjectId()
-    await env["user_groups"].create(make_user_group(user_id, group_id))
-    group_role = make_group_role(group_id, role_id, **kwargs)
-    await env["group_roles"].create(group_role)
+    group = make_group()
+    group.is_active = group_active
+    await env["groups"].create(group)
+    await env["user_groups"].create(make_user_group(user_id, group.id))
+    await env["group_roles"].create(make_group_role(group.id, role_id, **kwargs))
+
+
+async def _active_role(repo, role_id: PydanticObjectId, **kwargs) -> None:
+    """A role document for ``role_id``: prerequisites need one that is active."""
+    await repo.create(make_role(name=f"role-{role_id}", role_id=role_id, **kwargs))
 
 
 @pytest.fixture
-def env(mock_user_group_repository, mock_group_role_repository):
+def env(mock_user_group_repository, mock_group_role_repository, mock_group_repository):
     return {
+        "groups": mock_group_repository,
         "user_groups": mock_user_group_repository,
         "group_roles": mock_group_role_repository,
     }
@@ -678,9 +699,7 @@ async def test_mutual_exclusion_ignores_expired_group_role(
 ) -> None:
     user_id = PydanticObjectId()
     await mock_constraint_repository.create(_exclusive(PREREQ, TARGET))
-    await _join_group_with_role(env, user_id, PREREQ)
-    group_role = env["group_roles"]._scoped()[0]
-    group_role.expires_at = 50.0
+    await _join_group_with_role(env, user_id, PREREQ, expires_at=50.0)
 
     result = await constraint_validator.validate(
         str(user_id), str(TARGET), {}, now=100.0
@@ -724,9 +743,10 @@ async def test_group_role_in_other_tenant_does_not_exclude(
 
 
 async def test_prerequisite_satisfied_by_group_held_role(
-    constraint_validator, mock_constraint_repository, env
+    constraint_validator, mock_constraint_repository, mock_role_repository, env
 ) -> None:
     user_id = PydanticObjectId()
+    await _active_role(mock_role_repository, PREREQ)
     await mock_constraint_repository.create(
         make_constraint(
             name="target-requires-prereq",
@@ -1091,3 +1111,98 @@ async def test_malformed_role_id_is_not_a_constraint_error(
     )
 
     assert result.valid is True
+
+
+async def test_prerequisite_not_satisfied_via_deactivated_group(
+    constraint_validator, mock_constraint_repository, mock_role_repository, env
+) -> None:
+    user_id = PydanticObjectId()
+    await _active_role(mock_role_repository, PREREQ)
+    await mock_constraint_repository.create(
+        make_constraint(
+            name="target-requires-prereq",
+            constraint_type=ConstraintType.PREREQUISITE,
+            config=ConstraintConfig(role_id=TARGET, requires_role_id=PREREQ),
+        )
+    )
+    await _join_group_with_role(env, user_id, PREREQ, group_active=False)
+
+    result = await constraint_validator.validate(str(user_id), str(TARGET), {})
+
+    assert result.valid is False
+    assert result.reason == "Prerequisite role not assigned"
+
+
+async def test_prerequisite_not_satisfied_via_inactive_membership(
+    constraint_validator, mock_constraint_repository, mock_role_repository, env
+) -> None:
+    user_id = PydanticObjectId()
+    await _active_role(mock_role_repository, PREREQ)
+    await mock_constraint_repository.create(
+        make_constraint(
+            name="target-requires-prereq",
+            constraint_type=ConstraintType.PREREQUISITE,
+            config=ConstraintConfig(role_id=TARGET, requires_role_id=PREREQ),
+        )
+    )
+    await _join_group_with_role(env, user_id, PREREQ)
+    membership = env["user_groups"]._scoped()[0]
+    membership.is_active = False
+
+    result = await constraint_validator.validate(str(user_id), str(TARGET), {})
+
+    assert result.valid is False
+
+
+async def test_exclusion_ignores_role_held_only_via_deactivated_group(
+    constraint_validator, mock_constraint_repository, env
+) -> None:
+    user_id = PydanticObjectId()
+    await mock_constraint_repository.create(_exclusive(PREREQ, TARGET))
+    await _join_group_with_role(env, user_id, PREREQ, group_active=False)
+
+    result = await constraint_validator.validate(str(user_id), str(TARGET), {})
+
+    assert result.valid is True
+
+
+async def test_prerequisite_not_satisfied_by_deactivated_held_role(
+    constraint_validator,
+    mock_constraint_repository,
+    mock_role_repository,
+    mock_user_role_repository,
+) -> None:
+    user_id = PydanticObjectId()
+    await _active_role(mock_role_repository, PREREQ, is_active=False)
+    await mock_constraint_repository.create(
+        make_constraint(
+            name="target-requires-prereq",
+            constraint_type=ConstraintType.PREREQUISITE,
+            config=ConstraintConfig(role_id=TARGET, requires_role_id=PREREQ),
+        )
+    )
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user_id, role_id=PREREQ)
+    )
+
+    result = await constraint_validator.validate(str(user_id), str(TARGET), {})
+
+    assert result.valid is False
+
+
+async def test_exclusion_still_counts_deactivated_held_role(
+    constraint_validator,
+    mock_constraint_repository,
+    mock_role_repository,
+    mock_user_role_repository,
+) -> None:
+    user_id = PydanticObjectId()
+    await _active_role(mock_role_repository, PREREQ, is_active=False)
+    await mock_constraint_repository.create(_exclusive(PREREQ, TARGET))
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user_id, role_id=PREREQ)
+    )
+
+    result = await constraint_validator.validate(str(user_id), str(TARGET), {})
+
+    assert result.valid is False

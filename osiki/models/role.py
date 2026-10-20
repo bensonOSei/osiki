@@ -38,6 +38,7 @@ class Role(Document, EnvironmentMixin, TimestampMixin, SoftDeleteMixin, Metadata
             ),
             IndexModel([("environment_id", 1), ("tenant_id", 1), ("is_active", 1)]),
             IndexModel([("environment_id", 1), ("parent_role_id", 1)]),
+            IndexModel([("environment_id", 1), ("copied_from", 1)]),
             IndexModel([("environment_id", 1), ("grants.permission_id", 1)]),
             IndexModel([("environment_id", 1), ("is_active", 1), ("created_at", -1)]),
         ]

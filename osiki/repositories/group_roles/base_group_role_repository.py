@@ -14,7 +14,10 @@ class BaseGroupRoleRepository(ABC):
     async def get_group_roles(self, group_id: str) -> list[GroupRole]: ...
 
     @abstractmethod
-    async def get_roles_for_groups(self, group_ids: list[str]) -> list[GroupRole]: ...
+    async def get_roles_for_groups(
+        self, group_ids: list[str], *, now: float | None = None
+    ) -> list[GroupRole]:
+        """Active assignments unexpired at ``now`` (default: the current time)."""
 
     @abstractmethod
     async def get_groups_with_role(self, role_id: str) -> list[GroupRole]: ...

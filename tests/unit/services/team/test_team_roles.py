@@ -128,6 +128,7 @@ class Env:
                 self.roles,
                 self.group_roles,
                 self.user_groups,
+                self.groups,
             ),
             uow=NullUnitOfWork(),
             audit=AuditWriter(self.audit_repo),

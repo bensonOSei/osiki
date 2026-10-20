@@ -462,7 +462,9 @@ def test_cardinality_per_tenant_counts_only_this_env(client: TestClient) -> None
 
 
 def test_prerequisite_blocks_assignment(client: TestClient) -> None:
-    editor, viewer = str(PydanticObjectId()), str(PydanticObjectId())
+    editor = str(PydanticObjectId())
+    # A prerequisite is only met by an existing, active role.
+    viewer = client.post(f"{API}/roles", json={"name": "viewer"}).json()["id"]
     _constraint(
         client,
         {

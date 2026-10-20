@@ -196,6 +196,7 @@ def test_get_constraint_validator() -> None:
         get_role_repository("default", _state()),
         get_group_role_repository("default", _state()),
         get_user_group_repository("default", _state()),
+        get_group_repository("default", _state()),
     )
     assert isinstance(validator, ConstraintValidator)
 
@@ -271,6 +272,7 @@ def test_get_team_service_wires_the_tenant_and_actor() -> None:
             roles,
             get_group_role_repository("default", state),
             get_user_group_repository("default", state),
+            get_group_repository("default", state),
         ),
         NullUnitOfWork(),
     )

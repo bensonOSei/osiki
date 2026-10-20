@@ -1,4 +1,5 @@
 import time
+from typing import NamedTuple
 
 from beanie import PydanticObjectId
 from loguru import logger
@@ -11,6 +12,7 @@ from osiki.repositories.constraints.base_constraint_repository import (
 from osiki.repositories.group_roles.base_group_role_repository import (
     BaseGroupRoleRepository,
 )
+from osiki.repositories.groups.base_group_repository import BaseGroupRepository
 from osiki.repositories.roles.base_role_repository import BaseRoleRepository
 from osiki.repositories.user_groups.base_user_group_repository import (
     BaseUserGroupRepository,
@@ -24,6 +26,12 @@ from osiki.services.constraint_validator.base_constraint_validator import (
 )
 
 
+class _Held(NamedTuple):
+    role_id: PydanticObjectId  # canonical
+    tenant_id: str | None
+    active: bool  # the role document was found active
+
+
 class ConstraintValidator(BaseConstraintValidator):
     def __init__(
         self,
@@ -32,32 +40,40 @@ class ConstraintValidator(BaseConstraintValidator):
         role_repository: BaseRoleRepository,
         group_role_repository: BaseGroupRoleRepository,
         user_group_repository: BaseUserGroupRepository,
+        group_repository: BaseGroupRepository,
     ) -> None:
         self._constraint_repo = constraint_repository
         self._user_role_repo = user_role_repository
         self._role_repo = role_repository
         self._group_role_repo = group_role_repository
         self._user_group_repo = user_group_repository
+        self._group_repo = group_repository
 
-    async def _canonical_ids(self, role_ids: set[PydanticObjectId]) -> dict[str, str]:
-        """Each role's canonical id: its template for a tenant copy, else itself.
+    async def _canonical_ids(
+        self, role_ids: set[PydanticObjectId]
+    ) -> dict[str, tuple[str, bool]]:
+        """Each role's (canonical id, found active) pair.
 
-        A role that is gone or inactive keeps its own id, so an assignment of it
-        still counts (deny-safe). A deactivated template needs no lookup: the
-        copy carries ``copied_from``.
+        The canonical id is the template for a tenant copy, else the role's own
+        id. A role that is missing or inactive is not found active and keeps
+        its own id: it still counts for mutual exclusion (deny-safe) but never
+        satisfies a prerequisite. A deactivated template needs no lookup: its
+        copies carry ``copied_from``.
         """
         roles = await self._role_repo.get_by_ids([str(rid) for rid in role_ids])
-        canonical = {str(rid): str(rid) for rid in role_ids}
+        canonical = {str(rid): (str(rid), False) for rid in role_ids}
         for role in roles:
-            if role.copied_from is not None:
-                canonical[str(role.id)] = str(role.copied_from)
+            canonical[str(role.id)] = (
+                str(role.copied_from if role.copied_from is not None else role.id),
+                True,
+            )
         return canonical
 
     async def _held(
         self, user_id: str, now: float, session: AsyncClientSession | None
-    ) -> list[tuple[PydanticObjectId, str | None]]:
-        """(canonical role id, tenant) of every active, unexpired role the user
-        holds, directly or through a group. A user with no assignments holds
+    ) -> list[_Held]:
+        """Every active, unexpired role the user holds, directly or through a
+        group that is itself still active. A user with no assignments holds
         nothing."""
         assignments = [
             (ur.role_id, ur.scope.tenant_id)
@@ -66,10 +82,21 @@ class ConstraintValidator(BaseConstraintValidator):
             )
             if ur.is_active and (ur.expires_at is None or ur.expires_at > now)
         ]
-        memberships = await self._user_group_repo.get_user_groups(user_id)
-        if memberships:
+        # Deleting a group only deactivates it: its members hold nothing then.
+        member_of = [
+            str(m.group_id)
+            for m in await self._user_group_repo.get_user_groups(user_id)
+            if m.is_active
+        ]
+        live = (
+            {str(g.id) for g in await self._group_repo.get_by_ids(member_of)}
+            if member_of
+            else set()
+        )
+        group_ids = [gid for gid in member_of if gid in live]
+        if group_ids:
             group_roles = await self._group_role_repo.get_roles_for_groups(
-                [str(m.group_id) for m in memberships]
+                group_ids, now=now
             )
             assignments.extend(
                 (gr.role_id, gr.scope.tenant_id)
@@ -79,7 +106,10 @@ class ConstraintValidator(BaseConstraintValidator):
         if not assignments:
             return []
         canonical = await self._canonical_ids({rid for rid, _ in assignments})
-        return [(PydanticObjectId(canonical[str(rid)]), t) for rid, t in assignments]
+        return [
+            _Held(PydanticObjectId(canonical[str(rid)][0]), t, canonical[str(rid)][1])
+            for rid, t in assignments
+        ]
 
     async def validate(
         self,
@@ -102,7 +132,7 @@ class ConstraintValidator(BaseConstraintValidator):
         canonical_role = role_id
         if PydanticObjectId.is_valid(role_id):
             canonical = await self._canonical_ids({PydanticObjectId(role_id)})
-            canonical_role = canonical[str(PydanticObjectId(role_id))]
+            canonical_role = canonical[str(PydanticObjectId(role_id))][0]
 
         for constraint in constraints:
             if constraint.type == ConstraintType.MUTUAL_EXCLUSION:
@@ -204,9 +234,11 @@ class ConstraintValidator(BaseConstraintValidator):
         # every tenant, on either side (deny-safe).
         tenant_id = scope.get("tenant_id")
         user_role_ids = {
-            rid
-            for rid, held_tenant in await self._held(user_id, now, session)
-            if tenant_id is None or held_tenant is None or held_tenant == tenant_id
+            held.role_id
+            for held in await self._held(user_id, now, session)
+            if tenant_id is None
+            or held.tenant_id is None
+            or held.tenant_id == tenant_id
         }
 
         for conflicting_id in conflicting_role_ids:
@@ -276,9 +308,9 @@ class ConstraintValidator(BaseConstraintValidator):
         # prerequisite.
         tenant_id = scope.get("tenant_id")
         user_role_ids = {
-            rid
-            for rid, held_tenant in await self._held(user_id, now, session)
-            if held_tenant is None or held_tenant == tenant_id
+            held.role_id
+            for held in await self._held(user_id, now, session)
+            if held.active and (held.tenant_id is None or held.tenant_id == tenant_id)
         }
 
         if requires_role_id not in user_role_ids:

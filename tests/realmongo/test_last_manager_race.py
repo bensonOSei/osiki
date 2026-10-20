@@ -88,6 +88,7 @@ def service(env: RealMongoEnv, actor: Actor) -> TeamService:
             env.roles,
             group_roles,
             get_user_group_repository(ENVIRONMENT_ID, state),
+            get_group_repository(ENVIRONMENT_ID, state),
         ),
         uow=MongoUnitOfWork(get_client(), enabled=True),
         audit=AuditWriter(env.audit),

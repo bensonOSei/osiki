@@ -342,6 +342,7 @@ def constraint_validator(
     mock_role_repository,
     mock_group_role_repository,
     mock_user_group_repository,
+    mock_group_repository,
 ) -> ConstraintValidator:
     return ConstraintValidator(
         constraint_repository=mock_constraint_repository,
@@ -349,6 +350,7 @@ def constraint_validator(
         role_repository=mock_role_repository,
         group_role_repository=mock_group_role_repository,
         user_group_repository=mock_user_group_repository,
+        group_repository=mock_group_repository,
     )
 
 

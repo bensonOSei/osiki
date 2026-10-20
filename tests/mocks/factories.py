@@ -171,12 +171,14 @@ def make_group_role(
     role_id: PydanticObjectId,
     scope: Scope | None = None,
     group_role_id: PydanticObjectId | None = None,
+    expires_at: float | None = None,
 ) -> GroupRole:
     gr = GroupRole(
         group_id=group_id,
         role_id=role_id,
         scope=scope or Scope(),
         assigned_by="admin",
+        expires_at=expires_at,
     )
     gr.id = group_role_id or PydanticObjectId()
     return gr

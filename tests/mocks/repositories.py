@@ -366,11 +366,16 @@ class MockGroupRoleRepository(_AssignmentBound[GroupRole], BaseGroupRoleReposito
             gr for gr in self._scoped() if str(gr.group_id) == group_id and gr.is_active
         ]
 
-    async def get_roles_for_groups(self, group_ids: list[str]) -> list[GroupRole]:
+    async def get_roles_for_groups(
+        self, group_ids: list[str], *, now: float | None = None
+    ) -> list[GroupRole]:
+        now = time.time() if now is None else now
         return [
             gr
             for gr in self._scoped()
-            if str(gr.group_id) in group_ids and gr.is_active
+            if str(gr.group_id) in group_ids
+            and gr.is_active
+            and (gr.expires_at is None or gr.expires_at > now)
         ]
 
     async def get_groups_with_role(self, role_id: str) -> list[GroupRole]:
