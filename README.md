@@ -166,7 +166,7 @@ Osiki has no login of its own. Your own front door authenticates the person and 
 
 > **Never expose the engine without a front door that sets `X-Osiki-Actor`.** The engine trusts the header. A missing header means `developer:anonymous`, and a developer passes the team-manager and no-escalation checks (they still get `not_assignable`, `not_offered`, `constraint` and `last_manager`). A malformed header returns `422`.
 >
-> No engine route has authentication, and every developer route ignores `X-Osiki-Actor`. That includes `/roles`, `/users/{id}/roles`, `/permissions`, `/constraints`, `/tenants/...` (outside `/team`) and `PUT /environment/bootstrap`. Your front door must expose **only** `/api/v1/tenants/{their tenant}/team/...` to tenant users, pin `X-Osiki-Environment` itself, and set `X-Osiki-Actor` itself (strip any value a client sends). Everything else is developer-only.
+> No engine route has authentication, and most developer routes ignore `X-Osiki-Actor`: `/roles`, `/users/{id}/roles`, `/permissions`, `/constraints`, `/tenants/...` (outside `/team`) and `PUT /environment/bootstrap`. Two read it without protecting anything: `GET /tenants` refuses a `tenant_user` with 403, and `POST /audit-logs` records the header's actor as given. Your front door must expose **only** `/api/v1/tenants/{their tenant}/team/...` to tenant users, pin `X-Osiki-Environment` itself, and set `X-Osiki-Actor` itself (strip any value a client sends). Everything else is developer-only.
 
 The actor is recorded on every team change in the audit log (`GET /tenants/{tenant_id}/team/audit-logs`).
 
