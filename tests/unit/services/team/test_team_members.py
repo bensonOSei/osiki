@@ -939,3 +939,62 @@ async def test_role_grants_fail_closed_when_the_snapshot_lacks_the_template(
     grants = await service._role_grants(child)
 
     assert {g.permission for g in grants} == {"till:open", "till:close"}
+
+
+async def test_tenant_role_grant_on_an_inactive_permission_still_escalates(
+    env: Env,
+) -> None:
+    read = await env.permission("invoices", "read")
+    secret = await env.permission("vault", "open")
+    actor = await env.manager(holds=[read])
+    role = await tenant_role(env, "Keeper", [read, secret])
+    await env.permissions.deactivate(str(secret.id))
+
+    with pytest.raises(EscalationRefused) as caught:
+        await env.service(actor).add_member(
+            "u-new", name=None, email=None, role_id=str(role.id)
+        )
+    assert caught.value.details["uncovered"] == "vault:open"
+    assert await env.users.get_by_external_id("u-new") is None
+
+
+async def test_template_grants_on_inactive_builtin_permissions_still_escalate(
+    env: Env,
+) -> None:
+    # Built-in permissions keep a template offered even when inactive.
+    read = await env.permission("invoices", "read")
+    own = await env.permission("osiki.billing", "own", assignable=False)
+    inherited = await env.permission("osiki.billing", "inherit", assignable=False)
+    actor = await env.manager(holds=[read])
+    parent = await env.roles.create(make_role("Parent", permission_ids=[inherited.id]))
+    child = await env.roles.create(
+        make_role(
+            "Child",
+            permission_ids=[read.id, own.id],
+            parent_role_id=parent.id,
+            is_template=True,
+        )
+    )
+    await env.permissions.deactivate(str(own.id))
+    await env.permissions.deactivate(str(inherited.id))
+
+    with pytest.raises(EscalationRefused) as caught:
+        await env.service(actor).add_member(
+            "u-new", name=None, email=None, role_id=str(child.id)
+        )
+    assert caught.value.details["uncovered"] == (
+        "osiki.billing:own, osiki.billing:inherit"
+    )
+
+
+async def test_inactive_permission_the_manager_holds_does_not_block(
+    env: Env,
+) -> None:
+    read = await env.permission("invoices", "read")
+    actor = await env.manager(holds=[read])
+    role = await tenant_role(env, "Reader", [read])
+
+    result = await env.service(actor).add_member(
+        "u-new", name=None, email=None, role_id=str(role.id)
+    )
+    assert [r.id for r in result.roles] == [str(role.id)]

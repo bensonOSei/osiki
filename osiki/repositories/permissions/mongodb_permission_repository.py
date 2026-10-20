@@ -48,6 +48,13 @@ class MongoDBPermissionRepository(BasePermissionRepository):
             {"_id": {"$in": object_ids}, "is_active": True},
         ).to_list()
 
+    async def get_by_ids_any(self, permission_ids: list[str]) -> list[Permission]:
+        object_ids = [PydanticObjectId(pid) for pid in permission_ids]
+        return await Permission.find(
+            Permission.environment_id == self.environment_id,
+            {"_id": {"$in": object_ids}},
+        ).to_list()
+
     async def get_by_resource_action(
         self, resource: str, action: str
     ) -> Permission | None:

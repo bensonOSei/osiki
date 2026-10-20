@@ -16,6 +16,10 @@ class BasePermissionRepository(ABC):
     async def get_by_ids(self, permission_ids: list[str]) -> list[Permission]: ...
 
     @abstractmethod
+    async def get_by_ids_any(self, permission_ids: list[str]) -> list[Permission]:
+        """The permissions with these ids, active or not."""
+
+    @abstractmethod
     async def get_by_resource_action(
         self, resource: str, action: str
     ) -> Permission | None: ...

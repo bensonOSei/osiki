@@ -218,14 +218,21 @@ class TeamService:
             for g in role.grants
         ]
 
-    async def _render(self, roles: list[Role]) -> list[TeamRole]:
+    async def _render(
+        self, roles: list[Role], *, include_inactive: bool = False
+    ) -> list[TeamRole]:
+        """Roles as the team sees them. Grants on inactive permissions are
+        left out unless ``include_inactive``, which escalation checks use: a
+        later reactivation would hand them out."""
         permission_ids = list(
             dict.fromkeys(str(g.permission_id) for r in roles for g in r.grants)
         )
-        permissions = {
-            str(p.id): p.permission_string
-            for p in await self._permission_repo.get_by_ids(permission_ids)
-        }
+        found = (
+            await self._permission_repo.get_by_ids_any(permission_ids)
+            if include_inactive
+            else await self._permission_repo.get_by_ids(permission_ids)
+        )
+        permissions = {str(p.id): p.permission_string for p in found}
         conditions = {str(c.id): c.key for c in await self._condition_repo.get_all()}
         return [
             TeamRole(
@@ -770,20 +777,25 @@ class TeamService:
         return role
 
     async def _role_grants(self, role: Role) -> list[GrantEntry]:
-        """Every grant assigning ``role`` gives, inherited ones included."""
+        """Every grant assigning ``role`` gives, inherited ones included, and
+        grants on inactive permissions too: reactivating one must not hand out
+        what the assigner could not."""
         if role.tenant_id is not None:
-            return (await self._render([role]))[0].grants
+            return (await self._render([role], include_inactive=True))[0].grants
+        lineage = await self._lineage(role)
+        dormant = [
+            g
+            for rendered in await self._render(lineage, include_inactive=True)
+            for g in rendered.grants
+        ]
         snapshot = await self._snapshot_builder.build()
         roles = {r.id: r for r in snapshot.roles}
         if str(role.id) not in roles:
             # Fail closed: never let escalation pass vacuously on a role the
             # snapshot lacks; render it and its ancestors from the repo.
-            return [
-                g
-                for rendered in await self._render(await self._lineage(role))
-                for g in rendered.grants
-            ]
-        return [g for r in _walk(roles, str(role.id)) for g in r.grants]
+            return dormant
+        live = [g for r in _walk(roles, str(role.id)) for g in r.grants]
+        return [*live, *(g for g in dormant if g not in live)]
 
     async def _member_user(
         self, user_id: str, session: AsyncClientSession | None

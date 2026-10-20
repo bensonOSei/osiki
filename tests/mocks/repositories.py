@@ -569,6 +569,9 @@ class MockPermissionRepository(_ConfigBound[Permission], BasePermissionRepositor
             if (p := self._get(pid)) is not None and p.is_active
         ]
 
+    async def get_by_ids_any(self, permission_ids: list[str]) -> list[Permission]:
+        return [p for pid in permission_ids if (p := self._get(pid)) is not None]
+
     async def get_by_resource_action(
         self, resource: str, action: str
     ) -> Permission | None:
