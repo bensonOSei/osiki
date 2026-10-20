@@ -33,6 +33,7 @@ from tests.mocks import (
     make_group,
     make_group_role,
     make_role,
+    make_snapshot,
     make_user,
     make_user_group,
     make_user_role,
@@ -146,7 +147,7 @@ async def test_add_member_creates_user_membership_assignment_and_one_audit_entry
     assert env.locks._data[TENANT].version == 1
 
 
-async def test_add_member_with_owner_requires_holding_team_manage(env: Env) -> None:
+async def test_non_manager_cannot_hand_on_owner(env: Env) -> None:
     """A tenant_user who does not hold ``osiki.team:manage`` (only Cashier) is
     refused before any assignment rule runs, so they can never hand on Owner."""
     cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
@@ -889,3 +890,52 @@ async def test_developer_may_remove_a_manager_while_another_remains(env: Env) ->
     await group_owner(env, "via-group")
     await env.service(DEVELOPER).remove_member("boss")
     assert not await env.members.is_member(TENANT, "boss")
+
+
+async def test_a_project_role_held_in_the_tenant_shows_as_project(env: Env) -> None:
+    project = await env.roles.create(
+        make_role("Admin", permission_ids=[(await env.permission("till", "open")).id])
+    )
+    await member(env, "u-1", [project])
+
+    (listed,) = [m for m in await env.service().list_members() if m.user_id == "u-1"]
+
+    assert [(r.name, r.kind) for r in listed.roles] == [("Admin", "project")]
+
+
+async def test_template_and_tenant_roles_keep_their_kind(env: Env) -> None:
+    template = await env.template("Tmpl", [await env.permission("till", "open")])
+    own = await tenant_role(env, "Own", [await env.permission("till", "close")])
+    await member(env, "u-1", [template, own])
+
+    (listed,) = [m for m in await env.service().list_members() if m.user_id == "u-1"]
+
+    assert {r.name: r.kind for r in listed.roles} == {
+        "Tmpl": "template",
+        "Own": "tenant",
+    }
+
+
+async def test_role_grants_fail_closed_when_the_snapshot_lacks_the_template(
+    env: Env,
+) -> None:
+    """A template missing from the snapshot must not yield no grants (which
+    would let escalation pass vacuously): it is rendered from the repo."""
+    parent = await env.template("Parent", [await env.permission("till", "close")])
+    child = make_role(
+        "Child",
+        permission_ids=[(await env.permission("till", "open")).id],
+        is_template=True,
+        parent_role_id=parent.id,
+    )
+    child = await env.roles.create(child)
+    service = env.service()
+
+    async def empty_snapshot() -> Any:
+        return make_snapshot([])
+
+    service._snapshot_builder.build = empty_snapshot  # type: ignore[method-assign]
+
+    grants = await service._role_grants(child)
+
+    assert {g.permission for g in grants} == {"till:open", "till:close"}

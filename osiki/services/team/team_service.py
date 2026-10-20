@@ -175,13 +175,32 @@ class TeamService:
         """Active project templates whose every grant is assignable or built-in."""
         offered: list[Role] = []
         for template in await self._role_repo.list_templates():
-            permissions = await self._permissions_of(template)
+            permissions = [
+                p
+                for ancestor in await self._lineage(template)
+                for p in await self._permissions_of(ancestor)
+            ]
             if all(
                 p is not None and (is_builtin(p) or (p.is_active and p.assignable))
                 for p in permissions
             ):
                 offered.append(template)
         return offered
+
+    async def _lineage(self, role: Role) -> list[Role]:
+        """The role then its ancestors; stops at a missing or inactive parent
+        (the snapshot drops those too) or a cycle."""
+        lineage = [role]
+        seen = {role.id}
+        parent_id = role.parent_role_id
+        while parent_id is not None and parent_id not in seen:
+            parent = await self._role_repo.get_by_id(str(parent_id))
+            if parent is None or not parent.is_active:
+                break
+            lineage.append(parent)
+            seen.add(parent_id)
+            parent_id = parent.parent_role_id
+        return lineage
 
     async def _permissions_of(self, role: Role) -> list[Permission | None]:
         return [
@@ -202,7 +221,7 @@ class TeamService:
             TeamRole(
                 id=str(role.id),
                 name=role.name,
-                kind="template" if role.tenant_id is None else "tenant",
+                kind=_kind(role),
                 grants=[
                     GrantEntry(
                         permission=permissions[str(g.permission_id)],
@@ -403,7 +422,7 @@ class TeamService:
                 TeamRoleRef(
                     id=str(r.id),
                     name=r.name,
-                    kind="template" if r.tenant_id is None else "tenant",
+                    kind=_kind(r),
                 )
                 for r in roles
             ],
@@ -450,6 +469,14 @@ class TeamService:
     async def add_member(
         self, user_id: str, *, name: str | None, email: str | None, role_id: str
     ) -> TeamMember:
+        """Add ``user_id`` to the tenant with ``role_id``.
+
+        Front-door contract: ``user_id`` must identify a user who consented to
+        joining or authenticated, typically after accepting an invite. The
+        engine returns that user's environment-wide name and email to the
+        tenant's managers.
+        """
+
         async def operation(session: AsyncClientSession | None) -> None:
             role, stale = await self._check_add_member(
                 user_id, role_id, name=name, email=email, session=session
@@ -737,6 +764,14 @@ class TeamService:
             return (await self._render([role]))[0].grants
         snapshot = await self._snapshot_builder.build()
         roles = {r.id: r for r in snapshot.roles}
+        if str(role.id) not in roles:
+            # Fail closed: never let escalation pass vacuously on a role the
+            # snapshot lacks; render it and its ancestors from the repo.
+            return [
+                g
+                for rendered in await self._render(await self._lineage(role))
+                for g in rendered.grants
+            ]
         return [g for r in _walk(roles, str(role.id)) for g in r.grants]
 
     async def _member_user(
@@ -913,6 +948,12 @@ def _to_grants(refs: list[GrantRef]) -> list[Grant]:
 
 def _live(assignment: UserRole, now: float) -> bool:
     return assignment.expires_at is None or assignment.expires_at > now
+
+
+def _kind(role: Role) -> Literal["template", "tenant", "project"]:
+    if role.tenant_id is not None:
+        return "tenant"
+    return "template" if role.is_template else "project"
 
 
 def _walk(roles: Mapping[str, RoleEntry], role_id: str) -> Iterator[RoleEntry]:

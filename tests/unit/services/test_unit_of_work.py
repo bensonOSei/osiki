@@ -5,6 +5,7 @@ import pytest
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import OperationFailure, PyMongoError
 
+from osiki.api.exceptions import BusyError
 from osiki.services import unit_of_work
 from osiki.services.unit_of_work import (
     MongoUnitOfWork,
@@ -179,12 +180,16 @@ async def test_run_reruns_the_whole_operation_after_a_transient_error():
     assert client.events == ["session-start", "abort", "commit", "session-end"]
 
 
-async def test_run_gives_up_after_three_attempts():
+async def test_run_gives_up_after_five_attempts_with_a_busy_error():
     client = FakeClient()
-    op = Script(labelled(TRANSIENT), labelled(TRANSIENT), labelled(TRANSIENT))
-    with pytest.raises(OperationFailure):
+    errors = [labelled(TRANSIENT) for _ in range(5)]
+    op = Script(*errors)
+    with pytest.raises(BusyError) as caught:
         await uow(client).run(op)
-    assert len(op.sessions) == 3
+    assert len(op.sessions) == unit_of_work.MAX_ATTEMPTS == 5
+    assert caught.value.details == {"reason": "busy"}
+    assert caught.value.retry_after == 1
+    assert caught.value.__cause__ is errors[-1]
     assert "commit" not in client.events
 
 
@@ -218,10 +223,10 @@ async def test_run_retries_only_the_commit_when_its_result_is_unknown():
 
 async def test_run_raises_when_the_commit_result_stays_unknown():
     client = FakeClient()
-    client.session.commit_errors = [labelled(UNKNOWN)] * 3
+    client.session.commit_errors = [labelled(UNKNOWN)] * 5
     with pytest.raises(OperationFailure):
         await uow(client).run(Script())
-    assert client.events.count("commit-failed") == 3
+    assert client.events.count("commit-failed") == 5
 
 
 async def test_run_reruns_the_operation_when_the_commit_is_transient():

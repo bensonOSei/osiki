@@ -25,7 +25,7 @@ class TeamRole(BaseModel):
 
     id: str
     name: str
-    kind: Literal["template", "tenant"]
+    kind: Literal["template", "tenant", "project"]
     grants: list[GrantEntry]
     copied_from: str | None = None
     holders: int = 0
@@ -36,7 +36,7 @@ class TeamRoleRef(BaseModel):
 
     id: str
     name: str
-    kind: Literal["template", "tenant"]
+    kind: Literal["template", "tenant", "project"]
 
 
 class TeamMember(BaseModel):

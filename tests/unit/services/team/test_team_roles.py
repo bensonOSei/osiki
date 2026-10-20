@@ -1000,6 +1000,83 @@ async def test_template_with_inactive_assignable_permission_is_not_offered(
     assert await env.service().list_roles() == []
 
 
+async def test_template_inheriting_a_non_assignable_grant_is_not_offered(
+    env: Env,
+) -> None:
+    secret = await env.permission("vault", "open", assignable=False)
+    parent = await env.template("Parent", [secret])
+    await env.roles.create(
+        make_role(
+            "Child",
+            permission_ids=[(await env.permission("till", "open")).id],
+            is_template=True,
+            parent_role_id=parent.id,
+        )
+    )
+
+    offered = {r.name for r in await env.service().list_roles()}
+
+    assert offered == set()
+
+
+async def test_template_inheriting_an_inactive_permission_is_not_offered(
+    env: Env,
+) -> None:
+    dead = await env.permission("old", "read", assignable=True, active=False)
+    grandparent = await env.template("Grand", [dead])
+    parent = await env.roles.create(
+        make_role("Parent", parent_role_id=grandparent.id, is_template=True)
+    )
+    await env.roles.create(
+        make_role(
+            "Child",
+            permission_ids=[(await env.permission("till", "open")).id],
+            is_template=True,
+            parent_role_id=parent.id,
+        )
+    )
+
+    assert await env.service().list_roles() == []
+
+
+async def test_template_inheriting_only_assignable_grants_is_offered(
+    env: Env,
+) -> None:
+    parent = await env.template("Parent", [await env.permission("till", "close")])
+    await env.roles.create(
+        make_role(
+            "Child",
+            permission_ids=[(await env.permission("till", "open")).id],
+            is_template=True,
+            parent_role_id=parent.id,
+        )
+    )
+
+    assert {r.name for r in await env.service().list_roles()} == {"Parent", "Child"}
+
+
+async def test_inheritance_stops_at_an_inactive_or_missing_parent(env: Env) -> None:
+    """The snapshot drops inactive roles, so their grants are not inherited."""
+    secret = await env.permission("vault", "open", assignable=False)
+    inactive = await env.template("Gone", [secret], active=False)
+    open_ = (await env.permission("till", "open")).id
+    await env.roles.create(
+        make_role(
+            "A", permission_ids=[open_], is_template=True, parent_role_id=inactive.id
+        )
+    )
+    await env.roles.create(
+        make_role(
+            "B",
+            permission_ids=[open_],
+            is_template=True,
+            parent_role_id=PydanticObjectId(),
+        )
+    )
+
+    assert {r.name for r in await env.service().list_roles()} == {"A", "B"}
+
+
 async def test_update_that_changes_nothing_skips_write_bump_and_audit(
     env: Env,
 ) -> None:

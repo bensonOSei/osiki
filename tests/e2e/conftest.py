@@ -28,6 +28,7 @@ from osiki.api.dependencies import (
 from osiki.api.environment import EnvironmentId
 from osiki.api.exceptions import (
     AuthorizationError,
+    BusyError,
     ValidationError,
     register_exception_handlers,
 )
@@ -183,6 +184,10 @@ def _create_test_app() -> FastAPI:
     @test_app.get("/_test/validation-error")
     async def _trigger_validation_error() -> None:
         raise ValidationError("invalid input", details={"field": "test"})
+
+    @test_app.get("/_test/busy-error")
+    async def _trigger_busy_error() -> None:
+        raise BusyError("busy", details={"reason": "busy"})
 
     @test_app.get("/_test/internal-error")
     async def _trigger_internal_error() -> None:

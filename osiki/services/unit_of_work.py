@@ -9,12 +9,13 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import PyMongoError
 
+from osiki.api.exceptions import BusyError
 from osiki.configs.database import get_client
 from osiki.configs.settings import get_settings
 
 TRANSIENT_TRANSACTION_ERROR = "TransientTransactionError"
 UNKNOWN_COMMIT_RESULT = "UnknownTransactionCommitResult"
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 5
 
 type Operation[T] = Callable[[AsyncClientSession | None], Awaitable[T]]
 
@@ -65,7 +66,8 @@ class MongoUnitOfWork(UnitOfWork):
         (``backoff``, then doubling, jittered) to give the winner time to
         commit. ``UnknownTransactionCommitResult`` retries only the commit: the
         operation may already have committed, and re-running it would apply it
-        twice. Any other error aborts and propagates.
+        twice. Still transient after the last attempt, it raises ``BusyError``
+        (HTTP 503 with ``Retry-After``). Any other error aborts and propagates.
         """
         if not self._enabled:
             return await operation(None)
@@ -80,8 +82,13 @@ class MongoUnitOfWork(UnitOfWork):
                 except BaseException as exc:
                     if session.in_transaction:
                         await session.abort_transaction()
-                    if not _transient(exc) or attempt >= MAX_ATTEMPTS:
+                    if not _transient(exc):
                         raise
+                    if attempt >= MAX_ATTEMPTS:
+                        raise BusyError(
+                            "Too many concurrent changes; retry shortly",
+                            details={"reason": "busy"},
+                        ) from exc
                 await asyncio.sleep(
                     self._backoff * 2 ** (attempt - 1) * random.uniform(0.5, 1.5)
                 )
