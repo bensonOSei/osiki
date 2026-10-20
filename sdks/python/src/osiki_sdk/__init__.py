@@ -8,7 +8,7 @@ from osiki_sdk.logs import DecisionLogBatcher
 from osiki_sdk.osiki import Osiki, OsikiUnavailable
 from osiki_sdk.records import to_record
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Decision",

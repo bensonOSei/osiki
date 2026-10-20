@@ -873,7 +873,7 @@ files = [
 
 [[package]]
 name = "osiki-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for Osiki: local RBAC decisions from a cached snapshot."
 optional = false
 python-versions = ">=3.11,<4.0"
