@@ -2,7 +2,8 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from osiki.api.actor import Actor, get_actor
-from osiki.api.exceptions import ValidationError
+from osiki.api.exceptions import AuthorizationError, ValidationError
+from osiki.configs.settings import get_settings
 
 
 def test_absent_header_is_anonymous_developer() -> None:
@@ -43,3 +44,29 @@ def test_actor_is_frozen() -> None:
     actor = Actor(type="developer", id="x")
     with pytest.raises(PydanticValidationError):
         actor.id = "y"  # type: ignore[misc]
+
+
+def test_absent_header_refused_when_actor_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REQUIRE_ACTOR", "true")
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(AuthorizationError) as exc:
+            get_actor(None)
+        assert exc.value.details == {"reason": "missing_actor"}
+    finally:
+        monkeypatch.delenv("REQUIRE_ACTOR")
+        get_settings.cache_clear()
+
+
+def test_header_still_parsed_when_actor_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REQUIRE_ACTOR", "true")
+    get_settings.cache_clear()
+    try:
+        assert get_actor("developer:ci") == Actor(type="developer", id="ci")
+    finally:
+        monkeypatch.delenv("REQUIRE_ACTOR")
+        get_settings.cache_clear()

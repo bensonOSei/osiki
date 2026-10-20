@@ -4,7 +4,8 @@ from typing import Annotated, Literal
 from fastapi import Depends, Header
 from pydantic import BaseModel, ConfigDict
 
-from osiki.api.exceptions import ValidationError
+from osiki.api.exceptions import AuthorizationError, ValidationError
+from osiki.configs.settings import get_settings
 
 _ACTOR_ID = re.compile(r"[A-Za-z0-9._@-]{1,128}")
 
@@ -21,10 +22,16 @@ class Actor(BaseModel):
 def get_actor(x_osiki_actor: str | None = Header(None)) -> Actor:
     """Parse ``X-Osiki-Actor`` (``developer:<id>`` or ``tenant_user:<id>``).
 
-    An absent header is the anonymous developer; anything else malformed is
-    rejected rather than guessed at.
+    An absent header is the anonymous developer, unless ``require_actor`` is
+    set (hosted deployments), in which case it is refused. Anything malformed
+    is rejected rather than guessed at.
     """
     if x_osiki_actor is None:
+        if get_settings().require_actor:
+            raise AuthorizationError(
+                "X-Osiki-Actor header required",
+                details={"reason": "missing_actor"},
+            )
         return Actor(type="developer", id="anonymous")
     actor_type, _, actor_id = x_osiki_actor.partition(":")
     if actor_type == "developer":
