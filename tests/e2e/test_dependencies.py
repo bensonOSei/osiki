@@ -190,7 +190,13 @@ def test_get_authorization_service() -> None:
 def test_get_constraint_validator() -> None:
     constraint_repo = get_constraint_repository("default", _state())
     user_role_repo = get_user_role_repository("default", _state())
-    validator = get_constraint_validator(constraint_repo, user_role_repo)
+    validator = get_constraint_validator(
+        constraint_repo,
+        user_role_repo,
+        get_role_repository("default", _state()),
+        get_group_role_repository("default", _state()),
+        get_user_group_repository("default", _state()),
+    )
     assert isinstance(validator, ConstraintValidator)
 
 
@@ -260,7 +266,11 @@ def test_get_team_service_wires_the_tenant_and_actor() -> None:
             conditions,
         ),
         get_constraint_validator(
-            get_constraint_repository("default", state), user_roles
+            get_constraint_repository("default", state),
+            user_roles,
+            roles,
+            get_group_role_repository("default", state),
+            get_user_group_repository("default", state),
         ),
         NullUnitOfWork(),
     )

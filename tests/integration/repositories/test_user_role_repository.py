@@ -186,3 +186,36 @@ async def test_find_assignment_without_tenant_is_project_wide_only() -> None:
     )
     found = await repo.find_assignment(str(user_id), str(role_id))
     assert found is not None and found.id == project_wide.id
+
+
+async def test_count_active_matches_roles_scope_and_expiry() -> None:
+    repo = MongoDBUserRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    role_a, role_b, other = PydanticObjectId(), PydanticObjectId(), PydanticObjectId()
+    now = time.time()
+    rows = [
+        (role_a, Scope(tenant_id="acme"), None),
+        (role_b, Scope(tenant_id="acme", branch_id="b1"), now + 100),
+        (role_a, Scope(tenant_id="acme"), now - 100),  # expired
+        (role_a, Scope(tenant_id="other"), None),
+        (other, Scope(tenant_id="acme"), None),
+    ]
+    for role_id, scope, expires_at in rows:
+        await repo.create(
+            UserRole(
+                user_id=PydanticObjectId(),
+                role_id=role_id,
+                scope=scope,
+                assigned_by="admin",
+                expires_at=expires_at,
+            )
+        )
+    both = [str(role_a), str(role_b)]
+
+    assert await repo.count_active(both, {}, now) == 3
+    assert await repo.count_active(both, {"tenant_id": "acme"}, now) == 2
+    # Exact: the branch-scoped row no longer matches a tenant-only scope.
+    assert await repo.count_active(both, {"tenant_id": "acme"}, now, exact=True) == 1
+    assert await repo.count_active([str(role_b)], {"tenant_id": "acme"}, now) == 1
+    assert await repo.count_active(both, {"tenant_id": "acme"}, now + 200) == 1

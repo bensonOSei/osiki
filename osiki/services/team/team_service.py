@@ -731,6 +731,7 @@ class TeamService:
             str(user.id) if user is not None else str(PydanticObjectId()),
             role_id,
             self._scope(),
+            session=session,
         )
         if not result.valid:
             raise ConstraintViolated(result.constraint_name, result.reason)

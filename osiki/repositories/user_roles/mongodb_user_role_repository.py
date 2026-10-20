@@ -65,6 +65,31 @@ class MongoDBUserRoleRepository(BaseUserRoleRepository):
             UserRole.is_active == True,
         ).to_list()
 
+    async def count_active(
+        self,
+        role_ids: list[str],
+        scope_filter: dict[str, str],
+        now: float,
+        *,
+        exact: bool = False,
+        session: AsyncClientSession | None = None,
+    ) -> int:
+        query: dict[str, object] = {
+            "role_id": {"$in": [PydanticObjectId(rid) for rid in role_ids]},
+            "is_active": True,
+            "$or": [{"expires_at": None}, {"expires_at": {"$gt": now}}],
+        }
+        for key, value in scope_filter.items():
+            query[f"scope.{key}"] = value
+        found = UserRole.find(
+            UserRole.environment_id == self.environment_id, query, session=session
+        )
+        if not exact:
+            return await found.count()
+        return sum(
+            1 for ur in await found.to_list() if ur.scope.to_dict() == scope_filter
+        )
+
     async def get_by_tenant(
         self,
         tenant_id: str,

@@ -40,6 +40,12 @@ class BaseRoleRepository(ABC):
         """Every active project role flagged ``is_template``."""
 
     @abstractmethod
+    async def list_copies(
+        self, template_id: str, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        """Every tenant copy of the template, deactivated copies included."""
+
+    @abstractmethod
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]: ...
 
     @abstractmethod

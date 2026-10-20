@@ -25,6 +25,23 @@ class BaseUserRoleRepository(ABC):
     async def get_users_with_role(self, role_id: str) -> list[UserRole]: ...
 
     @abstractmethod
+    async def count_active(
+        self,
+        role_ids: list[str],
+        scope_filter: dict[str, str],
+        now: float,
+        *,
+        exact: bool = False,
+        session: AsyncClientSession | None = None,
+    ) -> int:
+        """Active, unexpired assignments of any of ``role_ids``.
+
+        An assignment counts when its scope carries every ``scope_filter`` key
+        with the same value (``{}`` counts every scope). ``exact=True`` also
+        requires that it carries no other scope key.
+        """
+
+    @abstractmethod
     async def get_by_tenant(
         self,
         tenant_id: str,

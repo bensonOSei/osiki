@@ -218,10 +218,20 @@ def get_constraint_validator(
     user_role_repository: Annotated[
         BaseUserRoleRepository, Depends(get_user_role_repository)
     ],
+    role_repository: Annotated[BaseRoleRepository, Depends(get_role_repository)],
+    group_role_repository: Annotated[
+        BaseGroupRoleRepository, Depends(get_group_role_repository)
+    ],
+    user_group_repository: Annotated[
+        BaseUserGroupRepository, Depends(get_user_group_repository)
+    ],
 ) -> BaseConstraintValidator:
     return ConstraintValidator(
         constraint_repository=constraint_repository,
         user_role_repository=user_role_repository,
+        role_repository=role_repository,
+        group_role_repository=group_role_repository,
+        user_group_repository=user_group_repository,
     )
 
 

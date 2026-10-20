@@ -412,3 +412,26 @@ async def test_add_and_remove_permission_bump_by_role_kind() -> None:
     await repo.remove_permission(str(project_role.id), pid)
     assert await state.get_config_version() == config + 2
     assert await state.get_assignments_version() == assignments + 2
+
+
+async def test_list_copies() -> None:
+    repo = MongoDBRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    template = await repo.create(Role(name="Editor", is_template=True))
+    live = await repo.create(
+        Role(name="Editor", tenant_id="acme", copied_from=template.id)
+    )
+    gone = await repo.create(
+        Role(
+            name="Editor",
+            tenant_id="beta",
+            copied_from=template.id,
+            is_active=False,
+        )
+    )
+    await repo.create(Role(name="Editor", tenant_id="other"))
+
+    copies = await repo.list_copies(str(template.id))
+
+    assert {c.id for c in copies} == {live.id, gone.id}

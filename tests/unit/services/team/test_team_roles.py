@@ -122,7 +122,13 @@ class Env:
             lock_repo=self.locks,
             snapshot_builder=snapshots,
             bundle_builder=bundles,
-            validator=ConstraintValidator(self.constraints, self.user_roles),
+            validator=ConstraintValidator(
+                self.constraints,
+                self.user_roles,
+                self.roles,
+                self.group_roles,
+                self.user_groups,
+            ),
             uow=NullUnitOfWork(),
             audit=AuditWriter(self.audit_repo),
         )

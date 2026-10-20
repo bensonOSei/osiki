@@ -82,7 +82,13 @@ def service(env: RealMongoEnv, actor: Actor) -> TeamService:
             permissions,
             conditions,
         ),
-        validator=get_constraint_validator(constraints, env.user_roles),
+        validator=get_constraint_validator(
+            constraints,
+            env.user_roles,
+            env.roles,
+            group_roles,
+            get_user_group_repository(ENVIRONMENT_ID, state),
+        ),
         uow=MongoUnitOfWork(get_client(), enabled=True),
         audit=AuditWriter(env.audit),
     )

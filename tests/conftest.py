@@ -339,10 +339,16 @@ def bundle_builder(
 def constraint_validator(
     mock_constraint_repository,
     mock_user_role_repository,
+    mock_role_repository,
+    mock_group_role_repository,
+    mock_user_group_repository,
 ) -> ConstraintValidator:
     return ConstraintValidator(
         constraint_repository=mock_constraint_repository,
         user_role_repository=mock_user_role_repository,
+        role_repository=mock_role_repository,
+        group_role_repository=mock_group_role_repository,
+        user_group_repository=mock_user_group_repository,
     )
 
 

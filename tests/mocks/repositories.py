@@ -235,6 +235,31 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
             ur for ur in self._scoped() if str(ur.role_id) == role_id and ur.is_active
         ]
 
+    async def count_active(
+        self,
+        role_ids: list[str],
+        scope_filter: dict[str, str],
+        now: float,
+        *,
+        exact: bool = False,
+        session: AsyncClientSession | None = None,
+    ) -> int:
+        count = 0
+        for ur in self._scoped():
+            scope = ur.scope.to_dict()
+            if (
+                ur.is_active
+                and str(ur.role_id) in role_ids
+                and (ur.expires_at is None or ur.expires_at > now)
+                and (
+                    scope == scope_filter
+                    if exact
+                    else scope_filter.items() <= scope.items()
+                )
+            ):
+                count += 1
+        return count
+
     async def get_by_tenant(
         self,
         tenant_id: str,
@@ -435,6 +460,15 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
             r
             for r in self._scoped()
             if r.tenant_id is None and r.is_template and r.is_active
+        ]
+
+    async def list_copies(
+        self, template_id: str, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        return [
+            r
+            for r in self._scoped()
+            if r.copied_from is not None and str(r.copied_from) == template_id
         ]
 
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:

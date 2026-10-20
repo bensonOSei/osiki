@@ -82,6 +82,15 @@ class MongoDBRoleRepository(BaseRoleRepository):
             session=session,
         ).to_list()
 
+    async def list_copies(
+        self, template_id: str, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        return await Role.find(
+            Role.environment_id == self.environment_id,
+            {"copied_from": PydanticObjectId(template_id)},
+            session=session,
+        ).to_list()
+
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         object_ids = [PydanticObjectId(rid) for rid in role_ids]
         return await Role.find(
