@@ -156,6 +156,78 @@ poetry run python scripts/migrate_m1.py
 
 The migration stamps every existing document with the `default` environment, converts each role's `permission_ids` into unconditional `grants` (merged into any grants the role already has, so no permission is lost), and drops the indexes the new version no longer uses, including the old unique ones that would otherwise keep rejecting valid writes. It reads `MONGODB_URL` and `MONGODB_DATABASE` from the environment and is safe to run repeatedly.
 
+## Team management for your customers
+
+Osiki can let a business that uses your product manage its own staff: create roles, add members, assign and revoke roles. Your product's dashboard calls the tenant team API at `/api/v1/tenants/{tenant_id}/team`, and the engine enforces what that business may do.
+
+### Who is acting: `X-Osiki-Actor`
+
+Osiki has no login of its own. Your own front door authenticates the person and tells the engine who it is with the `X-Osiki-Actor` header, either `developer:<id>` or `tenant_user:<id>` (the id is 1 to 128 characters of `A-Z a-z 0-9 . _ @ -`). A `tenant_user` id is the engine's external user id.
+
+> **Never expose the engine without a front door that sets `X-Osiki-Actor`.** The engine trusts the header. A missing header means `developer:anonymous`, and a developer passes every team check and the no-escalation check. A malformed header returns `422`. Strip any `X-Osiki-Actor` that arrives from a client and set it yourself.
+
+The actor is recorded on every team change in the audit log (`GET /tenants/{tenant_id}/team/audit-logs`).
+
+### Setting it up
+
+1. **Bootstrap.** `PUT /api/v1/environment/bootstrap` creates the built-in permission `osiki.team:manage` and the `Owner` template if they are missing. It is safe to repeat, and returns `team_manage_permission_id` and `owner_role_id`. It answers `409` if another role already uses the name `Owner`.
+2. **Mark what a business may hand out.** Set `assignable: true` on each permission via `PATCH /permissions/{id}`. Tenant roles can hold only assignable permissions.
+3. **Owner setup (M3A-29).** The seeded `Owner` template grants only `osiki.team:manage`, and a team manager can hand out only what they hold. So you must add the business's assignable permissions to the Owner template. It is editable except for renaming it, changing `is_template`, or dropping `osiki.team:manage` (each is a `422`).
+4. **Give a business its first manager.** Add the first member with the `Owner` role as a developer actor (`POST /tenants/{tenant_id}/team/members`). From then on a manager can add the rest of their team.
+5. **Offer templates.** A template (a project role with `is_template: true`) is offered to a tenant when every permission it grants, including its parents', is assignable or built-in. A manager can assign an offered template, or copy one into an editable tenant role with `copied_from`.
+
+### What a team manager can do
+
+A `tenant_user` who holds `osiki.team:manage` in the tenant can, for that tenant only:
+
+| Call | Does |
+|---|---|
+| `GET /roles`, `POST /roles`, `PATCH /roles/{id}`, `DELETE /roles/{id}` | List offered templates and the tenant's own roles; create, rename, regrant and delete tenant roles |
+| `GET /members`, `POST /members` | List members (paged); add a member with a role |
+| `PUT /members/{user_id}/roles/{role_id}`, `DELETE ...` | Assign or revoke a role |
+| `DELETE /members/{user_id}` | Remove a member and every role they hold in the tenant |
+| `GET /members/{user_id}/effective` | The grants the member holds and which role gives each |
+| `POST /validate` | Dry run: the rules the operation would break (`op` plus `args`); writes nothing |
+| `GET /permissions` | The permissions a tenant role may hold, for a role editor |
+
+**No escalation.** A manager can only grant permissions they hold themselves. A tenant role may not hold built-in `osiki.*` permissions, and tenant roles cannot contain resource-wildcard (`*:...`) permissions (M3A-10), because such a wildcard would match `osiki.team:manage`.
+
+### Contracts your front door must keep
+
+- **add_member (M3A-19).** `user_id` must identify a user who consented or authenticated, such as one who accepted an invite. The engine returns that user's environment-wide name and email to the tenant's managers.
+- **Tenant users and 403 (M3A-28).** A `tenant_user` gets `403` for a tenant they do not manage, even one that does not exist, so they cannot probe which tenants exist.
+- **Exact bodies (M3A-30).** Team request bodies reject unknown fields (`422`).
+- **Last-manager guard (M3A-21).** A tenant must keep at least one member holding `osiki.team:manage`. The guard binds team operations only. Developer routes (such as `DELETE /tenants/{id}/members/{user_id}` and `DELETE /users/{id}/roles/{role_id}`) can still remove the last manager.
+- **Constraint targets (M3A-25).** Constraints target project roles and templates; a tenant-role id gets `422`. A tenant's copies of a template are bound through their template.
+- **Global cardinality (M3A-27).** A `GLOBAL` cardinality constraint on a template counts assignments of the template and of its copies across tenants, and is not serialized across tenants, so concurrent assignments in different tenants can overshoot it.
+
+### Errors
+
+Team conflicts are `409` with a machine-readable `details.reason`:
+
+| `details.reason` | Meaning |
+|---|---|
+| `last_manager` | The change would leave the tenant with no manager |
+| `escalation` | The role holds permissions the actor does not (`details.uncovered` lists them) |
+| `not_assignable` | A permission cannot be given to a tenant role (`details.permissions` lists them) |
+| `role_in_use` | A role to delete is still assigned |
+| `not_offered` | The template is not offered to this tenant |
+| `constraint` | A constraint refused the assignment (`details.constraint`, `details.detail`) |
+
+Other statuses: `403` (the actor does not manage the tenant, `details.reason: not_manager`), `404` and `422`. Under transaction contention the engine retries, then answers `503` with `error: "busy"` and a `Retry-After` header; the call may be retried.
+
+### Transactions (M3A-20)
+
+Each team write runs in one MongoDB transaction. Set `MONGODB_TRANSACTIONS=true` (default `false`) and run MongoDB as a replica set; standalone MongoDB rejects transactions. **The last-manager guard is race-safe only when `MONGODB_TRANSACTIONS=true` on a replica set.** The dev `docker-compose.yml` runs a single-node replica set (`rs0`) and `.env.example` turns the setting on. To run the API on the host against it, use `MONGODB_URL=mongodb://localhost:27017/osiki?directConnection=true`.
+
+### Upgrading to v0.3.0
+
+Run `scripts/migrate_m3.py` before the new version takes traffic, and never run old and new versions side by side. It drops the old unique role-name index `(environment_id, name)`, which would otherwise reject a tenant role that shares a name with a project role, and then lets Beanie create the new `(environment_id, tenant_id, name)` index. It reads `MONGODB_URL` and `MONGODB_DATABASE` (or `--mongodb-url` and `--database`) and is safe to run repeatedly. No documents change.
+
+```bash
+poetry run python scripts/migrate_m3.py
+```
+
 ## Key concepts
 
 - **Permissions** are `resource:action` pairs (e.g. `invoices:write`, `reports:read`). Wildcards work too — `invoices:*`, `*:read`, `*:*`. Neither part may be empty or contain `:`.
@@ -163,7 +235,7 @@ The migration stamps every existing document with the `default` environment, con
 - **Groups** let you assign roles to many users at once. Add a user to the "finance-team" group and they get all roles attached to that group.
 - **Scopes** handle multi-tenancy. A role can be scoped to `{ "tenant_id": "acme-corp", "region": "eu" }` so permissions only apply within that context. Scope values are strings; custom keys are allowed, but a non-string value is rejected with `422`.
 - **Constraints** enforce business rules — mutual exclusion between roles, cardinality limits, and prerequisite requirements.
-- **Access logs** record authorization checks (all denials, sampled successes). An audit log model exists, but nothing writes to it yet: administrative changes are not audited in this version.
+- **Access logs** record authorization checks (all denials, sampled successes). Changes made through the tenant team API are written to the audit log (actor, action, before and after); changes through the developer routes are not audited in this version.
 
 ## Getting started
 
@@ -218,6 +290,8 @@ All endpoints live under `/api/v1`. Here's the shape of things:
 | **Tenants** | Upsert, get. Add/remove/list members. |
 | **Authorization** | `POST /authorization/check` — the main event. `POST /authorization/filter` for list filters. |
 | **Snapshot** | `GET /snapshot` (ETag/304), `GET /snapshot/version`, `GET /users/by-external/{id}/bundle`. |
+| **Environment** | `PUT /environment/bootstrap`: create the `osiki.*` built-ins and the Owner template. |
+| **Team** | `/tenants/{id}/team/...`: roles, members, validate, permissions and audit logs for a tenant's own managers (see Team management). |
 | **Access logs** | `POST /access-logs/batch` — SDK decision ingest. |
 
 Once the server is running, full interactive docs are at `http://localhost:8000/docs`.

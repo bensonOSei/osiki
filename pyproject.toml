@@ -1,6 +1,6 @@
 [project]
 name = "osiki"
-version = "0.1.0"
+version = "0.3.0"
 description = ""
 authors = [
     {name = "Benson Osei Mensah",email = "kbenson643@gmail.com"}
