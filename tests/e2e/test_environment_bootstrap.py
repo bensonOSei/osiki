@@ -178,6 +178,17 @@ def test_other_system_roles_are_not_restricted(client: TestClient) -> None:
     assert response.status_code == 200
 
 
+def test_other_system_role_delete_is_refused_by_the_repository(
+    client: TestClient,
+) -> None:
+    rid = client.post(
+        f"{API}/roles", json={"name": "Platform", "is_system": True}
+    ).json()["id"]
+    response = client.delete(f"{API}/roles/{rid}")
+    assert response.status_code == 404
+    assert client.get(f"{API}/roles/{rid}").status_code == 200
+
+
 def test_owner_template_description_only_edit_is_allowed(client: TestClient) -> None:
     ids = _owner(client)
     response = client.patch(
