@@ -16,3 +16,9 @@ class TenantRead(BaseModel):
     attributes: dict[str, AttributeValue]
     created_at: float
     updated_at: float
+
+
+class TenantSummaryRead(TenantRead):
+    """A tenant with its member count, for the developer dashboard's list."""
+
+    member_count: int

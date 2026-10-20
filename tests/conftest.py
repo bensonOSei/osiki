@@ -19,6 +19,7 @@ from osiki.models.permission import Permission
 from osiki.models.role import Role
 from osiki.models.tenant import Tenant
 from osiki.models.tenant_member import TenantMember
+from osiki.models.tenant_team_lock import TenantTeamLock
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -154,6 +155,7 @@ async def init_db(mongo_client: AsyncMongoMockClient) -> None:
             AccessLog,
             Tenant,
             TenantMember,
+            TenantTeamLock,
             EnvironmentState,
             DiscoveredEndpoint,
             EndpointMapping,
@@ -315,6 +317,9 @@ def bundle_builder(
     mock_group_role_repository,
     mock_tenant_member_repository,
     mock_tenant_repository,
+    mock_role_repository,
+    mock_permission_repository,
+    mock_condition_repository,
 ) -> BundleBuilder:
     return BundleBuilder(
         mock_user_repository,
@@ -324,6 +329,9 @@ def bundle_builder(
         mock_group_role_repository,
         mock_tenant_member_repository,
         mock_tenant_repository,
+        mock_role_repository,
+        mock_permission_repository,
+        mock_condition_repository,
     )
 
 
@@ -331,10 +339,18 @@ def bundle_builder(
 def constraint_validator(
     mock_constraint_repository,
     mock_user_role_repository,
+    mock_role_repository,
+    mock_group_role_repository,
+    mock_user_group_repository,
+    mock_group_repository,
 ) -> ConstraintValidator:
     return ConstraintValidator(
         constraint_repository=mock_constraint_repository,
         user_role_repository=mock_user_role_repository,
+        role_repository=mock_role_repository,
+        group_role_repository=mock_group_role_repository,
+        user_group_repository=mock_user_group_repository,
+        group_repository=mock_group_repository,
     )
 
 

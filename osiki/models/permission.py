@@ -11,6 +11,9 @@ class Permission(Document, EnvironmentMixin, SoftDeleteMixin, MetadataMixin):
     resource: str
     action: str
     description: str | None = None
+    # Whether tenant admins may hand this permission out. Never true for an
+    # osiki.* built-in.
+    assignable: bool = False
     created_at: float = Field(default_factory=time.time)
 
     class Settings:

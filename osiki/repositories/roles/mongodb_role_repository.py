@@ -2,6 +2,7 @@ import time
 
 from beanie import PydanticObjectId
 from loguru import logger
+from pymongo.asynchronous.client_session import AsyncClientSession
 
 from osiki.models.role import Grant, Role
 from osiki.repositories.environment_state.base_environment_state_repository import (
@@ -17,27 +18,78 @@ class MongoDBRoleRepository(BaseRoleRepository):
         self.environment_id = environment_id
         self._state = state
 
-    async def create(self, role: Role) -> Role:
+    async def _bump(self, role: Role, session: AsyncClientSession | None) -> None:
+        """Tenant roles never enter the snapshot, so their writes move the
+        assignments version instead of the config version."""
+        if role.tenant_id is None:
+            await self._state.bump_config_version(session=session)
+        else:
+            await self._state.bump_assignments_version(session=session)
+
+    async def create(
+        self, role: Role, *, session: AsyncClientSession | None = None
+    ) -> Role:
         role.environment_id = self.environment_id
-        await role.insert()
-        await self._state.bump_config_version()
+        await role.insert(session=session)
+        await self._bump(role, session)
         logger.debug("Role created", role_id=str(role.id), name=role.name)
         return role
 
-    async def get_by_id(self, role_id: str) -> Role | None:
+    async def get_by_id(
+        self, role_id: str, *, session: AsyncClientSession | None = None
+    ) -> Role | None:
         role = await Role.find_one(
-            {"_id": PydanticObjectId(role_id), "environment_id": self.environment_id}
+            {"_id": PydanticObjectId(role_id), "environment_id": self.environment_id},
+            session=session,
         )
         if not role:
             logger.debug("Role not found", role_id=role_id)
         return role
 
-    async def get_by_name(self, name: str) -> Role | None:
+    async def get_by_name(
+        self,
+        name: str,
+        tenant_id: str | None = None,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> Role | None:
         return await Role.find_one(
             Role.environment_id == self.environment_id,
+            {"tenant_id": tenant_id},
             Role.name == name,
             Role.is_active == True,
+            session=session,
         )
+
+    async def list_tenant(
+        self, tenant_id: str, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        return await Role.find(
+            Role.environment_id == self.environment_id,
+            {"tenant_id": tenant_id},
+            Role.is_active == True,
+            session=session,
+        ).to_list()
+
+    async def list_templates(
+        self, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        return await Role.find(
+            Role.environment_id == self.environment_id,
+            {"tenant_id": None},
+            Role.is_template == True,
+            Role.is_active == True,
+            session=session,
+        ).to_list()
+
+    async def list_copies(
+        self, template_id: str, *, session: AsyncClientSession | None = None
+    ) -> list[Role]:
+        return await Role.find(
+            Role.environment_id == self.environment_id,
+            {"copied_from": PydanticObjectId(template_id)},
+            session=session,
+        ).to_list()
 
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         object_ids = [PydanticObjectId(rid) for rid in role_ids]
@@ -58,15 +110,19 @@ class MongoDBRoleRepository(BaseRoleRepository):
             Role.is_active == True,
         ).to_list()
 
-    async def update(self, role: Role) -> Role:
+    async def update(
+        self, role: Role, *, session: AsyncClientSession | None = None
+    ) -> Role:
         role.updated_at = time.time()
-        await role.save()
-        await self._state.bump_config_version()
+        await role.save(session=session)
+        await self._bump(role, session)
         logger.debug("Role updated", role_id=str(role.id))
         return role
 
-    async def deactivate(self, role_id: str) -> bool:
-        role = await self.get_by_id(role_id)
+    async def deactivate(
+        self, role_id: str, *, session: AsyncClientSession | None = None
+    ) -> bool:
+        role = await self.get_by_id(role_id, session=session)
         if not role:
             logger.warning("Attempted to deactivate non-existent role", role_id=role_id)
             return False
@@ -75,15 +131,17 @@ class MongoDBRoleRepository(BaseRoleRepository):
             return False
         role.is_active = False
         role.updated_at = time.time()
-        await role.save()
-        await self._state.bump_config_version()
+        await role.save(session=session)
+        await self._bump(role, session)
         logger.info("Role deactivated", role_id=role_id)
         return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
         return (
             await Role.find(
-                Role.environment_id == self.environment_id, Role.is_active == True
+                Role.environment_id == self.environment_id,
+                {"tenant_id": None},
+                Role.is_active == True,
             )
             .skip(skip)
             .limit(limit)
@@ -111,7 +169,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
                 condition_id=condition_id,
             )
         # Bump even on a no-op: over-bumping costs one rebuild, never staleness.
-        await self._state.bump_config_version()
+        await self._bump(role, None)
         return True
 
     async def remove_permission(
@@ -134,7 +192,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
                 permission_id=permission_id,
                 condition_id=condition_id,
             )
-        await self._state.bump_config_version()
+        await self._bump(role, None)
         return True
 
     async def is_condition_in_use(self, condition_id: str) -> bool:

@@ -102,13 +102,16 @@ class UserBundle(_Frozen):
     """One user's id, attributes, tenant memberships and assignments.
 
     ``tenants`` maps each tenant external id the user belongs to onto that
-    tenant's attributes; membership is key presence.
+    tenant's attributes; membership is key presence. ``roles`` holds the
+    tenant-owned roles the assignments reference; they never enter the shared
+    snapshot, and the snapshot wins on an id clash.
     """
 
     user_id: str
     attributes: dict[str, Any] = Field(default_factory=dict)
     tenants: dict[str, dict[str, Any]] = Field(default_factory=dict)
     assignments: list[AssignmentEntry] = Field(default_factory=list)
+    roles: list[RoleEntry] = Field(default_factory=list)
 
 
 class DecisionRequest(_Frozen):

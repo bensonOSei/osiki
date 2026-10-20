@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Query, status
 
+from osiki.api.actor import ActorDep
 from osiki.api.dependencies import (
     TenantMemberRepository,
     TenantRepository,
     UserRepository,
 )
-from osiki.api.exceptions import NotFoundError
+from osiki.api.exceptions import AuthorizationError, NotFoundError
 from osiki.models.tenant import Tenant
 from osiki.schemas.base import PaginatedResponse
-from osiki.schemas.tenant import TenantRead, TenantUpsert
+from osiki.schemas.tenant import TenantRead, TenantSummaryRead, TenantUpsert
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
@@ -21,6 +22,33 @@ def _to_read(tenant: Tenant) -> TenantRead:
         created_at=tenant.created_at,
         updated_at=tenant.updated_at,
     )
+
+
+@router.get("")
+async def list_tenants(
+    actor: ActorDep,
+    tenant_repo: TenantRepository,
+    member_repo: TenantMemberRepository,
+    q: str | None = Query(
+        None, max_length=100, description="Prefix of the name or external id."
+    ),
+    page: int = Query(1, ge=1, le=10000),
+    page_size: int = Query(20, ge=1, le=100),
+) -> PaginatedResponse[TenantSummaryRead]:
+    """Every business, with its member count. Developers only."""
+    if actor.type != "developer":
+        raise AuthorizationError(
+            "Only developers may list tenants", details={"reason": "developer_only"}
+        )
+    tenants = await tenant_repo.search(q, (page - 1) * page_size, page_size)
+    items = [
+        TenantSummaryRead(
+            **_to_read(t).model_dump(),
+            member_count=await member_repo.count(t.external_id),
+        )
+        for t in tenants
+    ]
+    return PaginatedResponse.create(items, await tenant_repo.count(q), page, page_size)
 
 
 @router.put("/{external_id}")
@@ -76,7 +104,7 @@ async def remove_tenant_member(
 async def list_tenant_members(
     tenant_id: str,
     member_repo: TenantMemberRepository,
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=10000),
     page_size: int = Query(20, ge=1, le=100),
 ) -> PaginatedResponse[str]:
     skip = (page - 1) * page_size

@@ -49,8 +49,10 @@ class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
             {"$or": [{"expires_at": None}, {"expires_at": {"$gt": now}}]},
         ).to_list()
 
-    async def get_roles_for_groups(self, group_ids: list[str]) -> list[GroupRole]:
-        now = time.time()
+    async def get_roles_for_groups(
+        self, group_ids: list[str], *, now: float | None = None
+    ) -> list[GroupRole]:
+        now = time.time() if now is None else now
         object_ids = [PydanticObjectId(gid) for gid in group_ids]
         return await GroupRole.find(
             GroupRole.environment_id == self.environment_id,

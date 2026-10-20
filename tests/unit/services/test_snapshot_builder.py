@@ -284,3 +284,20 @@ async def test_mappings_render_into_the_snapshot_sorted(env: Env) -> None:
         ("/b", "GET"),
         ("/b", "POST"),
     ]
+
+
+async def test_snapshot_excludes_tenant_roles(env: Env) -> None:
+    permission = await env.permissions.create(make_permission("docs", "read"))
+    project = await env.roles.create(
+        make_role(name="project", permission_ids=[permission.id])
+    )
+    await env.roles.create(
+        make_role(name="project", permission_ids=[permission.id], tenant_id="acme")
+    )
+    template = await env.roles.create(
+        make_role(name="starter", permission_ids=[permission.id], is_template=True)
+    )
+
+    snapshot = await env.builder().build()
+
+    assert [r.id for r in snapshot.roles] == [str(project.id), str(template.id)]

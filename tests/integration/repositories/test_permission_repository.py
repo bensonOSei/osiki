@@ -96,3 +96,48 @@ async def test_list_active() -> None:
     await repo.create(Permission(resource="r2", action="a2"))
     result = await repo.list_active()
     assert len(result) >= 2
+
+
+async def test_update_persists_assignable_and_bumps_config_version() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBPermissionRepository("default", state)
+    perm = await repo.create(Permission(resource="upd", action="a"))
+    assert perm.assignable is False
+    before = await state.get_config_version()
+
+    perm.assignable = True
+    perm.description = "changed"
+    await repo.update(perm)
+
+    loaded = await repo.get_by_id(str(perm.id))
+    assert loaded is not None
+    assert (loaded.assignable, loaded.description) == (True, "changed")
+    assert await state.get_config_version() == before + 1
+
+
+async def test_deactivate_bumps_both_versions() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBPermissionRepository("default", state)
+    perm = await repo.create(Permission(resource="bump", action="me"))
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+
+    assert await repo.deactivate(str(perm.id)) is True
+
+    assert await state.get_config_version() == config + 1
+    assert await state.get_assignments_version() == assignments + 1
+
+
+async def test_get_by_ids_any_includes_inactive_permissions() -> None:
+    repo = MongoDBPermissionRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    live = await repo.create(Permission(resource="any", action="live"))
+    dead = await repo.create(Permission(resource="any", action="dead"))
+    await repo.deactivate(str(dead.id))
+    ids = [str(live.id), str(dead.id)]
+
+    assert [p.id for p in await repo.get_by_ids(ids)] == [live.id]
+    assert {p.id for p in await repo.get_by_ids_any(ids)} == {live.id, dead.id}

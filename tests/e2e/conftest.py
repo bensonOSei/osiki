@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from osiki.api.dependencies import (
     get_access_log_repository,
+    get_audit_log_repository,
     get_condition_repository,
     get_constraint_repository,
     get_endpoint_repository,
@@ -19,6 +20,7 @@ from osiki.api.dependencies import (
     get_snapshot_cache,
     get_tenant_member_repository,
     get_tenant_repository,
+    get_tenant_team_lock_repository,
     get_user_group_repository,
     get_user_repository,
     get_user_role_repository,
@@ -26,29 +28,35 @@ from osiki.api.dependencies import (
 from osiki.api.environment import EnvironmentId
 from osiki.api.exceptions import (
     AuthorizationError,
+    BusyError,
     ValidationError,
     register_exception_handlers,
 )
 from osiki.api.middleware import RequestIDMiddleware
 from osiki.api.routes import (
     access_logs_router,
+    audit_logs_router,
     authorization_router,
     conditions_router,
     constraints_router,
     endpoints_router,
+    environment_router,
     groups_router,
     health_router,
     permissions_router,
     roles_router,
     settings_router,
     snapshot_router,
+    team_router,
     tenants_router,
     users_router,
 )
 from osiki.configs.settings import get_settings
 from osiki.services.snapshot_builder.snapshot_builder import SnapshotCache
+from osiki.services.unit_of_work import NullUnitOfWork, get_unit_of_work
 from tests.mocks.repositories import (
     MockAccessLogRepository,
+    MockAuditLogRepository,
     MockConditionRepository,
     MockConstraintRepository,
     MockEndpointRepository,
@@ -59,6 +67,7 @@ from tests.mocks.repositories import (
     MockRoleRepository,
     MockTenantMemberRepository,
     MockTenantRepository,
+    MockTenantTeamLockRepository,
     MockUserGroupRepository,
     MockUserRepository,
     MockUserRoleRepository,
@@ -76,9 +85,11 @@ _group_role_repos: dict[str, MockGroupRoleRepository] = {}
 _constraint_repos: dict[str, MockConstraintRepository] = {}
 _condition_repos: dict[str, MockConditionRepository] = {}
 _access_log_repos: dict[str, MockAccessLogRepository] = {}
+_audit_log_repos: dict[str, MockAuditLogRepository] = {}
 _tenant_repos: dict[str, MockTenantRepository] = {}
 _tenant_member_repos: dict[str, MockTenantMemberRepository] = {}
 _endpoint_repos: dict[str, MockEndpointRepository] = {}
+_lock_repos: dict[str, MockTenantTeamLockRepository] = {}
 _state_repos: dict[str, MockEnvironmentStateRepository] = {}
 # Replaced per test: the mock state repos restart at version 0, so a cache
 # kept across tests would serve the previous test's snapshot.
@@ -133,9 +144,11 @@ def _reset_all_repos() -> None:
         _constraint_repos,
         _condition_repos,
         _access_log_repos,
+        _audit_log_repos,
         _tenant_repos,
         _tenant_member_repos,
         _endpoint_repos,
+        _lock_repos,
         _state_repos,
     ):
         store.clear()
@@ -156,12 +169,15 @@ def _create_test_app() -> FastAPI:
     test_app.include_router(permissions_router, prefix=settings.api_prefix)
     test_app.include_router(conditions_router, prefix=settings.api_prefix)
     test_app.include_router(constraints_router, prefix=settings.api_prefix)
+    test_app.include_router(team_router, prefix=settings.api_prefix)
     test_app.include_router(tenants_router, prefix=settings.api_prefix)
     test_app.include_router(authorization_router, prefix=settings.api_prefix)
     test_app.include_router(snapshot_router, prefix=settings.api_prefix)
     test_app.include_router(access_logs_router, prefix=settings.api_prefix)
+    test_app.include_router(audit_logs_router, prefix=settings.api_prefix)
     test_app.include_router(endpoints_router, prefix=settings.api_prefix)
     test_app.include_router(settings_router, prefix=settings.api_prefix)
+    test_app.include_router(environment_router, prefix=settings.api_prefix)
 
     @test_app.get("/_test/authorization-error")
     async def _trigger_authorization_error() -> None:
@@ -170,6 +186,10 @@ def _create_test_app() -> FastAPI:
     @test_app.get("/_test/validation-error")
     async def _trigger_validation_error() -> None:
         raise ValidationError("invalid input", details={"field": "test"})
+
+    @test_app.get("/_test/busy-error")
+    async def _trigger_busy_error() -> None:
+        raise BusyError("busy", details={"reason": "busy"})
 
     @test_app.get("/_test/internal-error")
     async def _trigger_internal_error() -> None:
@@ -205,6 +225,9 @@ def _create_test_app() -> FastAPI:
     test_app.dependency_overrides[get_access_log_repository] = _repo_provider(
         _access_log_repos, MockAccessLogRepository
     )
+    test_app.dependency_overrides[get_audit_log_repository] = _repo_provider(
+        _audit_log_repos, MockAuditLogRepository
+    )
     test_app.dependency_overrides[get_tenant_repository] = _config_repo_provider(
         _tenant_repos, MockTenantRepository
     )
@@ -214,7 +237,12 @@ def _create_test_app() -> FastAPI:
     test_app.dependency_overrides[get_endpoint_repository] = _config_repo_provider(
         _endpoint_repos, MockEndpointRepository
     )
+    test_app.dependency_overrides[get_tenant_team_lock_repository] = _repo_provider(
+        _lock_repos, MockTenantTeamLockRepository
+    )
     test_app.dependency_overrides[get_environment_state_repository] = _provide_state
+    # The mock repos ignore sessions: there is no transaction to run.
+    test_app.dependency_overrides[get_unit_of_work] = NullUnitOfWork
     test_app.dependency_overrides[get_snapshot_cache] = _provide_snapshot_cache
 
     return test_app

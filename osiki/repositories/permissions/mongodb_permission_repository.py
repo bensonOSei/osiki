@@ -1,5 +1,6 @@
 from beanie import PydanticObjectId
 from loguru import logger
+from pymongo.asynchronous.client_session import AsyncClientSession
 
 from osiki.models.permission import Permission
 from osiki.repositories.environment_state.base_environment_state_repository import (
@@ -47,6 +48,13 @@ class MongoDBPermissionRepository(BasePermissionRepository):
             {"_id": {"$in": object_ids}, "is_active": True},
         ).to_list()
 
+    async def get_by_ids_any(self, permission_ids: list[str]) -> list[Permission]:
+        object_ids = [PydanticObjectId(pid) for pid in permission_ids]
+        return await Permission.find(
+            Permission.environment_id == self.environment_id,
+            {"_id": {"$in": object_ids}},
+        ).to_list()
+
     async def get_by_resource_action(
         self, resource: str, action: str
     ) -> Permission | None:
@@ -64,6 +72,14 @@ class MongoDBPermissionRepository(BasePermissionRepository):
             Permission.is_active == True,
         ).to_list()
 
+    async def update(
+        self, permission: Permission, *, session: AsyncClientSession | None = None
+    ) -> Permission:
+        await permission.save(session=session)
+        await self._state.bump_config_version(session=session)
+        logger.debug("Permission updated", permission_id=str(permission.id))
+        return permission
+
     async def deactivate(self, permission_id: str) -> bool:
         permission = await self.get_by_id(permission_id)
         if not permission:
@@ -75,6 +91,9 @@ class MongoDBPermissionRepository(BasePermissionRepository):
         permission.is_active = False
         await permission.save()
         await self._state.bump_config_version()
+        # Tenant roles are rendered per user, so a dead permission changes
+        # bundles even though the snapshot moves too.
+        await self._state.bump_assignments_version()
         logger.info("Permission deactivated", permission_id=permission_id)
         return True
 

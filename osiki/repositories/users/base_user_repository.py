@@ -1,12 +1,16 @@
 from abc import ABC, abstractmethod
 
+from pymongo.asynchronous.client_session import AsyncClientSession
+
 from osiki.models.base import AttributeValue
 from osiki.models.user import User
 
 
 class BaseUserRepository(ABC):
     @abstractmethod
-    async def create(self, user: User) -> User: ...
+    async def create(
+        self, user: User, *, session: AsyncClientSession | None = None
+    ) -> User: ...
 
     @abstractmethod
     async def get_by_id(self, user_id: str) -> User | None: ...
@@ -18,7 +22,9 @@ class BaseUserRepository(ABC):
     async def get_by_email(self, email: str) -> User | None: ...
 
     @abstractmethod
-    async def update(self, user: User) -> User: ...
+    async def update(
+        self, user: User, *, session: AsyncClientSession | None = None
+    ) -> User: ...
 
     @abstractmethod
     async def deactivate(self, user_id: str) -> bool: ...
@@ -36,4 +42,6 @@ class BaseUserRepository(ABC):
         name: str | None,
         email: str | None,
         attributes: dict[str, AttributeValue] | None,
+        *,
+        session: AsyncClientSession | None = None,
     ) -> User: ...

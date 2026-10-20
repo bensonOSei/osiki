@@ -1,8 +1,8 @@
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Query, status
 
-from osiki.api.dependencies import ConstraintRepository
-from osiki.api.exceptions import NotFoundError
+from osiki.api.dependencies import ConstraintRepository, RoleRepository
+from osiki.api.exceptions import NotFoundError, ValidationError
 from osiki.models.constraint import (
     Constraint,
     ConstraintConfig,
@@ -57,12 +57,28 @@ def _build_config(cfg: ConstraintConfigSchema) -> ConstraintConfig:
     )
 
 
+async def _require_project_roles(
+    config: ConstraintConfig, role_repo: RoleRepository
+) -> None:
+    """Constraints target project roles and templates, never a tenant's own."""
+    ids = [*(config.role_ids or []), config.role_id, config.requires_role_id]
+    for role_id in filter(None, ids):
+        role = await role_repo.get_by_id(str(role_id))
+        if role is not None and role.tenant_id is not None:
+            raise ValidationError(
+                "Constraints cannot target a tenant role",
+                details={"role_id": str(role_id)},
+            )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_constraint(
     data: ConstraintCreate,
     constraint_repo: ConstraintRepository,
+    role_repo: RoleRepository,
 ) -> ConstraintRead:
     config = _build_config(data.config)
+    await _require_project_roles(config, role_repo)
 
     constraint = Constraint(
         name=data.name,
@@ -92,6 +108,7 @@ async def update_constraint(
     constraint_id: str,
     data: ConstraintUpdate,
     constraint_repo: ConstraintRepository,
+    role_repo: RoleRepository,
 ) -> ConstraintRead:
     constraint = await constraint_repo.get_by_id(constraint_id)
     if not constraint:
@@ -104,7 +121,9 @@ async def update_constraint(
     if data.description is not None:
         constraint.description = data.description
     if data.config is not None:
-        constraint.config = _build_config(data.config)
+        config = _build_config(data.config)
+        await _require_project_roles(config, role_repo)
+        constraint.config = config
 
     updated = await constraint_repo.update(constraint)
     return _to_read(updated)

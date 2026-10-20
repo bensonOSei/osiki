@@ -74,3 +74,46 @@ async def test_inactive_tenant_not_returned() -> None:
     await tenant.save()
     assert await repo.get_by_external_id("gone") is None
     assert await repo.get_many(["gone"]) == []
+
+
+async def _seeded() -> MongoDBTenantRepository:
+    repo = MongoDBTenantRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    await repo.upsert("acme-1", "Zeta Foods", {})
+    await repo.upsert("t2", "acme Bakery", {})
+    await repo.upsert("t3", "Other (x+)", {})
+    await MongoDBTenantRepository(
+        "other", MongoDBEnvironmentStateRepository("other")
+    ).upsert("acme-9", "Acme Elsewhere", {})
+    gone = await repo.upsert("acme-gone", "Acme Gone", {})
+    gone.is_active = False
+    await gone.save()
+    return repo
+
+
+async def test_search_without_query_lists_active_in_creation_order() -> None:
+    repo = await _seeded()
+    assert [t.external_id for t in await repo.search(None, 0, 10)] == [
+        "acme-1",
+        "t2",
+        "t3",
+    ]
+    assert await repo.count(None) == 3
+    assert [t.external_id for t in await repo.search("", 1, 1)] == ["t2"]
+
+
+async def test_search_is_a_case_insensitive_prefix_on_name_or_external_id() -> None:
+    repo = await _seeded()
+    found = await repo.search("ACME", 0, 10)
+    # external id "acme-1" and name "acme Bakery"; not "Zeta Foods" by substring,
+    # not the other environment, not the inactive one.
+    assert [t.external_id for t in found] == ["acme-1", "t2"]
+    assert await repo.count("ACME") == 2
+    assert await repo.count("foods") == 0
+
+
+async def test_search_treats_the_query_literally() -> None:
+    repo = await _seeded()
+    assert [t.external_id for t in await repo.search("Other (x+)", 0, 10)] == ["t3"]
+    assert await repo.count(".*") == 0

@@ -71,3 +71,18 @@ async def test_isolated_by_environment() -> None:
     assert await other.tenants_for_user("u1") == []
     assert await other.members("t1", 0, 10) == []
     assert await other.remove("t1", "u1") is False
+
+
+async def test_count_is_per_tenant_and_environment() -> None:
+    repo = MongoDBTenantMemberRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    await repo.add("t1", "u1")
+    await repo.add("t1", "u2")
+    await repo.add("t2", "u1")
+    await MongoDBTenantMemberRepository(
+        "other", MongoDBEnvironmentStateRepository("other")
+    ).add("t1", "u9")
+    assert await repo.count("t1") == 2
+    assert await repo.count("t2") == 1
+    assert await repo.count("nope") == 0

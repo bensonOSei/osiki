@@ -1,6 +1,7 @@
 """The mock repositories honour the same type-strict no-op rule as MongoDB."""
 
 import pytest
+from beanie import PydanticObjectId
 
 from tests.mocks import (
     MockEnvironmentStateRepository,
@@ -53,3 +54,21 @@ async def test_identical_upserts_with_reordered_keys_still_skip() -> None:
     await tenants.upsert("acme", "Acme", {"b": "x", "a": True})
 
     assert await state.get_assignments_version() == before
+
+
+async def test_mock_permission_deactivate_bumps_assignments_version() -> None:
+    from tests.mocks import (
+        MockEnvironmentStateRepository,
+        MockPermissionRepository,
+        make_permission,
+    )
+
+    state = MockEnvironmentStateRepository("default")
+    repo = MockPermissionRepository("default", state)
+    perm = await repo.create(make_permission("a", "b"))
+    before = await state.get_assignments_version()
+
+    assert await repo.deactivate(str(perm.id)) is True
+    assert await state.get_assignments_version() == before + 1
+    assert await repo.deactivate(str(PydanticObjectId())) is False
+    assert await state.get_assignments_version() == before + 1

@@ -1,5 +1,6 @@
 from tests.mocks.factories import (
     make_assignment_entry,
+    make_audit_log,
     make_condition,
     make_constraint,
     make_decision_request,
@@ -14,6 +15,7 @@ from tests.mocks.factories import (
     make_snapshot,
     make_tenant,
     make_tenant_member,
+    make_tenant_team_lock,
     make_user,
     make_user_bundle,
     make_user_group,
@@ -21,6 +23,7 @@ from tests.mocks.factories import (
 )
 from tests.mocks.repositories import (
     MockAccessLogRepository,
+    MockAuditLogRepository,
     MockConditionRepository,
     MockConstraintRepository,
     MockEndpointRepository,
@@ -31,6 +34,7 @@ from tests.mocks.repositories import (
     MockRoleRepository,
     MockTenantMemberRepository,
     MockTenantRepository,
+    MockTenantTeamLockRepository,
     MockUserGroupRepository,
     MockUserRepository,
     MockUserRoleRepository,
@@ -39,6 +43,7 @@ from tests.mocks.repositories import (
 __all__ = [
     # Repositories
     "MockAccessLogRepository",
+    "MockAuditLogRepository",
     "MockConditionRepository",
     "MockConstraintRepository",
     "MockEndpointRepository",
@@ -49,11 +54,13 @@ __all__ = [
     "MockRoleRepository",
     "MockTenantMemberRepository",
     "MockTenantRepository",
+    "MockTenantTeamLockRepository",
     "MockUserGroupRepository",
     "MockUserRepository",
     "MockUserRoleRepository",
     # Factories
     "make_assignment_entry",
+    "make_audit_log",
     "make_decision_request",
     "make_discovered_endpoint",
     "make_endpoint_mapping",
@@ -68,6 +75,7 @@ __all__ = [
     "make_snapshot",
     "make_tenant",
     "make_tenant_member",
+    "make_tenant_team_lock",
     "make_user",
     "make_user_group",
     "make_user_role",

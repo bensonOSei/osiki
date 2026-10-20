@@ -1,0 +1,56 @@
+{
+  "name": "tenant_role_in_bundle_grants",
+  "snapshot": {
+    "environment_id": "default",
+    "version": 1,
+    "roles": [],
+    "conditions": {},
+    "constraints": []
+  },
+  "bundle": {
+    "user_id": "user-1",
+    "attributes": {},
+    "tenants": {
+      "t1": {}
+    },
+    "assignments": [
+      {
+        "role_id": "tr1",
+        "scope": {
+          "tenant_id": "t1"
+        },
+        "expires_at": null,
+        "via": "direct"
+      }
+    ],
+    "roles": [
+      {
+        "id": "tr1",
+        "name": "Weekend cashier",
+        "parent_id": null,
+        "grants": [
+          {
+            "permission": "sales:create",
+            "condition": null
+          }
+        ]
+      }
+    ]
+  },
+  "request": {
+    "resource": "sales",
+    "action": "create",
+    "scope": {
+      "tenant_id": "t1"
+    },
+    "record": null,
+    "now": 1000
+  },
+  "expected": {
+    "allowed": true,
+    "matched_permission": "sales:create",
+    "matched_via": "direct",
+    "condition": null,
+    "denial_reason": null
+  }
+}

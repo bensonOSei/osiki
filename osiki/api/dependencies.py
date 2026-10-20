@@ -3,12 +3,19 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from osiki.api.actor import ActorDep
 from osiki.api.environment import EnvironmentId
 from osiki.repositories.access_logs.base_access_log_repository import (
     BaseAccessLogRepository,
 )
 from osiki.repositories.access_logs.mongodb_access_log_repository import (
     MongoDBAccessLogRepository,
+)
+from osiki.repositories.audit_logs.base_audit_log_repository import (
+    BaseAuditLogRepository,
+)
+from osiki.repositories.audit_logs.mongodb_audit_log_repository import (
+    MongoDBAuditLogRepository,
 )
 from osiki.repositories.conditions.base_condition_repository import (
     BaseConditionRepository,
@@ -56,6 +63,12 @@ from osiki.repositories.tenant_members.base_tenant_member_repository import (
 from osiki.repositories.tenant_members.mongodb_tenant_member_repository import (
     MongoDBTenantMemberRepository,
 )
+from osiki.repositories.tenant_team_locks.base_tenant_team_lock_repository import (
+    BaseTenantTeamLockRepository,
+)
+from osiki.repositories.tenant_team_locks.mongodb_tenant_team_lock_repository import (
+    MongoDBTenantTeamLockRepository,
+)
 from osiki.repositories.tenants.base_tenant_repository import BaseTenantRepository
 from osiki.repositories.tenants.mongodb_tenant_repository import (
     MongoDBTenantRepository,
@@ -74,6 +87,7 @@ from osiki.repositories.user_roles.mongodb_user_role_repository import (
 )
 from osiki.repositories.users.base_user_repository import BaseUserRepository
 from osiki.repositories.users.mongodb_user_repository import MongoDBUserRepository
+from osiki.services.audit.audit_writer import AuditWriter
 from osiki.services.authorization.authorization_service import AuthorizationService
 from osiki.services.authorization.base_authorization_service import (
     BaseAuthorizationService,
@@ -87,6 +101,8 @@ from osiki.services.snapshot_builder.snapshot_builder import (
     SnapshotBuilder,
     SnapshotCache,
 )
+from osiki.services.team.team_service import TeamService
+from osiki.services.unit_of_work import UnitOfWork, get_unit_of_work
 
 
 # Repository dependencies
@@ -166,6 +182,10 @@ def get_access_log_repository(environment_id: EnvironmentId) -> BaseAccessLogRep
     return MongoDBAccessLogRepository(environment_id)
 
 
+def get_audit_log_repository(environment_id: EnvironmentId) -> BaseAuditLogRepository:
+    return MongoDBAuditLogRepository(environment_id)
+
+
 def get_tenant_repository(
     environment_id: EnvironmentId, state: EnvironmentStateRepository
 ) -> BaseTenantRepository:
@@ -176,6 +196,12 @@ def get_tenant_member_repository(
     environment_id: EnvironmentId, state: EnvironmentStateRepository
 ) -> BaseTenantMemberRepository:
     return MongoDBTenantMemberRepository(environment_id, state)
+
+
+def get_tenant_team_lock_repository(
+    environment_id: EnvironmentId,
+) -> BaseTenantTeamLockRepository:
+    return MongoDBTenantTeamLockRepository(environment_id)
 
 
 # Service dependencies
@@ -192,10 +218,22 @@ def get_constraint_validator(
     user_role_repository: Annotated[
         BaseUserRoleRepository, Depends(get_user_role_repository)
     ],
+    role_repository: Annotated[BaseRoleRepository, Depends(get_role_repository)],
+    group_role_repository: Annotated[
+        BaseGroupRoleRepository, Depends(get_group_role_repository)
+    ],
+    user_group_repository: Annotated[
+        BaseUserGroupRepository, Depends(get_user_group_repository)
+    ],
+    group_repository: Annotated[BaseGroupRepository, Depends(get_group_repository)],
 ) -> BaseConstraintValidator:
     return ConstraintValidator(
         constraint_repository=constraint_repository,
         user_role_repository=user_role_repository,
+        role_repository=role_repository,
+        group_role_repository=group_role_repository,
+        user_group_repository=user_group_repository,
+        group_repository=group_repository,
     )
 
 
@@ -245,6 +283,13 @@ def get_bundle_builder(
         BaseTenantMemberRepository, Depends(get_tenant_member_repository)
     ],
     tenant_repository: Annotated[BaseTenantRepository, Depends(get_tenant_repository)],
+    role_repository: Annotated[BaseRoleRepository, Depends(get_role_repository)],
+    permission_repository: Annotated[
+        BasePermissionRepository, Depends(get_permission_repository)
+    ],
+    condition_repository: Annotated[
+        BaseConditionRepository, Depends(get_condition_repository)
+    ],
 ) -> BundleBuilder:
     return BundleBuilder(
         user_repository,
@@ -254,6 +299,9 @@ def get_bundle_builder(
         group_role_repository,
         tenant_member_repository,
         tenant_repository,
+        role_repository,
+        permission_repository,
+        condition_repository,
     )
 
 
@@ -292,9 +340,15 @@ EndpointRepository = Annotated[BaseEndpointRepository, Depends(get_endpoint_repo
 AccessLogRepository = Annotated[
     BaseAccessLogRepository, Depends(get_access_log_repository)
 ]
+AuditLogRepository = Annotated[
+    BaseAuditLogRepository, Depends(get_audit_log_repository)
+]
 TenantRepository = Annotated[BaseTenantRepository, Depends(get_tenant_repository)]
 TenantMemberRepository = Annotated[
     BaseTenantMemberRepository, Depends(get_tenant_member_repository)
+]
+TenantTeamLockRepository = Annotated[
+    BaseTenantTeamLockRepository, Depends(get_tenant_team_lock_repository)
 ]
 AuthorizationServiceDep = Annotated[
     BaseAuthorizationService, Depends(get_authorization_service)
@@ -304,3 +358,45 @@ BundleBuilderDep = Annotated[BundleBuilder, Depends(get_bundle_builder)]
 ConstraintValidatorDep = Annotated[
     BaseConstraintValidator, Depends(get_constraint_validator)
 ]
+UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
+
+
+def get_team_service(
+    tenant_id: str,
+    actor: ActorDep,
+    environment_id: EnvironmentId,
+    role_repository: RoleRepository,
+    permission_repository: PermissionRepository,
+    condition_repository: ConditionRepository,
+    user_role_repository: UserRoleRepository,
+    group_role_repository: GroupRoleRepository,
+    user_repository: UserRepository,
+    member_repository: TenantMemberRepository,
+    lock_repository: TenantTeamLockRepository,
+    audit_repository: AuditLogRepository,
+    snapshot_builder: SnapshotBuilderDep,
+    bundle_builder: BundleBuilderDep,
+    validator: ConstraintValidatorDep,
+    uow: UnitOfWorkDep,
+) -> TeamService:
+    return TeamService(
+        environment_id,
+        tenant_id,
+        actor,
+        role_repo=role_repository,
+        permission_repo=permission_repository,
+        condition_repo=condition_repository,
+        user_role_repo=user_role_repository,
+        group_role_repo=group_role_repository,
+        user_repo=user_repository,
+        member_repo=member_repository,
+        lock_repo=lock_repository,
+        snapshot_builder=snapshot_builder,
+        bundle_builder=bundle_builder,
+        validator=validator,
+        uow=uow,
+        audit=AuditWriter(audit_repository),
+    )
+
+
+TeamServiceDep = Annotated[TeamService, Depends(get_team_service)]

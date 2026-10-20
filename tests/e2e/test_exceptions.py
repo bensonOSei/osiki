@@ -65,3 +65,13 @@ def test_internal_server_error() -> None:
     assert data["error"] == "internal_server_error"
     assert data["message"] == "An unexpected error occurred"
     assert "request_id" in data
+
+
+def test_busy_error_is_a_503_with_retry_after(client: TestClient) -> None:
+    response = client.get("/_test/busy-error")
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "1"
+    data = response.json()
+    assert data["error"] == "busy"
+    assert data["details"] == {"reason": "busy"}
+    assert "request_id" in data

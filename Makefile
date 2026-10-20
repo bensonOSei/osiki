@@ -1,4 +1,4 @@
-.PHONY: help install dev up down build logs shell lint format typecheck pre-commit clean test test-unit test-integration test-cov sdk-sync sdk-test docker-smoke
+.PHONY: help install dev up down build logs shell lint format typecheck pre-commit clean test test-unit test-integration test-cov test-realmongo sdk-sync sdk-test docker-smoke
 
 help:
 	@echo "Available commands:"
@@ -18,6 +18,7 @@ help:
 	@echo "  make test-unit        - Run unit tests only"
 	@echo "  make test-integration - Run integration tests only"
 	@echo "  make test-cov         - Run tests with coverage report"
+	@echo "  make test-realmongo   - Run the real-MongoDB transaction tests (needs Docker)"
 	@echo "  make sdk-sync         - Regenerate the SDK's vendored decision core"
 	@echo "  make docker-smoke     - Build the image and check it serves /health"
 	@echo "  make sdk-test         - Run the Python SDK checks (needs poetry install in sdks/python)"
@@ -73,6 +74,9 @@ test-integration:
 
 test-cov:
 	poetry run pytest --cov=osiki --cov-report=term-missing
+
+test-realmongo:
+	bash scripts/realmongo-test.sh
 
 sdk-sync:
 	python scripts/sync_sdk_decision.py

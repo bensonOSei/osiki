@@ -24,6 +24,9 @@ from osiki.models.group_role import GroupRole
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
+from osiki.repositories.conditions.mongodb_condition_repository import (
+    MongoDBConditionRepository,
+)
 from osiki.repositories.environment_state.mongodb_environment_state_repository import (
     MongoDBEnvironmentStateRepository,
 )
@@ -31,6 +34,10 @@ from osiki.repositories.group_roles.mongodb_group_role_repository import (
     MongoDBGroupRoleRepository,
 )
 from osiki.repositories.groups.mongodb_group_repository import MongoDBGroupRepository
+from osiki.repositories.permissions.mongodb_permission_repository import (
+    MongoDBPermissionRepository,
+)
+from osiki.repositories.roles.mongodb_role_repository import MongoDBRoleRepository
 from osiki.repositories.tenant_members.mongodb_tenant_member_repository import (
     MongoDBTenantMemberRepository,
 )
@@ -58,6 +65,9 @@ async def _bundle(external_id: str) -> UserBundle:
         MongoDBGroupRoleRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
         MongoDBTenantMemberRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
         MongoDBTenantRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
+        MongoDBRoleRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
+        MongoDBPermissionRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
+        MongoDBConditionRepository(ENV, MongoDBEnvironmentStateRepository(ENV)),
     )
     bundle = await builder.build(external_id)
     assert bundle is not None

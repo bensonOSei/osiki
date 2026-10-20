@@ -253,3 +253,115 @@ def test_create_permission_allows_wildcards(client: TestClient) -> None:
     response = client.post(f"{API}/permissions", json={"resource": "*", "action": "*"})
     assert response.status_code == 201
     assert response.json()["permission_string"] == "*:*"
+
+
+# --- Reserved built-ins and assignable ---
+
+
+def _bootstrap(client: TestClient, **headers: str) -> dict[str, str]:
+    response = client.put(f"{API}/environment/bootstrap", headers=headers)
+    assert response.status_code == 200, response.text
+    body: dict[str, str] = response.json()
+    return body
+
+
+@pytest.mark.parametrize("resource", ["osiki.team", "osiki.anything", "osiki.a.b"])
+def test_reserved_prefix_refused(client: TestClient, resource: str) -> None:
+    response = client.post(
+        f"{API}/permissions", json={"resource": resource, "action": "x"}
+    )
+    assert response.status_code == 422
+    assert response.json()["details"] == {"resource": resource}
+    assert client.get(f"{API}/permissions").json()["items"] == []
+
+
+def test_prefix_lookalikes_are_not_reserved(client: TestClient) -> None:
+    for resource in ("osiki", "osikix.team", "my.osiki.team"):
+        response = client.post(
+            f"{API}/permissions", json={"resource": resource, "action": "x"}
+        )
+        assert response.status_code == 201, resource
+
+
+def test_permissions_default_to_not_assignable(client: TestClient) -> None:
+    created = client.post(
+        f"{API}/permissions", json={"resource": "invoices", "action": "read"}
+    ).json()
+    assert created["assignable"] is False
+    assert (
+        client.get(f"{API}/permissions/{created['id']}").json()["assignable"] is False
+    )
+
+
+def test_builtin_cannot_be_marked_assignable(client: TestClient) -> None:
+    pid = _bootstrap(client)["team_manage_permission_id"]
+    response = client.patch(f"{API}/permissions/{pid}", json={"assignable": True})
+    assert response.status_code == 422
+    assert response.json()["details"] == {"permission_id": pid}
+    assert client.get(f"{API}/permissions/{pid}").json()["assignable"] is False
+
+
+def test_builtin_can_be_patched_to_not_assignable(client: TestClient) -> None:
+    pid = _bootstrap(client)["team_manage_permission_id"]
+    response = client.patch(
+        f"{API}/permissions/{pid}", json={"assignable": False, "description": "d"}
+    )
+    assert response.status_code == 200
+    assert response.json()["description"] == "d"
+
+
+def test_builtin_cannot_be_deleted(client: TestClient) -> None:
+    pid = _bootstrap(client)["team_manage_permission_id"]
+    assert client.delete(f"{API}/permissions/{pid}").status_code == 422
+    assert client.get(f"{API}/permissions/{pid}").json()["is_active"] is True
+    # Bootstrap keeps working, so the built-in was not left deactivated.
+    assert _bootstrap(client)["team_manage_permission_id"] == pid
+
+
+def test_mark_assignable_and_back(client: TestClient) -> None:
+    pid = client.post(
+        f"{API}/permissions", json={"resource": "invoices", "action": "read"}
+    ).json()["id"]
+    on = client.patch(f"{API}/permissions/{pid}", json={"assignable": True})
+    assert on.status_code == 200
+    assert on.json()["assignable"] is True
+    assert client.get(f"{API}/permissions/{pid}").json()["assignable"] is True
+    off = client.patch(f"{API}/permissions/{pid}", json={"assignable": False})
+    assert off.json()["assignable"] is False
+
+
+def test_patch_description_leaves_assignable_alone(client: TestClient) -> None:
+    pid = client.post(
+        f"{API}/permissions", json={"resource": "invoices", "action": "read"}
+    ).json()["id"]
+    client.patch(f"{API}/permissions/{pid}", json={"assignable": True})
+    body = client.patch(
+        f"{API}/permissions/{pid}", json={"description": "Read invoices"}
+    ).json()
+    assert body["assignable"] is True
+    assert body["description"] == "Read invoices"
+
+
+def test_patch_empty_body_changes_nothing(client: TestClient) -> None:
+    pid = client.post(
+        f"{API}/permissions",
+        json={"resource": "invoices", "action": "read", "description": "keep"},
+    ).json()["id"]
+    body = client.patch(f"{API}/permissions/{pid}", json={}).json()
+    assert (body["assignable"], body["description"]) == (False, "keep")
+
+
+def test_patch_unknown_permission_404(client: TestClient) -> None:
+    pid = str(PydanticObjectId())
+    response = client.patch(f"{API}/permissions/{pid}", json={"assignable": True})
+    assert response.status_code == 404
+    assert response.json()["details"] == {"permission_id": pid}
+
+
+def test_patch_permission_bumps_snapshot_version(client: TestClient) -> None:
+    pid = client.post(
+        f"{API}/permissions", json={"resource": "invoices", "action": "read"}
+    ).json()["id"]
+    before = client.get(f"{API}/snapshot").json()["version"]
+    client.patch(f"{API}/permissions/{pid}", json={"assignable": True})
+    assert client.get(f"{API}/snapshot").json()["version"] > before

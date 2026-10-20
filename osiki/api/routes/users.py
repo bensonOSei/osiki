@@ -4,6 +4,7 @@ from osiki.api.dependencies import (
     BundleBuilderDep,
     ConstraintValidatorDep,
     GroupRoleRepository,
+    RoleRepository,
     TenantMemberRepository,
     TenantRepository,
     UserGroupRepository,
@@ -11,6 +12,7 @@ from osiki.api.dependencies import (
     UserRoleRepository,
 )
 from osiki.api.exceptions import ConflictError, NotFoundError, constraint_violation
+from osiki.api.tenant_role_guard import ensure_role_in_own_tenant
 from osiki.decision.models import UserBundle
 from osiki.models.user import User
 from osiki.schemas.base import PaginatedResponse
@@ -149,11 +151,13 @@ async def assign_role_to_user(
     user_role_repo: UserRoleRepository,
     tenant_repo: TenantRepository,
     member_repo: TenantMemberRepository,
+    role_repo: RoleRepository,
     validator: ConstraintValidatorDep,
 ) -> UserRoleAssignmentResponse:
     user = await user_repo.get_by_id(user_id)
     if not user:
         raise NotFoundError("User not found", details={"user_id": user_id})
+    await ensure_role_in_own_tenant(role_repo, data.role_id, data.scope)
 
     tenant_id = data.scope.tenant_id if data.scope else None
     if tenant_id is not None:

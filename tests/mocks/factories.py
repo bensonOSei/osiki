@@ -11,6 +11,7 @@ from osiki.decision.models import (
     Snapshot,
     UserBundle,
 )
+from osiki.models.audit_log import AuditContext, AuditLog, Changes
 from osiki.models.base import AttributeValue, Scope
 from osiki.models.condition import Condition
 from osiki.models.constraint import Constraint, ConstraintConfig, ConstraintType
@@ -22,6 +23,7 @@ from osiki.models.permission import Permission
 from osiki.models.role import Grant, Role
 from osiki.models.tenant import Tenant
 from osiki.models.tenant_member import TenantMember
+from osiki.models.tenant_team_lock import TenantTeamLock
 from osiki.models.user import User
 from osiki.models.user_group import UserGroup
 from osiki.models.user_role import UserRole
@@ -88,6 +90,14 @@ def make_tenant_member(
     return member
 
 
+def make_tenant_team_lock(
+    tenant_id: str = "tenant-1", version: int = 0
+) -> TenantTeamLock:
+    lock = TenantTeamLock(tenant_id=tenant_id, version=version)
+    lock.id = PydanticObjectId()
+    return lock
+
+
 def make_role(
     name: str = "test-role",
     permission_ids: list[PydanticObjectId] | None = None,
@@ -95,6 +105,10 @@ def make_role(
     parent_role_id: PydanticObjectId | None = None,
     role_id: PydanticObjectId | None = None,
     is_active: bool = True,
+    tenant_id: str | None = None,
+    is_template: bool = False,
+    is_system: bool = False,
+    copied_from: PydanticObjectId | None = None,
 ) -> Role:
     role = Role(
         name=name,
@@ -104,6 +118,10 @@ def make_role(
         ],
         parent_role_id=parent_role_id,
         is_active=is_active,
+        tenant_id=tenant_id,
+        is_template=is_template,
+        is_system=is_system,
+        copied_from=copied_from,
     )
     role.id = role_id or PydanticObjectId()
     return role
@@ -113,8 +131,9 @@ def make_permission(
     resource: str = "resource",
     action: str = "read",
     permission_id: PydanticObjectId | None = None,
+    assignable: bool = False,
 ) -> Permission:
-    perm = Permission(resource=resource, action=action)
+    perm = Permission(resource=resource, action=action, assignable=assignable)
     perm.id = permission_id or PydanticObjectId()
     return perm
 
@@ -152,12 +171,14 @@ def make_group_role(
     role_id: PydanticObjectId,
     scope: Scope | None = None,
     group_role_id: PydanticObjectId | None = None,
+    expires_at: float | None = None,
 ) -> GroupRole:
     gr = GroupRole(
         group_id=group_id,
         role_id=role_id,
         scope=scope or Scope(),
         assigned_by="admin",
+        expires_at=expires_at,
     )
     gr.id = group_role_id or PydanticObjectId()
     return gr
@@ -251,12 +272,14 @@ def make_user_bundle(
     user_id: str = "user-1",
     attributes: dict[str, Any] | None = None,
     tenants: dict[str, dict[str, Any]] | None = None,
+    roles: list[RoleEntry] | None = None,
 ) -> UserBundle:
     return UserBundle(
         user_id=user_id,
         attributes=attributes or {},
         tenants=tenants or {},
         assignments=assignments or [],
+        roles=roles or [],
     )
 
 
@@ -270,3 +293,28 @@ def make_decision_request(
     return DecisionRequest(
         resource=resource, action=action, scope=scope or {}, record=record, now=now
     )
+
+
+def make_audit_log(
+    action: str = "role.create",
+    tenant_id: str | None = None,
+    actor_id: str = "actor-1",
+    actor_type: str = "developer",
+    target_type: str = "role",
+    target_id: str = "target-1",
+    timestamp: float | None = None,
+) -> AuditLog:
+    log = AuditLog(
+        actor_id=actor_id,
+        actor_type=actor_type,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        tenant_id=tenant_id,
+        changes=Changes(),
+        context=AuditContext(),
+    )
+    if timestamp is not None:
+        log.timestamp = timestamp
+    log.id = PydanticObjectId()
+    return log

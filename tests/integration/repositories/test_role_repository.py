@@ -1,6 +1,8 @@
 """Integration tests for MongoDBRoleRepository."""
 
+import pytest
 from beanie import PydanticObjectId
+from pymongo.errors import DuplicateKeyError
 
 from osiki.models.permission import Permission
 from osiki.models.role import Grant, Role
@@ -269,3 +271,167 @@ async def test_get_all_active_is_unpaginated_and_skips_inactive() -> None:
 
     assert len(result) == 105
     assert all(r.is_active and r.environment_id == "default" for r in result)
+
+
+def _repo(environment: str = "default") -> MongoDBRoleRepository:
+    return MongoDBRoleRepository(
+        environment, MongoDBEnvironmentStateRepository(environment)
+    )
+
+
+async def test_get_by_name_is_scoped_to_project_or_tenant() -> None:
+    repo = _repo()
+    project = await repo.create(Role(name="scoped-name"))
+    acme = await repo.create(Role(name="scoped-name", tenant_id="acme"))
+
+    found_project = await repo.get_by_name("scoped-name")
+    found_acme = await repo.get_by_name("scoped-name", "acme")
+
+    assert found_project is not None and found_project.id == project.id
+    assert found_acme is not None and found_acme.id == acme.id
+    assert await repo.get_by_name("scoped-name", "other") is None
+    assert await repo.get_by_name("only-in-acme-x") is None
+
+
+async def test_get_by_name_ignores_inactive() -> None:
+    repo = _repo()
+    role = await repo.create(Role(name="gone-name", tenant_id="acme"))
+    await repo.deactivate(str(role.id))
+    assert await repo.get_by_name("gone-name", "acme") is None
+
+
+async def test_names_are_unique_per_environment_and_tenant() -> None:
+    repo = _repo()
+    await repo.create(Role(name="dup-name", tenant_id="acme"))
+    await repo.create(Role(name="dup-name", tenant_id="globex"))
+    await repo.create(Role(name="dup-name"))
+    await _repo("other-env").create(Role(name="dup-name", tenant_id="acme"))
+
+    with pytest.raises(DuplicateKeyError):
+        await repo.create(Role(name="dup-name", tenant_id="acme"))
+    with pytest.raises(DuplicateKeyError):
+        await repo.create(Role(name="dup-name"))
+
+
+async def test_list_tenant_returns_only_that_tenants_active_roles() -> None:
+    repo = _repo()
+    mine = await repo.create(Role(name="lt-a", tenant_id="lt-acme"))
+    dead = await repo.create(Role(name="lt-b", tenant_id="lt-acme"))
+    await repo.deactivate(str(dead.id))
+    await repo.create(Role(name="lt-c", tenant_id="lt-globex"))
+    await repo.create(Role(name="lt-d"))
+    await _repo("other-env").create(Role(name="lt-e", tenant_id="lt-acme"))
+
+    assert [r.id for r in await repo.list_tenant("lt-acme")] == [mine.id]
+    assert await repo.list_tenant("lt-nobody") == []
+
+
+async def test_list_templates_returns_active_project_templates_only() -> None:
+    repo = _repo("tpl-env")
+    template = await repo.create(Role(name="tpl-a", is_template=True))
+    dead = await repo.create(Role(name="tpl-b", is_template=True))
+    await repo.deactivate(str(dead.id))
+    await repo.create(Role(name="tpl-c"))
+    await repo.create(Role(name="tpl-d", is_template=True, tenant_id="acme"))
+    await _repo("tpl-other").create(Role(name="tpl-e", is_template=True))
+
+    assert [r.id for r in await repo.list_templates()] == [template.id]
+
+
+async def test_list_active_excludes_tenant_roles() -> None:
+    repo = _repo("la-env")
+    project = await repo.create(Role(name="la-a"))
+    await repo.create(Role(name="la-b", tenant_id="acme"))
+
+    assert [r.id for r in await repo.list_active()] == [project.id]
+    # get_all_active still sees everything; the snapshot filters itself.
+    assert len(await repo.get_all_active()) == 2
+
+
+async def test_role_tenant_fields_round_trip() -> None:
+    repo = _repo()
+    source = PydanticObjectId()
+    created = await repo.create(
+        Role(name="rt-a", tenant_id="acme", copied_from=source, is_template=False)
+    )
+    loaded = await repo.get_by_id(str(created.id))
+    assert loaded is not None
+    assert (loaded.tenant_id, loaded.copied_from) == ("acme", source)
+
+
+async def test_tenant_role_writes_bump_assignments_not_config_version() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+
+    role = await repo.create(Role(name="bump-tenant", tenant_id="acme"))
+    role.name = "bump-tenant-2"
+    await repo.update(role)
+    await repo.deactivate(str(role.id))
+
+    assert await state.get_config_version() == config
+    assert await state.get_assignments_version() == assignments + 3
+
+
+async def test_project_role_writes_still_bump_config_version() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+
+    role = await repo.create(Role(name="bump-project"))
+    await repo.update(role)
+    await repo.deactivate(str(role.id))
+
+    assert await state.get_config_version() == config + 3
+    assert await state.get_assignments_version() == assignments
+
+
+async def test_add_and_remove_permission_bump_by_role_kind() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    pid = str(PydanticObjectId())
+    tenant_role = await repo.create(Role(name="perm-tenant", tenant_id="acme"))
+    project_role = await repo.create(Role(name="perm-project"))
+
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+    await repo.add_permission(str(tenant_role.id), pid)
+    await repo.remove_permission(str(tenant_role.id), pid)
+    assert await state.get_config_version() == config
+    assert await state.get_assignments_version() == assignments + 2
+
+    await repo.add_permission(str(project_role.id), pid)
+    await repo.remove_permission(str(project_role.id), pid)
+    assert await state.get_config_version() == config + 2
+    assert await state.get_assignments_version() == assignments + 2
+
+
+async def test_list_copies() -> None:
+    repo = MongoDBRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    template = await repo.create(Role(name="Editor", is_template=True))
+    live = await repo.create(
+        Role(name="Editor", tenant_id="acme", copied_from=template.id)
+    )
+    gone = await repo.create(
+        Role(
+            name="Editor",
+            tenant_id="beta",
+            copied_from=template.id,
+            is_active=False,
+        )
+    )
+    await repo.create(Role(name="Editor", tenant_id="other"))
+
+    copies = await repo.list_copies(str(template.id))
+
+    assert {c.id for c in copies} == {live.id, gone.id}

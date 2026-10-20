@@ -26,6 +26,9 @@ class AppSettings(BaseSettings):
     # MongoDB
     mongodb_url: str = "mongodb://localhost:27017/osiki"
     mongodb_database: str = "osiki"
+    # Run each team operation in one MongoDB transaction. Needs a replica set,
+    # so it is off by default; standalone MongoDB rejects transactions.
+    mongodb_transactions: bool = False
 
     # Redis
     redis_url: str = "redis://localhost:6379"

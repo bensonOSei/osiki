@@ -27,6 +27,19 @@ def constraint_violation(
     )
 
 
+class BusyError(OsikiError):
+    """The service could not complete the request now; retrying shortly may work."""
+
+    def __init__(
+        self,
+        message: str,
+        details: dict[str, str] | None = None,
+        retry_after: int = 1,
+    ) -> None:
+        super().__init__(message, details)
+        self.retry_after = retry_after
+
+
 class AuthorizationError(OsikiError):
     pass
 
@@ -56,6 +69,19 @@ async def conflict_handler(request: Request, exc: ConflictError) -> JSONResponse
         status_code=status.HTTP_409_CONFLICT,
         content={
             "error": "conflict",
+            "message": exc.message,
+            "details": exc.details,
+            "request_id": _get_request_id(request),
+        },
+    )
+
+
+async def busy_handler(request: Request, exc: BusyError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        headers={"Retry-After": str(exc.retry_after)},
+        content={
+            "error": "busy",
             "message": exc.message,
             "details": exc.details,
             "request_id": _get_request_id(request),
@@ -110,6 +136,7 @@ async def internal_error_handler(request: Request, exc: Exception) -> JSONRespon
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(NotFoundError, not_found_handler)  # type: ignore[arg-type]
     app.add_exception_handler(ConflictError, conflict_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(BusyError, busy_handler)  # type: ignore[arg-type]
     app.add_exception_handler(AuthorizationError, authorization_handler)  # type: ignore[arg-type]
     app.add_exception_handler(ValidationError, validation_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, internal_error_handler)

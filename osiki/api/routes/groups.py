@@ -4,10 +4,12 @@ from osiki.api.dependencies import (
     ConstraintValidatorDep,
     GroupRepository,
     GroupRoleRepository,
+    RoleRepository,
     TenantRepository,
     UserGroupRepository,
 )
 from osiki.api.exceptions import ConflictError, NotFoundError, constraint_violation
+from osiki.api.tenant_role_guard import ensure_role_in_own_tenant
 from osiki.models.group import Group
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.group import GroupCreate, GroupRead, GroupUpdate
@@ -141,11 +143,13 @@ async def assign_role_to_group(
     group_role_repo: GroupRoleRepository,
     tenant_repo: TenantRepository,
     user_group_repo: UserGroupRepository,
+    role_repo: RoleRepository,
     validator: ConstraintValidatorDep,
 ) -> GroupRoleAssignmentResponse:
     group = await group_repo.get_by_id(group_id)
     if not group:
         raise NotFoundError("Group not found", details={"group_id": group_id})
+    await ensure_role_in_own_tenant(role_repo, data.role_id, data.scope)
 
     # A group isn't a user, so a tenant-scoped group role adds no membership.
     tenant_id = data.scope.tenant_id if data.scope else None
