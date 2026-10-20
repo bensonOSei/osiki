@@ -39,6 +39,28 @@ async def test_migrate_m3_drops_old_name_index(mongo_db_with_m2_indexes: Any) ->
     assert NEW_UNIQUE in names
 
 
+async def test_migrate_m3_drops_the_old_index_under_any_name() -> None:
+    client = AsyncMongoMockClient()
+    try:
+        roles = client.renamed.roles
+        await roles.create_index(
+            [("environment_id", 1), ("name", 1)], unique=True, name="roles_by_name"
+        )
+        # Other indexes survive, including one that merely starts the same way.
+        await roles.create_index([("environment_id", 1), ("name", 1), ("x", 1)])
+        await roles.create_index([("name", 1), ("environment_id", 1)], name="swapped")
+
+        assert await migrate_m3.migrate_database(client.renamed) is True
+
+        names = await client.renamed.roles.index_information()
+        assert "roles_by_name" not in names
+        assert "swapped" in names
+        assert "environment_id_1_name_1_x_1" in names
+        assert NEW_UNIQUE in names
+    finally:
+        client.close()
+
+
 async def test_migrate_m3_is_idempotent(mongo_db_with_m2_indexes: Any) -> None:
     first = await migrate_m3.migrate_database(mongo_db_with_m2_indexes)
     after_first = await _index_names(mongo_db_with_m2_indexes)

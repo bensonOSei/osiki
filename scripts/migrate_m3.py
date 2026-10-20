@@ -34,16 +34,22 @@ from pymongo import AsyncMongoClient  # noqa: E402
 from osiki.configs.settings import get_settings  # noqa: E402
 from osiki.models.role import Role  # noqa: E402
 
-OLD_ROLE_NAME_INDEX = "environment_id_1_name_1"
+OLD_ROLE_NAME_KEY = [("environment_id", 1), ("name", 1)]
 
 
 async def drop_old_role_name_index(database: Any) -> bool:
+    """Drop every index on exactly ``(environment_id, name)``, whatever it is
+    called: a hand-made or restored index may carry another name."""
     existing = await database["roles"].index_information()
-    if OLD_ROLE_NAME_INDEX not in existing:
-        return False
-    await database["roles"].drop_index(OLD_ROLE_NAME_INDEX)
-    print(f"roles: dropped index {OLD_ROLE_NAME_INDEX}")
-    return True
+    stale = [
+        name
+        for name, info in existing.items()
+        if [tuple(part) for part in info["key"]] == OLD_ROLE_NAME_KEY
+    ]
+    for name in stale:
+        await database["roles"].drop_index(name)
+        print(f"roles: dropped index {name}")
+    return bool(stale)
 
 
 async def migrate_database(database: Any) -> bool:
