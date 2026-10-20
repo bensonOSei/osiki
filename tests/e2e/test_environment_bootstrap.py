@@ -57,8 +57,11 @@ def test_bootstrap_bumps_the_snapshot_version_once(client: TestClient) -> None:
 
 def test_owner_template_cannot_be_deleted(client: TestClient) -> None:
     owner = client.put(f"{API}/environment/bootstrap").json()["owner_role_id"]
-    assert client.delete(f"{API}/roles/{owner}").status_code == 404
+    resp = client.delete(f"{API}/roles/{owner}")
+    assert resp.status_code == 422
+    assert resp.json()["message"] == "The built-in Owner template cannot be deleted"
     assert client.get(f"{API}/roles/{owner}").json()["is_active"] is True
+    assert client.put(f"{API}/environment/bootstrap").status_code == 200
 
 
 def test_bootstrap_with_a_deactivated_owner_role_is_409(client: TestClient) -> None:

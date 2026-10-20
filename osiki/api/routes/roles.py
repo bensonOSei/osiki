@@ -212,7 +212,12 @@ async def delete_role(
     role_id: str,
     role_repo: RoleRepository,
 ) -> None:
-    await _get_project_role(role_id, role_repo)
+    role = await _get_project_role(role_id, role_repo)
+    if is_owner_template(role):
+        raise ValidationError(
+            "The built-in Owner template cannot be deleted",
+            details={"role_id": role_id},
+        )
     success = await role_repo.deactivate(role_id)
     if not success:
         raise NotFoundError("Role not found", details={"role_id": role_id})

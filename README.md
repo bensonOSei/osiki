@@ -164,17 +164,19 @@ Osiki can let a business that uses your product manage its own staff: create rol
 
 Osiki has no login of its own. Your own front door authenticates the person and tells the engine who it is with the `X-Osiki-Actor` header, either `developer:<id>` or `tenant_user:<id>` (the id is 1 to 128 characters of `A-Z a-z 0-9 . _ @ -`). A `tenant_user` id is the engine's external user id.
 
-> **Never expose the engine without a front door that sets `X-Osiki-Actor`.** The engine trusts the header. A missing header means `developer:anonymous`, and a developer passes every team check and the no-escalation check. A malformed header returns `422`. Strip any `X-Osiki-Actor` that arrives from a client and set it yourself.
+> **Never expose the engine without a front door that sets `X-Osiki-Actor`.** The engine trusts the header. A missing header means `developer:anonymous`, and a developer passes the team-manager and no-escalation checks (they still get `not_assignable`, `not_offered`, `constraint` and `last_manager`). A malformed header returns `422`.
+>
+> No engine route has authentication, and every developer route ignores `X-Osiki-Actor`. That includes `/roles`, `/users/{id}/roles`, `/permissions`, `/constraints`, `/tenants/...` (outside `/team`) and `PUT /environment/bootstrap`. Your front door must expose **only** `/api/v1/tenants/{their tenant}/team/...` to tenant users, pin `X-Osiki-Environment` itself, and set `X-Osiki-Actor` itself (strip any value a client sends). Everything else is developer-only.
 
 The actor is recorded on every team change in the audit log (`GET /tenants/{tenant_id}/team/audit-logs`).
 
 ### Setting it up
 
-1. **Bootstrap.** `PUT /api/v1/environment/bootstrap` creates the built-in permission `osiki.team:manage` and the `Owner` template if they are missing. It is safe to repeat, and returns `team_manage_permission_id` and `owner_role_id`. It answers `409` if another role already uses the name `Owner`.
+1. **Bootstrap.** `PUT /api/v1/environment/bootstrap` creates the built-in permission `osiki.team:manage` and the `Owner` template if they are missing. It is safe to repeat (the Owner template cannot be deleted, so it always finds it), and returns `team_manage_permission_id` and `owner_role_id`. It answers `409` if another role already uses the name `Owner`.
 2. **Mark what a business may hand out.** Set `assignable: true` on each permission via `PATCH /permissions/{id}`. Tenant roles can hold only assignable permissions.
 3. **Owner setup (M3A-29).** The seeded `Owner` template grants only `osiki.team:manage`, and a team manager can hand out only what they hold. So you must add the business's assignable permissions to the Owner template. It is editable except for renaming it, changing `is_template`, or dropping `osiki.team:manage` (each is a `422`).
 4. **Give a business its first manager.** Add the first member with the `Owner` role as a developer actor (`POST /tenants/{tenant_id}/team/members`). From then on a manager can add the rest of their team.
-5. **Offer templates.** A template (a project role with `is_template: true`) is offered to a tenant when every permission it grants, including its parents', is assignable or built-in. A manager can assign an offered template, or copy one into an editable tenant role with `copied_from`.
+5. **Offer templates.** A template (a project role with `is_template: true`) is offered to a tenant when every permission it grants, including its parents', is assignable or built-in. A manager can assign an offered template, or start a tenant role from one: `copied_from` records provenance only, so send the grants in the request body too.
 
 ### What a team manager can do
 
@@ -213,6 +215,8 @@ Team conflicts are `409` with a machine-readable `details.reason`:
 | `role_in_use` | A role to delete is still assigned |
 | `not_offered` | The template is not offered to this tenant |
 | `constraint` | A constraint refused the assignment (`details.constraint`, `details.detail`) |
+
+Some team `409`s carry no `details.reason`: the duplicates (a role name already taken, a role already assigned, an email already in use).
 
 Other statuses: `403` (the actor does not manage the tenant, `details.reason: not_manager`), `404` and `422`. Under transaction contention the engine retries, then answers `503` with `error: "busy"` and a `Retry-After` header; the call may be retried.
 
@@ -267,6 +271,8 @@ REDIS_URL=redis://localhost:6379
 REDIS_PASSWORD=
 ```
 
+`MONGODB_TRANSACTIONS=true` requires MongoDB to run as a replica set. If you run the server on the host against the compose MongoDB replica set, add `?directConnection=true` to `MONGODB_URL` (for example `mongodb://localhost:27017/osiki?directConnection=true`), because the replica set advertises its member as `mongodb:27017`, which the host cannot resolve.
+
 Then start the dev server:
 
 ```bash
@@ -284,7 +290,7 @@ All endpoints live under `/api/v1`. Here's the shape of things:
 | **Users** | Create, get, update, delete, list. Assign/revoke roles (`?tenant_id=` on revoke). Add/remove from groups. Upsert and bundle by external id. |
 | **Groups** | Create, get, update, delete, list. Assign/revoke roles (`?tenant_id=` on revoke). |
 | **Roles** | Create, get, update, delete, list. |
-| **Permissions** | Create, get, list. |
+| **Permissions** | Create, get, update, delete, list. |
 | **Conditions** | Create, get, update, delete, list. |
 | **Constraints** | Create, get, update, delete, list. |
 | **Tenants** | Upsert, get. Add/remove/list members. |
