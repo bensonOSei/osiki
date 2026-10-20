@@ -30,6 +30,11 @@ class AppSettings(BaseSettings):
     # so it is off by default; standalone MongoDB rejects transactions.
     mongodb_transactions: bool = False
 
+    # Refuse requests without X-Osiki-Actor instead of treating them as the
+    # anonymous developer. Off for self-hosted use; hosted front doors set it
+    # so a gateway that drops the header fails closed.
+    require_actor: bool = False
+
     # Redis
     redis_url: str = "redis://localhost:6379"
     redis_password: str = ""
