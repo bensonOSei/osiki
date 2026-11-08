@@ -5,7 +5,7 @@ from typing import Any, TypeVar
 from urllib.parse import quote
 
 import httpx
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from osiki_sdk._decision.models import Snapshot, UserBundle
 from osiki_sdk.config import OsikiConfig
@@ -38,15 +38,24 @@ def _parse(response: httpx.Response, parse: Callable[[Any], T]) -> T:
         raise EngineError(response.status_code, response.text) from exc
 
 
-def _permission(data: Any) -> dict[str, Any]:
-    if not isinstance(data, dict):
-        raise TypeError("permission must be an object")
-    str(data["id"])
-    return data
+class PermissionItem(BaseModel):
+    """The fields of an engine permission that the SDK reads."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    id: str
+    resource: str
+    action: str
+    description: str | None = None
+    assignable: bool = False
+
+    @property
+    def key(self) -> str:
+        return f"{self.resource}:{self.action}"
 
 
-def _items(data: Any) -> list[dict[str, Any]]:
-    return [_permission(item) for item in data["items"]]
+def _items(data: Any) -> list[PermissionItem]:
+    return [PermissionItem.model_validate(item) for item in data["items"]]
 
 
 def _seg(value: str) -> str:
@@ -176,7 +185,7 @@ class EngineClient:
         )
         return response.status_code != 404
 
-    async def list_permissions(self, page: int, page_size: int) -> list[dict[str, Any]]:
+    async def list_permissions(self, page: int, page_size: int) -> list[PermissionItem]:
         response = await self._request(
             "GET", f"/permissions?page={page}&page_size={page_size}"
         )
@@ -187,13 +196,13 @@ class EngineClient:
         resource: str,
         action: str,
         description: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> PermissionItem:
         """Create a permission; EngineError(409) when the key already exists."""
         payload: dict[str, Any] = {"resource": resource, "action": action}
         if description is not None:
             payload["description"] = description
         response = await self._request("POST", "/permissions", json=payload)
-        return _parse(response, _permission)
+        return _parse(response, PermissionItem.model_validate)
 
     async def update_permission(
         self, permission_id: str, fields: dict[str, Any]

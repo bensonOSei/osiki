@@ -21,11 +21,22 @@ class PermissionSpec:
 
 @dataclass(frozen=True)
 class EnsureResult:
-    """Permission strings (``resource:action``), each list sorted."""
+    """Permission strings (``resource:action``), each tuple sorted."""
 
-    created: list[str]
-    updated: list[str]
-    unchanged: list[str]
+    created: tuple[str, ...]
+    updated: tuple[str, ...]
+    unchanged: tuple[str, ...]
+
+
+def is_deleted_conflict(exc: EngineError) -> bool:
+    """Whether a create 409 says the key belongs to a deleted permission."""
+    body = exc.body
+    details = body.get("details") if isinstance(body, dict) else None
+    return (
+        exc.status == 409
+        and isinstance(details, dict)
+        and details.get("reason") == "deleted"
+    )
 
 
 class PermissionDeleted(EngineError):  # noqa: N818

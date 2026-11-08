@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query, status
+from pymongo.errors import DuplicateKeyError
 
 from osiki.api.actor import ActorDep
 from osiki.api.dependencies import (
@@ -21,6 +22,18 @@ from osiki.services.builtins import RESERVED_PREFIX, is_builtin
 router = APIRouter(prefix="/permissions", tags=["permissions"])
 
 
+def _exists(data: PermissionCreate, key: str) -> ConflictError:
+    return ConflictError(
+        "Permission with this resource and action already exists",
+        details={
+            "resource": data.resource,
+            "action": data.action,
+            "permission": key,
+            "reason": "exists",
+        },
+    )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_permission(
     data: PermissionCreate,
@@ -33,12 +46,17 @@ async def create_permission(
             f"The resource prefix {RESERVED_PREFIX!r} is reserved for built-ins",
             details={"resource": data.resource},
         )
-    existing = await permission_repo.get_by_resource_action(data.resource, data.action)
-    if existing:
+    key = f"{data.resource}:{data.action}"
+    existing = await permission_repo.get_by_resource_action_any(
+        data.resource, data.action
+    )
+    if existing and not existing.is_active:
         raise ConflictError(
-            "Permission with this resource and action already exists",
-            details={"resource": data.resource, "action": data.action},
+            f"Permission {key} was deleted and cannot be recreated",
+            details={"permission": key, "reason": "deleted"},
         )
+    if existing:
+        raise _exists(data, key)
 
     permission = Permission(
         resource=data.resource,
@@ -46,7 +64,10 @@ async def create_permission(
         description=data.description,
         metadata=data.metadata or {},
     )
-    created = await permission_repo.create(permission)
+    try:
+        created = await permission_repo.create(permission)
+    except DuplicateKeyError as exc:
+        raise _exists(data, key) from exc
     await audit.record(
         actor,
         "permission.create",
@@ -150,7 +171,7 @@ async def list_permissions(
 
     items = [PermissionRead.from_model(p) for p in permissions]
 
-    total = len(items) + skip
+    total = await permission_repo.count_active()
     return PaginatedResponse.create(items, total, page, page_size)
 
 

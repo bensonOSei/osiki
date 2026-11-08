@@ -65,6 +65,21 @@ class MongoDBPermissionRepository(BasePermissionRepository):
             Permission.is_active == True,
         )
 
+    async def get_by_resource_action_any(
+        self, resource: str, action: str
+    ) -> Permission | None:
+        return await Permission.find_one(
+            Permission.environment_id == self.environment_id,
+            Permission.resource == resource,
+            Permission.action == action,
+        )
+
+    async def count_active(self) -> int:
+        return await Permission.find(
+            Permission.environment_id == self.environment_id,
+            Permission.is_active == True,
+        ).count()
+
     async def get_by_resource(self, resource: str) -> list[Permission]:
         return await Permission.find(
             Permission.environment_id == self.environment_id,
@@ -103,6 +118,7 @@ class MongoDBPermissionRepository(BasePermissionRepository):
                 Permission.environment_id == self.environment_id,
                 Permission.is_active == True,
             )
+            .sort("_id")
             .skip(skip)
             .limit(limit)
             .to_list()

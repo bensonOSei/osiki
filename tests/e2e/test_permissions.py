@@ -414,3 +414,45 @@ def test_refused_permission_write_is_not_audited(client: TestClient) -> None:
     assert client.delete(f"{API}/permissions/{PydanticObjectId()}").status_code == 404
     actions = [i["action"] for i in client.get(f"{API}/audit-logs").json()["items"]]
     assert actions == ["permission.create"]
+
+
+def test_create_permission_conflict_reasons(client: TestClient) -> None:
+    body = {"resource": "docs", "action": "read"}
+    perm_id = client.post(f"{API}/permissions", json=body).json()["id"]
+
+    active = client.post(f"{API}/permissions", json=body)
+    assert active.status_code == 409
+    assert active.json()["details"]["reason"] == "exists"
+    assert active.json()["details"]["permission"] == "docs:read"
+
+    assert client.delete(f"{API}/permissions/{perm_id}").status_code == 204
+    deleted = client.post(f"{API}/permissions", json=body)
+    assert deleted.status_code == 409
+    assert deleted.json()["details"] == {"permission": "docs:read", "reason": "deleted"}
+    assert "docs:read was deleted and cannot be recreated" in deleted.json()["message"]
+
+
+def test_create_permission_duplicate_key_race_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pymongo.errors import DuplicateKeyError
+
+    async def boom(*_: object, **__: object) -> None:
+        raise DuplicateKeyError("E11000 duplicate key")
+
+    monkeypatch.setattr(
+        "tests.mocks.repositories.MockPermissionRepository.create", boom
+    )
+    response = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    )
+    assert response.status_code == 409
+    assert response.json()["details"]["reason"] == "exists"
+
+
+def test_list_permissions_total_is_real(client: TestClient) -> None:
+    for action in ["read", "write", "delete"]:
+        client.post(f"{API}/permissions", json={"resource": "docs", "action": action})
+    data = client.get(f"{API}/permissions", params={"page_size": 2}).json()
+    assert len(data["items"]) == 2
+    assert data["total"] == 3

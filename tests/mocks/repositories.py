@@ -640,6 +640,17 @@ class MockPermissionRepository(_ConfigBound[Permission], BasePermissionRepositor
                 return perm
         return None
 
+    async def get_by_resource_action_any(
+        self, resource: str, action: str
+    ) -> Permission | None:
+        for perm in self._scoped():
+            if perm.resource == resource and perm.action == action:
+                return perm
+        return None
+
+    async def count_active(self) -> int:
+        return sum(1 for p in self._scoped() if p.is_active)
+
     async def get_by_resource(self, resource: str) -> list[Permission]:
         return [p for p in self._scoped() if p.resource == resource and p.is_active]
 

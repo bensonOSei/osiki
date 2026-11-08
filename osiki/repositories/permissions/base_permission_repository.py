@@ -25,6 +25,15 @@ class BasePermissionRepository(ABC):
     ) -> Permission | None: ...
 
     @abstractmethod
+    async def get_by_resource_action_any(
+        self, resource: str, action: str
+    ) -> Permission | None:
+        """The permission holding this key, active or deleted."""
+
+    @abstractmethod
+    async def count_active(self) -> int: ...
+
+    @abstractmethod
     async def get_by_resource(self, resource: str) -> list[Permission]: ...
 
     @abstractmethod

@@ -141,3 +141,17 @@ async def test_get_by_ids_any_includes_inactive_permissions() -> None:
 
     assert [p.id for p in await repo.get_by_ids(ids)] == [live.id]
     assert {p.id for p in await repo.get_by_ids_any(ids)} == {live.id, dead.id}
+
+
+async def test_get_by_resource_action_any_includes_deleted_and_count_active() -> None:
+    repo = MongoDBPermissionRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    before = await repo.count_active()
+    gone = await repo.create(Permission(resource="ghost", action="haunt"))
+    await repo.deactivate(str(gone.id))
+    found = await repo.get_by_resource_action_any("ghost", "haunt")
+    assert found is not None and found.is_active is False
+    assert await repo.get_by_resource_action("ghost", "haunt") is None
+    assert await repo.get_by_resource_action_any("ghost", "nope") is None
+    assert await repo.count_active() == before
