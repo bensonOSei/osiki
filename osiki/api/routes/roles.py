@@ -214,14 +214,16 @@ async def role_usage(
 ) -> list[RoleUsageRead]:
     """Tenants using, and tenant copies of, each project role."""
     # Canonical ids; anything that is not an ObjectId is reported as unused.
-    requested = [
-        str(PydanticObjectId(rid)) if PydanticObjectId.is_valid(rid) else rid
-        for rid in role_id
-    ]
-    known = await role_repo.project_role_ids(
-        [rid for rid in requested if PydanticObjectId.is_valid(rid)]
-    )
-    ids = sorted(known)
+    requested: list[str] = []
+    valid: list[str] = []
+    for rid in role_id:
+        if PydanticObjectId.is_valid(rid):
+            rid = str(PydanticObjectId(rid))
+            valid.append(rid)
+        requested.append(rid)
+    ids = sorted(await role_repo.project_role_ids(valid)) if valid else []
+    if not ids:
+        return [RoleUsageRead(role_id=rid, tenants=0, copies=0) for rid in requested]
     now = time.time()
     by_user = await user_role_repo.tenants_with_role(ids, now)
     by_group = await group_role_repo.tenants_with_role(ids, now)

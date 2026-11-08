@@ -816,3 +816,12 @@ def test_role_usage_limits_ids(client: TestClient) -> None:
     assert response.status_code == 422
     assert client.get(f"{API}/roles/usage").status_code == 422
     assert len(_usage(client, *ids[:100])) == 100
+
+
+def test_role_usage_with_no_known_role_is_all_zeros(client: TestClient) -> None:
+    unknown = str(PydanticObjectId())
+
+    assert _usage(client, "not-an-id") == [
+        {"role_id": "not-an-id", "tenants": 0, "copies": 0}
+    ]
+    assert _usage(client, unknown) == [{"role_id": unknown, "tenants": 0, "copies": 0}]
