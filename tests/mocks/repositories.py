@@ -306,6 +306,11 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
             return True
         return False
 
+    async def tenants_with_role(
+        self, role_ids: list[str], now: float
+    ) -> dict[str, set[str]]:
+        return _live_tenants(self._scoped(), role_ids, now)
+
     async def get_expired(self, current_time: float) -> list[UserRole]:
         return [
             ur
@@ -314,6 +319,23 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
             and ur.expires_at is not None
             and ur.expires_at <= current_time
         ]
+
+
+def _live_tenants(
+    rows: list[UserRole] | list[GroupRole], role_ids: list[str], now: float
+) -> dict[str, set[str]]:
+    wanted = [PydanticObjectId(r) for r in role_ids]
+    tenants: dict[str, set[str]] = {}
+    for row in rows:
+        tenant = row.scope.tenant_id
+        if (
+            row.is_active
+            and row.role_id in wanted
+            and tenant is not None
+            and (row.expires_at is None or row.expires_at > now)
+        ):
+            tenants.setdefault(str(row.role_id), set()).add(tenant)
+    return tenants
 
 
 class MockUserGroupRepository(_AssignmentBound[UserGroup], BaseUserGroupRepository):
@@ -408,6 +430,11 @@ class MockGroupRoleRepository(_AssignmentBound[GroupRole], BaseGroupRoleReposito
             return True
         return False
 
+    async def tenants_with_role(
+        self, role_ids: list[str], now: float
+    ) -> dict[str, set[str]]:
+        return _live_tenants(self._scoped(), role_ids, now)
+
     async def get_expired(self, current_time: float) -> list[GroupRole]:
         return [
             gr
@@ -486,6 +513,28 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
             for r in self._scoped()
             if r.copied_from is not None and str(r.copied_from) == template_id
         ]
+
+    async def copies_of(self, role_ids: list[str]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for role in self._scoped():
+            if (
+                role.is_active
+                and role.tenant_id is not None
+                and role.copied_from is not None
+                and any(_same_id(role.copied_from, rid) for rid in role_ids)
+            ):
+                key = str(role.copied_from)
+                counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    async def project_role_ids(self, role_ids: list[str]) -> set[str]:
+        return {
+            str(role.id)
+            for role in self._scoped()
+            if role.tenant_id is None
+            and role.id is not None
+            and any(_same_id(role.id, rid) for rid in role_ids)
+        }
 
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         return [

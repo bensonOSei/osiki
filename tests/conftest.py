@@ -2,10 +2,11 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 from beanie import init_beanie
-from mongomock_motor import AsyncMongoMockClient
+from mongomock_motor import AsyncMongoMockClient, AsyncMongoMockCollection
 
 from osiki.models.access_log import AccessLog
 from osiki.models.audit_log import AuditLog
@@ -128,6 +129,19 @@ def event_loop() -> asyncio.AbstractEventLoop:  # type: ignore
 
 
 # --- MongoDB Fixtures (for integration tests) ---
+
+_motor_aggregate = AsyncMongoMockCollection.aggregate
+
+
+async def _awaitable_aggregate(
+    self: AsyncMongoMockCollection, *args: Any, **kwargs: Any
+) -> Any:
+    """Await-then-cursor like the async pymongo driver, which Beanie targets;
+    the Motor mock returns the cursor directly."""
+    return _motor_aggregate(self, *args, **kwargs)
+
+
+AsyncMongoMockCollection.aggregate = _awaitable_aggregate  # type: ignore[method-assign,assignment]
 
 
 @pytest.fixture(scope="session")

@@ -110,3 +110,27 @@ class MongoDBGroupRoleRepository(BaseGroupRoleRepository):
                 "expires_at": {"$ne": None, "$lte": current_time},
             },
         ).to_list()
+
+    async def tenants_with_role(
+        self, role_ids: list[str], now: float
+    ) -> dict[str, set[str]]:
+        rows = await GroupRole.aggregate(
+            [
+                {
+                    "$match": {
+                        "environment_id": self.environment_id,
+                        "role_id": {"$in": [PydanticObjectId(rid) for rid in role_ids]},
+                        "is_active": True,
+                        "scope.tenant_id": {"$ne": None},
+                        "$or": [{"expires_at": None}, {"expires_at": {"$gt": now}}],
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$role_id",
+                        "tenants": {"$addToSet": "$scope.tenant_id"},
+                    }
+                },
+            ]
+        ).to_list()
+        return {str(row["_id"]): set(row["tenants"]) for row in rows}

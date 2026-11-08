@@ -1,4 +1,5 @@
-from typing import Any
+import time
+from typing import Annotated, Any
 
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Query, status
@@ -8,13 +9,21 @@ from osiki.api.actor import ActorDep
 from osiki.api.dependencies import (
     AuditWriterDep,
     ConditionRepository,
+    GroupRoleRepository,
     PermissionRepository,
     RoleRepository,
+    UserRoleRepository,
 )
 from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
 from osiki.models.role import Grant, Role
 from osiki.schemas.base import PaginatedResponse
-from osiki.schemas.role import GrantSchema, RoleCreate, RoleRead, RoleUpdate
+from osiki.schemas.role import (
+    GrantSchema,
+    RoleCreate,
+    RoleRead,
+    RoleUpdate,
+    RoleUsageRead,
+)
 from osiki.services.audit.project_state import role_audit_state
 from osiki.services.builtins import BUILTIN_TEAM_MANAGE, is_owner_template
 from osiki.services.roles.validation import validate_references
@@ -194,6 +203,37 @@ async def create_role(
         after=await _audit_state(created, permission_repo, condition_repo),
     )
     return _to_read(created)
+
+
+@router.get("/usage")
+async def role_usage(
+    role_id: Annotated[list[str], Query(min_length=1, max_length=100)],
+    role_repo: RoleRepository,
+    user_role_repo: UserRoleRepository,
+    group_role_repo: GroupRoleRepository,
+) -> list[RoleUsageRead]:
+    """Tenants using, and tenant copies of, each project role."""
+    # Canonical ids; anything that is not an ObjectId is reported as unused.
+    requested = [
+        str(PydanticObjectId(rid)) if PydanticObjectId.is_valid(rid) else rid
+        for rid in role_id
+    ]
+    known = await role_repo.project_role_ids(
+        [rid for rid in requested if PydanticObjectId.is_valid(rid)]
+    )
+    ids = sorted(known)
+    now = time.time()
+    by_user = await user_role_repo.tenants_with_role(ids, now)
+    by_group = await group_role_repo.tenants_with_role(ids, now)
+    copies = await role_repo.copies_of(ids)
+    return [
+        RoleUsageRead(
+            role_id=rid,
+            tenants=len(by_user.get(rid, set()) | by_group.get(rid, set())),
+            copies=copies.get(rid, 0),
+        )
+        for rid in requested
+    ]
 
 
 @router.get("/{role_id}")

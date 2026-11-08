@@ -55,6 +55,15 @@ class BaseRoleRepository(ABC):
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]: ...
 
     @abstractmethod
+    async def copies_of(self, role_ids: list[str]) -> dict[str, int]:
+        """Active tenant roles copied from each role. Roles without any are absent."""
+
+    @abstractmethod
+    async def project_role_ids(self, role_ids: list[str]) -> set[str]:
+        """The ids that name a project role (tenant-owned roles excluded),
+        deleted or not."""
+
+    @abstractmethod
     async def get_all_active(self) -> list[Role]:
         """Every active role in the environment, unpaginated."""
 

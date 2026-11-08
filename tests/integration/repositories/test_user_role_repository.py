@@ -219,3 +219,43 @@ async def test_count_active_matches_roles_scope_and_expiry() -> None:
     assert await repo.count_active(both, {"tenant_id": "acme"}, now, exact=True) == 1
     assert await repo.count_active([str(role_b)], {"tenant_id": "acme"}, now) == 1
     assert await repo.count_active(both, {"tenant_id": "acme"}, now + 200) == 1
+
+
+async def test_tenants_with_role_is_distinct_live_and_environment_scoped() -> None:
+    def repo(env: str) -> MongoDBUserRoleRepository:
+        return MongoDBUserRoleRepository(env, MongoDBEnvironmentStateRepository(env))
+
+    role = PydanticObjectId()
+    other = PydanticObjectId()
+    now = time.time()
+    mine = repo("twr-env")
+
+    async def give(
+        r: MongoDBUserRoleRepository,
+        role_id: PydanticObjectId,
+        tenant: str | None,
+        **kw: object,
+    ) -> UserRole:
+        return await r.create(
+            UserRole(
+                user_id=PydanticObjectId(),
+                role_id=role_id,
+                scope=Scope(tenant_id=tenant),
+                assigned_by="admin",
+                **kw,  # type: ignore[arg-type]
+            )
+        )
+
+    await give(mine, role, "a")
+    await give(mine, role, "a")
+    await give(mine, role, "b", expires_at=now + 3600)
+    await give(mine, role, "expired", expires_at=now - 1)
+    await give(mine, role, None)
+    revoked = await give(mine, role, "revoked")
+    await mine.revoke(str(revoked.id))
+    await give(mine, other, "c")
+    await give(repo("twr-elsewhere"), role, "z")
+
+    result = await mine.tenants_with_role([str(role), str(PydanticObjectId())], now)
+
+    assert result == {str(role): {"a", "b"}}

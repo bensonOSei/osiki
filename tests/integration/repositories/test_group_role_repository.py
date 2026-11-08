@@ -147,3 +147,39 @@ async def test_find_assignment_without_tenant_is_project_wide_only() -> None:
     )
     found = await repo.find_assignment(str(group_id), str(role_id))
     assert found is not None and found.id == project_wide.id
+
+
+async def test_tenants_with_role_is_distinct_live_and_environment_scoped() -> None:
+    def repo(env: str) -> MongoDBGroupRoleRepository:
+        return MongoDBGroupRoleRepository(env, MongoDBEnvironmentStateRepository(env))
+
+    role = PydanticObjectId()
+    now = time.time()
+    mine = repo("gtwr-env")
+
+    async def give(
+        r: MongoDBGroupRoleRepository,
+        tenant: str | None,
+        expires_at: float | None = None,
+    ) -> GroupRole:
+        return await r.create(
+            GroupRole(
+                group_id=PydanticObjectId(),
+                role_id=role,
+                scope=Scope(tenant_id=tenant),
+                assigned_by="admin",
+                expires_at=expires_at,
+            )
+        )
+
+    await give(mine, "a")
+    await give(mine, "a")
+    await give(mine, "b", now + 3600)
+    await give(mine, "expired", now - 1)
+    await give(mine, None)
+    revoked = await give(mine, "revoked")
+    await mine.revoke(str(revoked.id))
+    await give(repo("gtwr-elsewhere"), "z")
+
+    assert await mine.tenants_with_role([str(role)], now) == {str(role): {"a", "b"}}
+    assert await mine.tenants_with_role([str(PydanticObjectId())], now) == {}

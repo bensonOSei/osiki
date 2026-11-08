@@ -101,6 +101,30 @@ class MongoDBRoleRepository(BaseRoleRepository):
             session=session,
         ).to_list()
 
+    async def copies_of(self, role_ids: list[str]) -> dict[str, int]:
+        rows = await Role.aggregate(
+            [
+                {
+                    "$match": {
+                        "environment_id": self.environment_id,
+                        "copied_from": {"$in": [PydanticObjectId(r) for r in role_ids]},
+                        "tenant_id": {"$ne": None},
+                        "is_active": True,
+                    }
+                },
+                {"$group": {"_id": "$copied_from", "copies": {"$sum": 1}}},
+            ]
+        ).to_list()
+        return {str(row["_id"]): int(row["copies"]) for row in rows}
+
+    async def project_role_ids(self, role_ids: list[str]) -> set[str]:
+        roles = await Role.find(
+            Role.environment_id == self.environment_id,
+            {"_id": {"$in": [PydanticObjectId(r) for r in role_ids]}},
+            {"tenant_id": None},
+        ).to_list()
+        return {str(role.id) for role in roles}
+
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         object_ids = [PydanticObjectId(rid) for rid in role_ids]
         return await Role.find(

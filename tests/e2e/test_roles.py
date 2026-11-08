@@ -1,13 +1,27 @@
+import time
+
 import pytest
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
 from pymongo.errors import DuplicateKeyError
 
-from osiki.api.dependencies import get_role_repository
+from osiki.api.dependencies import (
+    get_group_role_repository,
+    get_role_repository,
+    get_user_role_repository,
+)
 from osiki.api.routes.roles import _to_read
+from osiki.models.base import Scope
 from osiki.models.role import Role
 from tests.e2e.conftest import API, app
-from tests.mocks import MockRoleRepository, make_role
+from tests.mocks import (
+    MockGroupRoleRepository,
+    MockRoleRepository,
+    MockUserRoleRepository,
+    make_group_role,
+    make_role,
+    make_user_role,
+)
 
 EXPR = {"op": "eq", "left": {"ref": "record.owner_id"}, "right": {"ref": "user.id"}}
 ENV_HEADER = "X-Osiki-Environment"
@@ -657,3 +671,148 @@ def test_failed_role_writes_are_not_audited(client: TestClient) -> None:
     dup = client.post(f"{API}/roles", json={"name": "seller"})
     assert dup.status_code == 409
     assert len(_audit(client, "role.create")) == 1
+
+
+# --- Template usage counts ---
+
+
+def _usage_repos(
+    env: str = "default",
+) -> tuple[MockUserRoleRepository, MockGroupRoleRepository, MockRoleRepository]:
+    users: MockUserRoleRepository = app.dependency_overrides[get_user_role_repository](
+        env
+    )
+    groups: MockGroupRoleRepository = app.dependency_overrides[
+        get_group_role_repository
+    ](env)
+    roles: MockRoleRepository = app.dependency_overrides[get_role_repository](env)
+    return users, groups, roles
+
+
+def _assign(repo: MockUserRoleRepository, role_id: str, tenant: str | None) -> None:
+    ur = make_user_role(
+        PydanticObjectId(),
+        PydanticObjectId(role_id),
+        Scope(tenant_id=tenant),
+    )
+    repo._store(str(ur.id), ur)
+
+
+def _usage(client: TestClient, *ids: str, **headers: str) -> list[dict[str, object]]:
+    response = client.get(
+        f"{API}/roles/usage",
+        params=[("role_id", i) for i in ids],
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    body: list[dict[str, object]] = response.json()
+    return body
+
+
+def test_role_usage_counts_distinct_tenants(client: TestClient) -> None:
+    template = client.post(f"{API}/roles", json={"name": "t", "is_template": True})
+    rid = template.json()["id"]
+    users, groups, _ = _usage_repos()
+    _assign(users, rid, "a")
+    _assign(users, rid, "a")
+    _assign(users, rid, "b")
+    _assign(users, rid, None)
+    group_role = make_group_role(
+        PydanticObjectId(), PydanticObjectId(rid), Scope(tenant_id="c")
+    )
+    groups._store(str(group_role.id), group_role)
+    # Tenant "a" again through a group: the union counts it once.
+    again = make_group_role(
+        PydanticObjectId(), PydanticObjectId(rid), Scope(tenant_id="a")
+    )
+    groups._store(str(again.id), again)
+    no_tenant = make_group_role(PydanticObjectId(), PydanticObjectId(rid))
+    groups._store(str(no_tenant.id), no_tenant)
+
+    assert _usage(client, rid) == [{"role_id": rid, "tenants": 3, "copies": 0}]
+
+
+def test_role_usage_ignores_expired_revoked_and_other_environments(
+    client: TestClient,
+) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "t"}).json()["id"]
+    users, groups, _ = _usage_repos()
+    other_users, _, _ = _usage_repos("elsewhere")
+    expired = make_user_role(
+        PydanticObjectId(),
+        PydanticObjectId(rid),
+        Scope(tenant_id="old"),
+        expires_at=time.time() - 10,
+    )
+    users._store(str(expired.id), expired)
+    revoked = make_user_role(
+        PydanticObjectId(), PydanticObjectId(rid), Scope(tenant_id="gone")
+    )
+    revoked.is_active = False
+    users._store(str(revoked.id), revoked)
+    lapsed_group = make_group_role(
+        PydanticObjectId(),
+        PydanticObjectId(rid),
+        Scope(tenant_id="old-group"),
+        expires_at=time.time() - 10,
+    )
+    groups._store(str(lapsed_group.id), lapsed_group)
+    future = make_user_role(
+        PydanticObjectId(),
+        PydanticObjectId(rid),
+        Scope(tenant_id="live"),
+        expires_at=time.time() + 3600,
+    )
+    users._store(str(future.id), future)
+    _assign(other_users, rid, "elsewhere-tenant")
+
+    assert _usage(client, rid)[0]["tenants"] == 1
+
+
+def test_role_usage_counts_active_copies(client: TestClient) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "t", "is_template": True}).json()[
+        "id"
+    ]
+    _, _, roles = _usage_repos()
+    source = PydanticObjectId(rid)
+    for name, tenant, active in [
+        ("c1", "a", True),
+        ("c2", "b", True),
+        ("c3", "c", False),
+    ]:
+        copy = make_role(
+            name=name, tenant_id=tenant, copied_from=source, is_active=active
+        )
+        roles._store(str(copy.id), copy)
+
+    assert _usage(client, rid)[0]["copies"] == 2
+
+
+def test_role_usage_orders_canonicalizes_and_zeroes_unknown(
+    client: TestClient,
+) -> None:
+    first = client.post(f"{API}/roles", json={"name": "one"}).json()["id"]
+    second = client.post(f"{API}/roles", json={"name": "two"}).json()["id"]
+    users, _, _ = _usage_repos()
+    _assign(users, second, "a")
+    tenant_role = _tenant_role()
+    _assign(users, tenant_role, "a")
+    unknown = str(PydanticObjectId())
+
+    result = _usage(client, second.upper(), "not-an-id", tenant_role, unknown, first)
+
+    assert result == [
+        {"role_id": second, "tenants": 1, "copies": 0},
+        {"role_id": "not-an-id", "tenants": 0, "copies": 0},
+        {"role_id": tenant_role, "tenants": 0, "copies": 0},
+        {"role_id": unknown, "tenants": 0, "copies": 0},
+        {"role_id": first, "tenants": 0, "copies": 0},
+    ]
+
+
+def test_role_usage_limits_ids(client: TestClient) -> None:
+    ids = [str(PydanticObjectId()) for _ in range(101)]
+    response = client.get(f"{API}/roles/usage", params=[("role_id", i) for i in ids])
+    assert response.status_code == 422
+    assert client.get(f"{API}/roles/usage").status_code == 422
+    assert len(_usage(client, *ids[:100])) == 100

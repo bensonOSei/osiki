@@ -459,3 +459,40 @@ async def test_count_active_project_ignores_tenant_and_inactive() -> None:
     await repo.deactivate(str(gone.id))
 
     assert await repo.count_active_project() == 1
+
+
+async def test_copies_of_counts_active_tenant_copies_in_the_environment() -> None:
+    repo = _repo("copies-env")
+    template = await repo.create(Role(name="Editor", is_template=True))
+    other = await repo.create(Role(name="Viewer", is_template=True))
+    for tenant in ("acme", "beta"):
+        await repo.create(
+            Role(name="Editor", tenant_id=tenant, copied_from=template.id)
+        )
+    await repo.create(Role(name="Viewer", tenant_id="acme", copied_from=other.id))
+    gone = await repo.create(
+        Role(name="Editor", tenant_id="gone", copied_from=template.id)
+    )
+    await repo.deactivate(str(gone.id))
+    await _repo("copies-elsewhere").create(
+        Role(name="Editor", tenant_id="acme", copied_from=template.id)
+    )
+
+    result = await repo.copies_of([str(template.id), str(PydanticObjectId())])
+
+    assert result == {str(template.id): 2}
+
+
+async def test_project_role_ids_excludes_tenant_and_unknown_roles() -> None:
+    repo = _repo("pri-env")
+    live = await repo.create(Role(name="Live"))
+    deleted = await repo.create(Role(name="Deleted"))
+    await repo.deactivate(str(deleted.id))
+    tenant = await repo.create(Role(name="Mine", tenant_id="acme"))
+    elsewhere = await _repo("pri-elsewhere").create(Role(name="Live"))
+
+    result = await repo.project_role_ids(
+        [str(live.id), str(deleted.id), str(tenant.id), str(elsewhere.id)]
+    )
+
+    assert result == {str(live.id), str(deleted.id)}
