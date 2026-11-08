@@ -177,7 +177,7 @@ The actor is recorded on every team change in the audit log (`GET /tenants/{tena
 3. **Mark what a business may hand out.** Set `assignable: true` on each permission via `PATCH /permissions/{id}`. Tenant roles can hold only assignable permissions.
 4. **Owner setup.** The seeded `Owner` template grants only `osiki.team:manage`, and a team manager can hand out only what they hold. So you must add the business's assignable permissions to the Owner template. It is editable except for renaming it, changing `is_template`, or dropping `osiki.team:manage` (each is a `422`).
 5. **Give a business its first manager.** Add the first member with the `Owner` role as a developer actor (`POST /tenants/{tenant_id}/team/members`). From then on a manager can add the rest of their team.
-6. **Offer templates.** A template (a project role with `is_template: true`) is offered to a tenant when every permission it grants, including its parents', is assignable or built-in. A manager can assign an offered template, or start a tenant role from one. `copied_from` also binds the copy to the template's constraints: the copy counts as the template for mutual exclusion, prerequisites and cardinality. It does not copy the grants, so send them in the request body too.
+6. **Offer templates.** A template (a project role with `is_template: true`) is offered to every tenant while it is active. A manager can assign a template, but only if they hold everything it grants, or start a tenant role from one; `assignable` governs what goes into the roles they make and what a copy carries. `copied_from` also binds the copy to the template's constraints: the copy counts as the template for mutual exclusion, prerequisites and cardinality. It does not copy the grants, so send them in the request body too.
 
 ### What a team manager can do
 
@@ -224,7 +224,7 @@ Team conflicts are `409` with a machine-readable `details.reason`:
 | `escalation` | The role holds permissions the actor does not (`details.uncovered` lists them) |
 | `not_assignable` | A permission cannot be given to a tenant role (`details.permissions` lists them) |
 | `role_in_use` | A role to delete is still assigned |
-| `not_offered` | The template is not offered to this tenant |
+| `not_offered` | The role is not an active template |
 | `constraint` | A constraint refused the assignment (`details.constraint`, `details.detail`) |
 | `stale` | A role edit sent an out-of-date `expected_updated_at` |
 
@@ -268,7 +268,7 @@ No migration is needed. Behaviour changes to check:
 - **`POST /permissions` conflicts** carry `details.reason`: `deleted` (the key belongs to a deleted permission and cannot be recreated) or `exists`.
 - **Project role and permission writes are audited** (`role.*`, `permission.*`, with `tenant_id` null). With `REQUIRE_ACTOR` set they need `X-Osiki-Actor`, like other audited writes.
 - **Security fix.** Team role ids are canonicalized, which closes a case-variant id bypass of the last-manager guard on revoke. Upgrade before exposing `/team`.
-- **New:** `GET /roles/usage?role_id=...` (1 to 100 ids) returns `[{role_id, tenants, copies}]`, the number of tenants using a template and of copies made from it.
+- **New:** `GET /roles/usage?role_id=...` (1 to 100 ids) returns `[{role_id, tenants, copies}]`, `tenants` is the number of distinct tenants with a live (unexpired, active) assignment of the role, direct or via a group, in this environment; `copies` is the number of active tenant roles copied from it. Unknown, tenant-owned and non-ObjectId ids report 0 and 0.
 - **SDK 0.3.0** adds `osiki.permissions.ensure(...)` (it supersedes the unpublished 0.2.0).
 
 ## Key concepts
@@ -278,7 +278,7 @@ No migration is needed. Behaviour changes to check:
 - **Groups** let you assign roles to many users at once. Add a user to the "finance-team" group and they get all roles attached to that group.
 - **Scopes** handle multi-tenancy. A role can be scoped to `{ "tenant_id": "acme-corp", "region": "eu" }` so permissions only apply within that context. Scope values are strings; custom keys are allowed, but a non-string value is rejected with `422`.
 - **Constraints** enforce business rules — mutual exclusion between roles, cardinality limits, and prerequisite requirements.
-- **Access logs** record authorization checks (all denials, sampled successes). Changes made through the tenant team API are written to the audit log (actor, action, before and after); changes through the developer routes are not audited in this version.
+- **Access logs** record authorization checks (all denials, sampled successes). Changes made through the tenant team API are written to the audit log (actor, action, before and after); project role and permission writes through the developer routes are audited too (actions `role.*` and `permission.*`, `tenant_id` null); other developer routes are not audited in this version.
 
 ## Getting started
 
