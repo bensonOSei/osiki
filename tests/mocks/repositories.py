@@ -26,6 +26,7 @@ from osiki.repositories.access_logs.base_access_log_repository import (
 )
 from osiki.repositories.audit_logs.base_audit_log_repository import (
     BaseAuditLogRepository,
+    split_actions,
 )
 from osiki.repositories.conditions.base_condition_repository import (
     BaseConditionRepository,
@@ -1065,10 +1066,25 @@ class MockAuditLogRepository(_EnvironmentBound[AuditLog], BaseAuditLogRepository
     async def get_recent(self, skip: int = 0, limit: int = 100) -> list[AuditLog]:
         return self._newest_first()[skip : skip + limit]
 
+    @staticmethod
+    def _action_matches(action: str, actions: list[str] | None) -> bool:
+        if not actions:
+            return True
+        exact, prefixes = split_actions(actions)
+        return action in exact or any(action.startswith(p) for p in prefixes)
+
     async def count(
-        self, tenant_id: str | None, session: AsyncClientSession | None = None
+        self,
+        tenant_id: str | None,
+        session: AsyncClientSession | None = None,
+        actions: list[str] | None = None,
     ) -> int:
-        return sum(1 for a in self._scoped() if tenant_id in (None, a.tenant_id))
+        return sum(
+            1
+            for a in self._scoped()
+            if tenant_id in (None, a.tenant_id)
+            and self._action_matches(a.action, actions)
+        )
 
     async def list(
         self,
@@ -1076,11 +1092,13 @@ class MockAuditLogRepository(_EnvironmentBound[AuditLog], BaseAuditLogRepository
         skip: int,
         limit: int,
         session: AsyncClientSession | None = None,
+        actions: list[str] | None = None,
     ) -> list[AuditLog]:
         found = [
             a
             for a in self._newest_first()
-            if tenant_id is None or a.tenant_id == tenant_id
+            if (tenant_id is None or a.tenant_id == tenant_id)
+            and self._action_matches(a.action, actions)
         ]
         return found[skip : skip + limit]
 

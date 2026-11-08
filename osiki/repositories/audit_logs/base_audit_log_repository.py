@@ -5,6 +5,12 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from osiki.models.audit_log import AuditLog
 
 
+def split_actions(actions: list[str]) -> tuple[list[str], list[str]]:
+    """Exact actions and prefixes (values ending in ``.``) of an action filter."""
+    prefixes = [a for a in actions if a.endswith(".")]
+    return [a for a in actions if not a.endswith(".")], prefixes
+
+
 class BaseAuditLogRepository(ABC):
     @abstractmethod
     async def create(
@@ -31,9 +37,16 @@ class BaseAuditLogRepository(ABC):
 
     @abstractmethod
     async def count(
-        self, tenant_id: str | None, session: AsyncClientSession | None = None
+        self,
+        tenant_id: str | None,
+        session: AsyncClientSession | None = None,
+        actions: list[str] | None = None,
     ) -> int:
-        """Entries ``list`` ranges over; ``tenant_id=None`` counts every entry."""
+        """Entries ``list`` ranges over; ``tenant_id=None`` counts every entry.
+
+        ``actions`` narrows to exact actions, or prefixes when a value ends in
+        ``.``; ``None`` or empty keeps every action.
+        """
 
     @abstractmethod
     async def list(
@@ -42,5 +55,6 @@ class BaseAuditLogRepository(ABC):
         skip: int,
         limit: int,
         session: AsyncClientSession | None = None,
+        actions: list[str] | None = None,
     ) -> list[AuditLog]:
         """Newest first; ``tenant_id=None`` returns every entry."""

@@ -260,6 +260,13 @@ Behaviour changes on existing data, to check before you upgrade:
 - **Audit your roles before exposing `/team`.** Any held grant that matches `osiki.team:manage` (`*:*`, `*:manage`, `osiki.team:*`) makes its holder a team manager in the tenants they belong to.
 - **Rollback.** Once tenant roles share names with project roles, a v0.2 engine fails to build its unique `(environment, name)` index.
 
+### Upgrading to v0.4.1
+
+No migration is needed. Additive changes:
+
+- **`GET /team/.../roles` grants carry `permission_id` and `condition_id`** (own and inherited entries), so an editor can send a grant back by id, including one whose permission is no longer assignable.
+- **`GET /audit-logs` and the team `GET .../audit-logs` accept a repeatable `action` filter.** A value ending in `.` is a prefix (`role.` matches `role.create`), otherwise exact; `total` counts the filtered set, and a malformed value is `422`.
+
 ### Upgrading to v0.4.0
 
 No migration is needed. Behaviour changes to check:

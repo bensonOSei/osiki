@@ -1,8 +1,19 @@
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel
+from fastapi import Query
+from pydantic import BaseModel, Field
 
 from osiki.models.audit_log import AuditLog
+
+ActionFilter = Annotated[
+    list[Annotated[str, Field(pattern=r"^[a-z_]+(\.[a-z_]*)?$")]] | None,
+    Query(
+        description=(
+            "Repeatable. A value ending in `.` is a prefix (`role.` matches "
+            "`role.create`), otherwise an exact action."
+        )
+    ),
+]
 
 
 class AuditLogCreate(BaseModel):

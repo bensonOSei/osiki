@@ -211,12 +211,28 @@ def ref(permission: Permission, condition: Condition | None = None) -> GrantRef:
     )
 
 
+class _Shown(GrantEntry):
+    """Expected grant; equal to a rendered one whatever its ids (e2e covers ids)."""
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, GrantEntry) and (
+            self.permission,
+            self.condition,
+            self.inherited_from,
+        ) == (other.permission, other.condition, other.inherited_from)
+
+    __hash__ = None  # type: ignore[assignment]
+
+
 def entry(
     permission: str, condition: str | None = None, inherited_from: str | None = None
 ) -> GrantEntry:
     """A grant as a rendered team role shows it."""
-    return GrantEntry(
-        permission=permission, condition=condition, inherited_from=inherited_from
+    return _Shown(
+        permission=permission,
+        condition=condition,
+        inherited_from=inherited_from,
+        permission_id="",
     )
 
 
