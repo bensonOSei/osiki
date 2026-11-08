@@ -1,8 +1,11 @@
+import pytest
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
+from pymongo.errors import DuplicateKeyError
 
 from osiki.api.dependencies import get_role_repository
 from osiki.api.routes.roles import _to_read
+from osiki.models.role import Role
 from tests.e2e.conftest import API, app
 from tests.mocks import MockRoleRepository, make_role
 
@@ -521,3 +524,66 @@ def test_tenant_role_copied_from_is_rendered() -> None:
     source = PydanticObjectId()
     read = _to_read(make_role(tenant_id="acme", copied_from=source))
     assert (read.tenant_id, read.copied_from) == ("acme", str(source))
+
+
+# --- Role name conflicts and list total ---
+
+
+def test_create_role_reusing_deleted_name_409(client: TestClient) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "Auditor"}).json()["id"]
+    assert client.delete(f"{API}/roles/{rid}").status_code == 204
+
+    response = client.post(f"{API}/roles", json={"name": "Auditor"})
+
+    assert response.status_code == 409
+    assert response.json()["details"] == {"name": "Auditor"}
+
+
+def test_rename_role_to_taken_name_409(client: TestClient) -> None:
+    client.post(f"{API}/roles", json={"name": "A"})
+    b = client.post(f"{API}/roles", json={"name": "B"}).json()["id"]
+
+    response = client.patch(f"{API}/roles/{b}", json={"name": "A"})
+
+    assert response.status_code == 409
+    assert client.patch(f"{API}/roles/{b}", json={"name": "B"}).status_code == 200
+
+
+def test_create_role_duplicate_key_race_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def boom(role: Role, **_: object) -> Role:
+        raise DuplicateKeyError("E11000 duplicate key")
+
+    monkeypatch.setattr(_role_repo(), "create", boom)
+
+    response = client.post(f"{API}/roles", json={"name": "Racer"})
+
+    assert response.status_code == 409
+    assert response.json()["details"] == {"name": "Racer"}
+
+
+def test_rename_role_duplicate_key_race_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "Before"}).json()["id"]
+
+    async def boom(role: Role, **_: object) -> Role:
+        raise DuplicateKeyError("E11000 duplicate key")
+
+    monkeypatch.setattr(_role_repo(), "update", boom)
+
+    response = client.patch(f"{API}/roles/{rid}", json={"name": "After"})
+
+    assert response.status_code == 409
+    assert response.json()["details"] == {"name": "After"}
+
+
+def test_list_roles_total_counts_all_pages(client: TestClient) -> None:
+    for name in ("r1", "r2", "r3"):
+        client.post(f"{API}/roles", json={"name": name})
+
+    body = client.get(f"{API}/roles", params={"page_size": 2}).json()
+
+    assert len(body["items"]) == 2
+    assert body["total"] == 3

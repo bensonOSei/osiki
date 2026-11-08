@@ -435,3 +435,27 @@ async def test_list_copies() -> None:
     copies = await repo.list_copies(str(template.id))
 
     assert {c.id for c in copies} == {live.id, gone.id}
+
+
+async def test_name_in_use_counts_deleted_and_scopes_by_tenant() -> None:
+    repo = _repo("niu-env")
+    role = await repo.create(Role(name="niu-a"))
+    await repo.create(Role(name="niu-t", tenant_id="acme"))
+
+    assert await repo.name_in_use("niu-a") is True
+    assert await repo.name_in_use("niu-t") is False
+    assert await repo.name_in_use("niu-t", "acme") is True
+    await repo.deactivate(str(role.id))
+    assert await repo.get_by_name("niu-a") is None
+    assert await repo.name_in_use("niu-a") is True
+    assert await repo.name_in_use("niu-missing") is False
+
+
+async def test_count_active_project_ignores_tenant_and_inactive() -> None:
+    repo = _repo("cap-env")
+    gone = await repo.create(Role(name="cap-a"))
+    await repo.create(Role(name="cap-b"))
+    await repo.create(Role(name="cap-c", tenant_id="acme"))
+    await repo.deactivate(str(gone.id))
+
+    assert await repo.count_active_project() == 1

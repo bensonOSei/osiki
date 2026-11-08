@@ -28,6 +28,12 @@ class BaseRoleRepository(ABC):
         project roles when ``tenant_id`` is None."""
 
     @abstractmethod
+    async def name_in_use(self, name: str, tenant_id: str | None = None) -> bool:
+        """Whether any role, active or deleted, holds ``name`` among a tenant's
+        roles (project roles when ``tenant_id`` is None). The unique name index
+        covers deleted roles too."""
+
+    @abstractmethod
     async def list_tenant(
         self, tenant_id: str, *, session: AsyncClientSession | None = None
     ) -> list[Role]:
@@ -68,6 +74,10 @@ class BaseRoleRepository(ABC):
     @abstractmethod
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
         """Active project roles (tenant-owned roles are excluded)."""
+
+    @abstractmethod
+    async def count_active_project(self) -> int:
+        """How many active project roles exist (tenant-owned roles excluded)."""
 
     @abstractmethod
     async def add_permission(

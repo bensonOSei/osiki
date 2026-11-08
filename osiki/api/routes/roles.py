@@ -1,5 +1,6 @@
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Query, status
+from pymongo.errors import DuplicateKeyError
 
 from osiki.api.dependencies import (
     ConditionRepository,
@@ -14,6 +15,10 @@ from osiki.services.builtins import BUILTIN_TEAM_MANAGE, is_owner_template
 from osiki.services.roles.validation import validate_references
 
 router = APIRouter(prefix="/roles", tags=["roles"])
+
+
+def _name_taken(name: str) -> ConflictError:
+    return ConflictError("Role with this name already exists", details={"name": name})
 
 
 def _to_read(role: Role) -> RoleRead:
@@ -133,12 +138,8 @@ async def create_role(
     permission_repo: PermissionRepository,
     condition_repo: ConditionRepository,
 ) -> RoleRead:
-    existing = await role_repo.get_by_name(data.name)
-    if existing:
-        raise ConflictError(
-            "Role with this name already exists",
-            details={"name": data.name},
-        )
+    if await role_repo.name_in_use(data.name):
+        raise _name_taken(data.name)
 
     grants = _merge_grants(data.grants, data.permission_ids)
     await validate_references(
@@ -156,7 +157,10 @@ async def create_role(
         is_template=data.is_template,
         metadata=data.metadata or {},
     )
-    return _to_read(await role_repo.create(role))
+    try:
+        return _to_read(await role_repo.create(role))
+    except DuplicateKeyError as exc:
+        raise _name_taken(data.name) from exc
 
 
 @router.get("/{role_id}")
@@ -191,6 +195,13 @@ async def update_role(
             role, data, grants if replace_grants else None, permission_repo
         )
 
+    if (
+        data.name is not None
+        and data.name != role.name
+        and await role_repo.name_in_use(data.name)
+    ):
+        raise _name_taken(data.name)
+
     if data.name is not None:
         role.name = data.name
     if data.description is not None:
@@ -204,7 +215,10 @@ async def update_role(
     if data.metadata is not None:
         role.metadata = data.metadata
 
-    return _to_read(await role_repo.update(role))
+    try:
+        return _to_read(await role_repo.update(role))
+    except DuplicateKeyError as exc:
+        raise _name_taken(role.name) from exc
 
 
 @router.delete("/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -234,5 +248,5 @@ async def list_roles(
 
     items = [_to_read(r) for r in roles]
 
-    total = len(items) + skip
+    total = await role_repo.count_active_project()
     return PaginatedResponse.create(items, total, page, page_size)

@@ -453,6 +453,12 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
                 return role
         return None
 
+    async def name_in_use(self, name: str, tenant_id: str | None = None) -> bool:
+        return any(r.name == name and r.tenant_id == tenant_id for r in self._scoped())
+
+    async def count_active_project(self) -> int:
+        return sum(1 for r in self._scoped() if r.is_active and r.tenant_id is None)
+
     async def list_tenant(
         self, tenant_id: str, *, session: AsyncClientSession | None = None
     ) -> list[Role]:

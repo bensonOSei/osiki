@@ -46,6 +46,16 @@ class MongoDBRoleRepository(BaseRoleRepository):
             logger.debug("Role not found", role_id=role_id)
         return role
 
+    async def name_in_use(self, name: str, tenant_id: str | None = None) -> bool:
+        return (
+            await Role.find_one(
+                Role.environment_id == self.environment_id,
+                {"tenant_id": tenant_id},
+                Role.name == name,
+            )
+            is not None
+        )
+
     async def get_by_name(
         self,
         name: str,
@@ -147,6 +157,13 @@ class MongoDBRoleRepository(BaseRoleRepository):
             .limit(limit)
             .to_list()
         )
+
+    async def count_active_project(self) -> int:
+        return await Role.find(
+            Role.environment_id == self.environment_id,
+            {"tenant_id": None},
+            Role.is_active == True,
+        ).count()
 
     async def add_permission(
         self, role_id: str, permission_id: str, condition_id: str | None = None
