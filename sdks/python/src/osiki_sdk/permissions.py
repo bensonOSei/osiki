@@ -1,0 +1,40 @@
+"""Declare an app's permissions in code."""
+
+from dataclasses import dataclass
+
+from osiki_sdk.client import EngineError
+
+
+@dataclass(frozen=True)
+class PermissionSpec:
+    """One permission an app needs. ``None`` fields are left as they are."""
+
+    resource: str
+    action: str
+    description: str | None = None
+    assignable: bool | None = None
+
+    @property
+    def key(self) -> str:
+        return f"{self.resource}:{self.action}"
+
+
+@dataclass(frozen=True)
+class EnsureResult:
+    """Permission strings (``resource:action``), each list sorted."""
+
+    created: list[str]
+    updated: list[str]
+    unchanged: list[str]
+
+
+class PermissionDeleted(EngineError):  # noqa: N818
+    """The permission was deleted earlier, so the engine will not recreate it."""
+
+    def __init__(self, permission: str, status: int = 409, body: object = None) -> None:
+        super().__init__(status, body)
+        self.permission = permission
+        self.args = (
+            f"permission {permission!r} was deleted and cannot be recreated "
+            "by ensure()",
+        )

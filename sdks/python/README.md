@@ -277,6 +277,28 @@ attributes with `{}`, so pass them every time. Each call drops the cached
 bundles it affects. Other processes pick up role, membership and user changes
 on their next poll, within `poll_interval` seconds.
 
+## Declaring permissions
+
+An app can declare the permissions it needs in code and have Osiki create them
+at startup:
+
+```python
+from osiki_sdk import PermissionSpec
+
+result = await osiki.permissions.ensure([
+    PermissionSpec("sales", "create", description="Record a sale", assignable=True),
+    PermissionSpec("refunds", "create", description="Issue a refund"),
+])
+print(result.created, result.updated, result.unchanged)  # sorted "resource:action" strings
+```
+
+`ensure` creates the permissions that are missing and updates `description` and
+`assignable` only where a spec sets them (`None` leaves a field as it is). It
+is safe to run on every boot: a second run sends no writes. It never deletes or
+deactivates a permission. Repeating a `resource:action` in one call raises
+`ValueError`, and naming a permission that was deleted earlier raises
+`PermissionDeleted` (an `EngineError`, with the string on `.permission`).
+
 ## 10. Failure modes
 
 | Situation | Answer |
