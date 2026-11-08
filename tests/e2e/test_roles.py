@@ -587,3 +587,73 @@ def test_list_roles_total_counts_all_pages(client: TestClient) -> None:
 
     assert len(body["items"]) == 2
     assert body["total"] == 3
+
+
+# --- Audit ---
+
+DEV = {"X-Osiki-Actor": "developer:dev-1"}
+
+
+def _audit(client: TestClient, action: str) -> list[dict[str, object]]:
+    items = client.get(f"{API}/audit-logs").json()["items"]
+    return [i for i in items if i["action"] == action]
+
+
+def test_role_writes_are_audited(client: TestClient) -> None:
+    perm = _perm(client, "sales", "create")
+    created = client.post(
+        f"{API}/roles",
+        json={"name": "seller", "permission_ids": [perm]},
+        headers=DEV,
+    )
+    role_id = created.json()["id"]
+    renamed = client.patch(
+        f"{API}/roles/{role_id}",
+        json={"name": "closer", "permission_ids": []},
+        headers=DEV,
+    )
+    assert renamed.status_code == 200
+    assert client.delete(f"{API}/roles/{role_id}", headers=DEV).status_code == 204
+
+    [create] = _audit(client, "role.create")
+    assert create["actor_id"] == "dev-1"
+    assert create["actor_type"] == "developer"
+    assert create["tenant_id"] is None
+    assert create["target_type"] == "role"
+    assert create["target_id"] == role_id
+    assert create["before"] is None
+    assert create["after"] == {
+        "name": "seller",
+        "is_template": False,
+        "grants": ["sales:create"],
+    }
+    [update] = _audit(client, "role.update")
+    assert update["before"] == create["after"]
+    assert update["after"] == {"name": "closer", "is_template": False, "grants": []}
+    [delete] = _audit(client, "role.delete")
+    assert delete["before"] == update["after"]
+    assert delete["after"] is None
+    assert delete["actor_id"] == "dev-1"
+
+
+def test_conditional_grant_audit_string(client: TestClient) -> None:
+    perm = _perm(client, "sales", "create")
+    cond = _condition(client, "own_branch")
+    response = client.post(
+        f"{API}/roles",
+        json={
+            "name": "seller",
+            "grants": [{"permission_id": perm, "condition_id": cond}],
+        },
+        headers=DEV,
+    )
+    assert response.status_code == 201
+    [create] = _audit(client, "role.create")
+    assert create["after"]["grants"] == ["sales:create?own_branch"]  # type: ignore[index]
+
+
+def test_failed_role_writes_are_not_audited(client: TestClient) -> None:
+    client.post(f"{API}/roles", json={"name": "seller"})
+    dup = client.post(f"{API}/roles", json={"name": "seller"})
+    assert dup.status_code == 409
+    assert len(_audit(client, "role.create")) == 1

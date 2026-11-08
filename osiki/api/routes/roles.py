@@ -1,8 +1,12 @@
+from typing import Any
+
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Query, status
 from pymongo.errors import DuplicateKeyError
 
+from osiki.api.actor import ActorDep
 from osiki.api.dependencies import (
+    AuditWriterDep,
     ConditionRepository,
     PermissionRepository,
     RoleRepository,
@@ -11,6 +15,7 @@ from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
 from osiki.models.role import Grant, Role
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.role import GrantSchema, RoleCreate, RoleRead, RoleUpdate
+from osiki.services.audit.project_state import role_audit_state
 from osiki.services.builtins import BUILTIN_TEAM_MANAGE, is_owner_template
 from osiki.services.roles.validation import validate_references
 
@@ -19,6 +24,22 @@ router = APIRouter(prefix="/roles", tags=["roles"])
 
 def _name_taken(name: str) -> ConflictError:
     return ConflictError("Role with this name already exists", details={"name": name})
+
+
+async def _audit_state(
+    role: Role,
+    permission_repo: PermissionRepository,
+    condition_repo: ConditionRepository,
+) -> dict[str, Any]:
+    """The role's audit snapshot; inactive permissions and conditions resolve."""
+    permissions = {
+        str(p.id): p.permission_string
+        for p in await permission_repo.get_by_ids_any(
+            [str(g.permission_id) for g in role.grants]
+        )
+    }
+    conditions = {str(c.id): c.key for c in await condition_repo.get_all()}
+    return role_audit_state(role, permissions, conditions)
 
 
 def _to_read(role: Role) -> RoleRead:
@@ -137,6 +158,8 @@ async def create_role(
     role_repo: RoleRepository,
     permission_repo: PermissionRepository,
     condition_repo: ConditionRepository,
+    audit: AuditWriterDep,
+    actor: ActorDep,
 ) -> RoleRead:
     if await role_repo.name_in_use(data.name):
         raise _name_taken(data.name)
@@ -158,9 +181,19 @@ async def create_role(
         metadata=data.metadata or {},
     )
     try:
-        return _to_read(await role_repo.create(role))
+        created = await role_repo.create(role)
     except DuplicateKeyError as exc:
         raise _name_taken(data.name) from exc
+    await audit.record(
+        actor,
+        "role.create",
+        "role",
+        str(created.id),
+        tenant_id=None,
+        before=None,
+        after=await _audit_state(created, permission_repo, condition_repo),
+    )
+    return _to_read(created)
 
 
 @router.get("/{role_id}")
@@ -178,6 +211,8 @@ async def update_role(
     role_repo: RoleRepository,
     permission_repo: PermissionRepository,
     condition_repo: ConditionRepository,
+    audit: AuditWriterDep,
+    actor: ActorDep,
 ) -> RoleRead:
     role = await _get_project_role(role_id, role_repo)
 
@@ -202,6 +237,8 @@ async def update_role(
     ):
         raise _name_taken(data.name)
 
+    before = await _audit_state(role, permission_repo, condition_repo)
+
     if data.name is not None:
         role.name = data.name
     if data.description is not None:
@@ -216,15 +253,29 @@ async def update_role(
         role.metadata = data.metadata
 
     try:
-        return _to_read(await role_repo.update(role))
+        updated = await role_repo.update(role)
     except DuplicateKeyError as exc:
         raise _name_taken(role.name) from exc
+    await audit.record(
+        actor,
+        "role.update",
+        "role",
+        role_id,
+        tenant_id=None,
+        before=before,
+        after=await _audit_state(updated, permission_repo, condition_repo),
+    )
+    return _to_read(updated)
 
 
 @router.delete("/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_role(
     role_id: str,
     role_repo: RoleRepository,
+    permission_repo: PermissionRepository,
+    condition_repo: ConditionRepository,
+    audit: AuditWriterDep,
+    actor: ActorDep,
 ) -> None:
     role = await _get_project_role(role_id, role_repo)
     if is_owner_template(role):
@@ -232,9 +283,19 @@ async def delete_role(
             "The built-in Owner template cannot be deleted",
             details={"role_id": role_id},
         )
+    before = await _audit_state(role, permission_repo, condition_repo)
     success = await role_repo.deactivate(role_id)
     if not success:
         raise NotFoundError("Role not found", details={"role_id": role_id})
+    await audit.record(
+        actor,
+        "role.delete",
+        "role",
+        role_id,
+        tenant_id=None,
+        before=before,
+        after=None,
+    )
 
 
 @router.get("")

@@ -365,3 +365,52 @@ def test_patch_permission_bumps_snapshot_version(client: TestClient) -> None:
     before = client.get(f"{API}/snapshot").json()["version"]
     client.patch(f"{API}/permissions/{pid}", json={"assignable": True})
     assert client.get(f"{API}/snapshot").json()["version"] > before
+
+
+def test_permission_writes_are_audited(client: TestClient) -> None:
+    dev = {"X-Osiki-Actor": "developer:dev-1"}
+    created = client.post(
+        f"{API}/permissions",
+        json={"resource": "docs", "action": "read", "description": "Read docs"},
+        headers=dev,
+    )
+    perm_id = created.json()["id"]
+    patched = client.patch(
+        f"{API}/permissions/{perm_id}", json={"assignable": True}, headers=dev
+    )
+    assert patched.status_code == 200
+    assert client.delete(f"{API}/permissions/{perm_id}", headers=dev).status_code == 204
+
+    items = client.get(f"{API}/audit-logs").json()["items"]
+    by_action = {i["action"]: i for i in items}
+    assert set(by_action) == {
+        "permission.create",
+        "permission.update",
+        "permission.delete",
+    }
+    create = by_action["permission.create"]
+    assert (create["actor_id"], create["tenant_id"]) == ("dev-1", None)
+    assert create["target_type"] == "permission"
+    assert create["target_id"] == perm_id
+    assert create["before"] is None
+    assert create["after"] == {
+        "permission": "docs:read",
+        "description": "Read docs",
+        "assignable": False,
+        "is_active": True,
+    }
+    update = by_action["permission.update"]
+    assert update["before"]["assignable"] is False
+    assert update["after"]["assignable"] is True
+    delete = by_action["permission.delete"]
+    assert delete["before"] == update["after"]
+    assert delete["after"] is None
+
+
+def test_refused_permission_write_is_not_audited(client: TestClient) -> None:
+    client.post(f"{API}/permissions", json={"resource": "docs", "action": "read"})
+    dup = client.post(f"{API}/permissions", json={"resource": "docs", "action": "read"})
+    assert dup.status_code == 409
+    assert client.delete(f"{API}/permissions/{PydanticObjectId()}").status_code == 404
+    actions = [i["action"] for i in client.get(f"{API}/audit-logs").json()["items"]]
+    assert actions == ["permission.create"]
