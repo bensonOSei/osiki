@@ -19,6 +19,7 @@ from osiki.repositories.roles.mongodb_role_repository import MongoDBRoleReposito
 from osiki.repositories.user_roles.mongodb_user_role_repository import (
     MongoDBUserRoleRepository,
 )
+from tests.mocks import make_audit_log
 from tests.realmongo.conftest import RealMongoEnv
 
 pytestmark = pytest.mark.realmongo
@@ -120,3 +121,22 @@ async def test_copies_of(realmongo_env: RealMongoEnv) -> None:
     result = await repo.copies_of([str(template.id), str(PydanticObjectId())])
 
     assert result == {str(template.id): 2}
+
+
+async def test_audit_action_filter_prefix_and_exact(
+    realmongo_env: RealMongoEnv,
+) -> None:
+    repo = realmongo_env.audit
+    for action in ("role.create", "role.update", "rolex.create", "member.add"):
+        await repo.create(make_audit_log(action=action, tenant_id="t1"))
+
+    async def actions(filter_: list[str] | None) -> tuple[list[str], int]:
+        found = await repo.list("t1", 0, 10, actions=filter_)
+        return sorted(a.action for a in found), await repo.count("t1", actions=filter_)
+
+    assert await actions(["role."]) == (["role.create", "role.update"], 2)
+    assert await actions(["member.add", "role.update"]) == (
+        ["member.add", "role.update"],
+        2,
+    )
+    assert (await actions(None))[1] == 4

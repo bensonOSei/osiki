@@ -272,6 +272,8 @@ class TeamService:
                         conditions[str(g.condition_id)] if g.condition_id else None
                     ),
                     inherited_from=inherited_from,
+                    permission_id=str(g.permission_id),
+                    condition_id=str(g.condition_id) if g.condition_id else None,
                 )
                 for g in role.grants
                 if str(g.permission_id) in permissions

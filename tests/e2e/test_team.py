@@ -133,8 +133,20 @@ def test_owner_flow_gives_a_weekend_cashier_sales_but_not_refunds(
     by_name = {r["name"]: r for r in roles}
     assert by_name["Weekend cashier"]["holders"] == 1
     assert by_name["Weekend cashier"]["grants"] == [
-        {"permission": "sales:create", "condition": None, "inherited_from": None},
-        {"permission": "sales:read", "condition": None, "inherited_from": None},
+        {
+            "permission": "sales:create",
+            "condition": None,
+            "inherited_from": None,
+            "permission_id": world.sales_create,
+            "condition_id": None,
+        },
+        {
+            "permission": "sales:read",
+            "condition": None,
+            "inherited_from": None,
+            "permission_id": world.sales_read,
+            "condition_id": None,
+        },
     ]
     assert by_name["Owner"]["kind"] == "template"
 
@@ -160,7 +172,15 @@ def test_role_update_assign_revoke_and_delete(client: TestClient, world: World) 
     assert patched.status_code == 200
     assert (patched.json()["name"], patched.json()["grants"]) == (
         "Till",
-        [{"permission": "sales:create", "condition": None, "inherited_from": None}],
+        [
+            {
+                "permission": "sales:create",
+                "condition": None,
+                "inherited_from": None,
+                "permission_id": world.sales_create,
+                "condition_id": None,
+            }
+        ],
     )
     # Deleting a role someone holds is refused with role_in_use.
     busy = client.delete(f"{T1}/roles/{role}", headers=OWNER)
@@ -373,8 +393,20 @@ def test_template_lists_inherited_grants(client: TestClient, world: World) -> No
     roles = {r["id"]: r for r in client.get(f"{T1}/roles", headers=OWNER).json()}
 
     assert roles[senior]["grants"] == [
-        {"permission": "refunds:create", "condition": None, "inherited_from": None},
-        {"permission": "sales:read", "condition": None, "inherited_from": "Base"},
+        {
+            "permission": "refunds:create",
+            "condition": None,
+            "inherited_from": None,
+            "permission_id": world.refunds_create,
+            "condition_id": None,
+        },
+        {
+            "permission": "sales:read",
+            "condition": None,
+            "inherited_from": "Base",
+            "permission_id": world.sales_read,
+            "condition_id": None,
+        },
     ]
 
 
@@ -741,3 +773,89 @@ def test_developer_can_assign_a_tenant_role_in_its_own_tenant(
     )
     assert r.status_code == 201, r.text
     world.assign(world.owner_user, role, "t1")
+
+
+def test_team_role_grants_carry_ids(client: TestClient, world: World) -> None:
+    expression = {"op": "eq", "left": {"ref": "user.id"}, "right": {"value": "u1"}}
+    condition = client.post(
+        f"{API}/conditions",
+        json={"key": "is_u1", "name": "is_u1", "expression": expression},
+    ).json()["id"]
+    r = client.post(
+        f"{T1}/roles",
+        headers=OWNER,
+        json={
+            "name": "Mixed",
+            "grants": [
+                {"permission_id": world.sales_read},
+                {"permission_id": world.sales_create, "condition_id": condition},
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text
+    role = {x["id"]: x for x in client.get(f"{T1}/roles", headers=OWNER).json()}[
+        r.json()["id"]
+    ]
+    assert {
+        (g["permission"], g["permission_id"], g["condition_id"]) for g in role["grants"]
+    } == {
+        ("sales:read", world.sales_read, None),
+        ("sales:create", world.sales_create, condition),
+    }
+
+
+def test_patch_resending_unassignable_grant_by_id_keeps_it(
+    client: TestClient, world: World
+) -> None:
+    keep = world.permission("keep", "read")
+    role = world.role("Holder", keep, headers=DEV)
+    client.patch(f"{API}/permissions/{keep}", json={"assignable": False})
+    grants = {
+        g["permission"]: g
+        for g in {x["id"]: x for x in client.get(f"{T1}/roles", headers=OWNER).json()}[
+            role
+        ]["grants"]
+    }
+    assert grants["keep:read"]["permission_id"] == keep
+
+    r = client.patch(
+        f"{T1}/roles/{role}",
+        headers=OWNER,
+        json={
+            "grants": [
+                {"permission_id": grants["keep:read"]["permission_id"]},
+                {"permission_id": world.sales_read},
+            ]
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    after = {x["id"]: x for x in client.get(f"{T1}/roles", headers=OWNER).json()}[role]
+    assert {g["permission"] for g in after["grants"]} == {"keep:read", "sales:read"}
+
+
+def test_tenant_audit_action_prefix_filter(client: TestClient, world: World) -> None:
+    role = world.role("Cashier", world.sales_read, headers=OWNER)
+    client.patch(f"{T1}/roles/{role}", headers=OWNER, json={"name": "Till"})
+    client.post(
+        f"{T1}/members",
+        headers=OWNER,
+        json={"user_id": "u-staff", "name": "Stan", "role_id": role},
+    )
+    url = f"{T1}/audit-logs"
+
+    prefixed = client.get(url, headers=OWNER, params={"action": "role."}).json()
+    assert sorted(i["action"] for i in prefixed["items"]) == [
+        "role.create",
+        "role.update",
+    ]
+    assert prefixed["total"] == 2
+    exact = client.get(
+        url,
+        headers=OWNER,
+        params=[("action", "member.add"), ("action", "role.update")],
+    ).json()
+    assert sorted(i["action"] for i in exact["items"]) == ["member.add", "role.update"]
+    assert exact["total"] == 2
+    assert client.get(url, headers=OWNER).json()["total"] == 3
+    assert client.get(url, headers=OWNER, params={"action": "X"}).status_code == 422

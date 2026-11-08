@@ -24,10 +24,14 @@ class GrantEntry(decision.GrantEntry):
     """A grant as the team sees it on a role.
 
     ``inherited_from`` names the ancestor role a template inherits it from;
-    ``None`` is the role's own grant.
+    ``None`` is the role's own grant. ``permission_id`` and ``condition_id``
+    are the stored refs (an inherited entry carries its ancestor grant's), so
+    an editor can send the grant back by id.
     """
 
     inherited_from: str | None = None
+    permission_id: str
+    condition_id: str | None = None
 
 
 class TeamRole(BaseModel):

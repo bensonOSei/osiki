@@ -162,6 +162,8 @@ class GrantEntryRead(BaseModel):
     permission: str
     condition: str | None
     inherited_from: str | None = None
+    permission_id: str
+    condition_id: str | None = None
 
     @classmethod
     def from_entry(cls, entry: GrantEntry) -> "GrantEntryRead":
@@ -169,6 +171,8 @@ class GrantEntryRead(BaseModel):
             permission=entry.permission,
             condition=entry.condition,
             inherited_from=entry.inherited_from,
+            permission_id=entry.permission_id,
+            condition_id=entry.condition_id,
         )
 
 

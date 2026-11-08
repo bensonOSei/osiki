@@ -95,3 +95,28 @@ def test_list_is_environment_scoped(
 ) -> None:
     r = client.get(URL, headers={"X-Osiki-Environment": "other"})
     assert r.json()["items"] == []
+
+
+def test_audit_logs_action_prefix_filter(client: TestClient) -> None:
+    repo = MockAuditLogRepository("default")
+    for ts, action in ((1.0, "role.create"), (2.0, "role.update"), (3.0, "member.add")):
+        repo._store(action, make_audit_log(action=action, timestamp=ts))
+    _audit_log_repos["default"] = repo
+
+    prefixed = client.get(URL, params={"action": "role."}).json()
+    assert [i["action"] for i in prefixed["items"]] == ["role.update", "role.create"]
+    assert prefixed["total"] == 2
+    exact = client.get(
+        URL, params=[("action", "member.add"), ("action", "role.update")]
+    )
+    assert [i["action"] for i in exact.json()["items"]] == ["member.add", "role.update"]
+    assert exact.json()["total"] == 2
+    assert client.get(URL, params={"action": "role"}).json()["total"] == 0
+    assert client.get(URL).json()["total"] == 3
+
+
+@pytest.mark.parametrize(
+    "bad", ["Role.", "role.create.x", "role-x", "role. ", ".x", ""]
+)
+def test_audit_logs_action_filter_is_validated(client: TestClient, bad: str) -> None:
+    assert client.get(URL, params={"action": bad}).status_code == 422

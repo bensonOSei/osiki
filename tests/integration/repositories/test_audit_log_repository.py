@@ -129,3 +129,26 @@ async def test_count_matches_list_filters() -> None:
     assert await repo.count("t1") == 2
     assert await repo.count(None) == 3
     assert await repo.count("nobody") == 0
+
+
+async def test_list_and_count_filter_by_action_prefix_and_exact() -> None:
+    repo = MongoDBAuditLogRepository("action-env")
+    for ts, action in (
+        (1.0, "role.create"),
+        (2.0, "role.update"),
+        (3.0, "rolex.create"),
+        (4.0, "member.add"),
+    ):
+        log = _log("t1", ts)
+        log.action = action
+        await repo.create(log)
+    prefixed = await repo.list("t1", 0, 10, actions=["role."])
+    assert [a.action for a in prefixed] == ["role.update", "role.create"]
+    assert await repo.count("t1", actions=["role."]) == 2
+    mixed = ["member.add", "role.update"]
+    assert [a.action for a in await repo.list("t1", 0, 10, actions=mixed)] == [
+        "member.add",
+        "role.update",
+    ]
+    assert await repo.count("t1", actions=mixed) == 2
+    assert await repo.count("t1", actions=[]) == 4

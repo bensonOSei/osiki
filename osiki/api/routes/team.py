@@ -16,7 +16,7 @@ from osiki.api.dependencies import (
     TenantRepository,
 )
 from osiki.api.exceptions import NotFoundError
-from osiki.schemas.audit_log import AuditLogRead
+from osiki.schemas.audit_log import ActionFilter, AuditLogRead
 from osiki.schemas.base import PaginatedResponse
 from osiki.schemas.permission import PermissionRead
 from osiki.schemas.team import (
@@ -167,11 +167,14 @@ async def list_conditions(team: Team) -> list[TeamConditionRead]:
 async def list_audit_logs(
     tenant_id: str,
     audit_repo: AuditLogRepository,
+    action: ActionFilter = None,
     page: int = Query(1, ge=1, le=10000),
     page_size: int = Query(20, ge=1, le=100),
 ) -> PaginatedResponse[AuditLogRead]:
-    logs = await audit_repo.list(tenant_id, (page - 1) * page_size, page_size)
+    logs = await audit_repo.list(
+        tenant_id, (page - 1) * page_size, page_size, actions=action
+    )
     items = [AuditLogRead.from_model(log) for log in logs]
     return PaginatedResponse.create(
-        items, await audit_repo.count(tenant_id), page, page_size
+        items, await audit_repo.count(tenant_id, actions=action), page, page_size
     )

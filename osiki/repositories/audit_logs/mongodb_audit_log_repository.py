@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from loguru import logger
@@ -6,6 +7,7 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from osiki.models.audit_log import AuditLog
 from osiki.repositories.audit_logs.base_audit_log_repository import (
     BaseAuditLogRepository,
+    split_actions,
 )
 
 
@@ -82,17 +84,30 @@ class MongoDBAuditLogRepository(BaseAuditLogRepository):
             .to_list()
         )
 
-    def _conditions(self, tenant_id: str | None) -> list[Any]:
+    def _conditions(
+        self, tenant_id: str | None, actions: list[str] | None = None
+    ) -> list[Any]:
         conditions: list[Any] = [AuditLog.environment_id == self.environment_id]
         if tenant_id is not None:
             conditions.append(AuditLog.tenant_id == tenant_id)
+        if actions:
+            exact, prefixes = split_actions(actions)
+            branches: list[dict[str, Any]] = [
+                {"action": {"$regex": f"^{re.escape(p)}"}} for p in prefixes
+            ]
+            if exact:
+                branches.append({"action": {"$in": exact}})
+            conditions.append({"$or": branches})
         return conditions
 
     async def count(
-        self, tenant_id: str | None, session: AsyncClientSession | None = None
+        self,
+        tenant_id: str | None,
+        session: AsyncClientSession | None = None,
+        actions: list[str] | None = None,
     ) -> int:
         return await AuditLog.find(
-            *self._conditions(tenant_id), session=session
+            *self._conditions(tenant_id, actions), session=session
         ).count()
 
     async def list(
@@ -101,9 +116,10 @@ class MongoDBAuditLogRepository(BaseAuditLogRepository):
         skip: int,
         limit: int,
         session: AsyncClientSession | None = None,
+        actions: list[str] | None = None,
     ) -> list[AuditLog]:
         return (
-            await AuditLog.find(*self._conditions(tenant_id), session=session)
+            await AuditLog.find(*self._conditions(tenant_id, actions), session=session)
             .sort("-timestamp")
             .skip(skip)
             .limit(limit)
