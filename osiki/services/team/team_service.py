@@ -61,6 +61,7 @@ from osiki.services.team.models import (
     NotManager,
     NotOffered,
     RoleInUse,
+    StaleRole,
     TeamCondition,
     TeamError,
     TeamMember,
@@ -285,6 +286,7 @@ class TeamService:
                 name=role.name,
                 kind=_kind(role),
                 grants=grants_of(role),
+                updated_at=role.updated_at,
                 copied_from=str(role.copied_from) if role.copied_from else None,
                 holders=await self._holders(str(role.id)),
             )
@@ -367,21 +369,32 @@ class TeamService:
         role_id: str,
         name: str | None,
         grants: list[GrantRef] | None,
+        expected_updated_at: float | None = None,
         *,
         session: AsyncClientSession | None = None,
     ) -> tuple[Role, dict[str, Any], bool]:
         """The role with every change applied (a copy), its audit state before,
-        and whether anything changes."""
+        and whether anything changes.
+
+        Sent grants replace the role's, except that grants on inactive
+        permissions are kept: the editor could not see them. A sent grant the
+        role already has is kept as is (grandfathered); only new ones pass the
+        assignable, reference and escalation checks.
+        """
         held = await self._held_grants()
         role = await self._own_role(role_id)
+        if expected_updated_at is not None and expected_updated_at != role.updated_at:
+            raise StaleRole(role_id)
         before = _audit_state(role.name, (await self._render([role]))[0].grants)
         if grants is None and (name is None or name == role.name):
             return role, before, False
         new_grants: list[Grant] | None = None
         if grants is not None:
-            entries, unique = await self._check_grants(grants)
+            entries, unique = await self._check_grants(grants, existing=role.grants)
             self._ensure_escalation_free(held, entries)
-            new_grants = _to_grants(unique)
+            new_grants = _deduplicated(
+                [*_to_grants(unique), *await self._hidden_grants(role)]
+            )
         if name is not None and name != role.name:
             await self._ensure_name_free(name, role_id)
         # Mutate only once every rule has passed.
@@ -392,10 +405,16 @@ class TeamService:
         return role, before, True
 
     async def update_role(
-        self, role_id: str, name: str | None, grants: list[GrantRef] | None
+        self,
+        role_id: str,
+        name: str | None,
+        grants: list[GrantRef] | None,
+        expected_updated_at: float | None = None,
     ) -> TeamRole:
         async def operation(session: AsyncClientSession | None) -> TeamRole:
-            role, before, changed = await self._check_update_role(role_id, name, grants)
+            role, before, changed = await self._check_update_role(
+                role_id, name, grants, expected_updated_at
+            )
             if not changed:
                 return (await self._render([role]))[0]
             try:
@@ -935,16 +954,20 @@ class TeamService:
         return role.model_copy(deep=True)
 
     async def _check_grants(
-        self, grants: list[GrantRef]
+        self, grants: list[GrantRef], *, existing: Sequence[Grant] = ()
     ) -> tuple[list[GrantEntry], list[GrantRef]]:
         """Rules 2 and 3, before anything reaches the escalation module.
 
-        Returns the wanted grants (permission string plus condition key) and the
-        deduplicated refs they came from.
+        A grant equal to one in ``existing`` (same permission and condition)
+        skips both: it is already on the role. Returns the new grants
+        (permission string plus condition key), which the escalation check
+        takes, and every deduplicated ref.
         """
         unique = list(dict.fromkeys(grants))
+        held = {_ref(g) for g in existing}
+        new = [ref for ref in unique if ref not in held]
         await validate_references(
-            unique,
+            new,
             None,
             self._role_repo,
             self._permission_repo,
@@ -952,7 +975,7 @@ class TeamService:
         )
         entries: list[GrantEntry] = []
         refused: list[str] = []
-        for ref in unique:
+        for ref in new:
             permission = await self._permission_repo.get_by_id(ref.permission_id)
             assert permission is not None  # validate_references found it
             if not _assignable(permission):
@@ -971,6 +994,16 @@ class TeamService:
         if refused:
             raise NotAssignable(refused)
         return entries, unique
+
+    async def _hidden_grants(self, role: Role) -> list[Grant]:
+        """The role's grants on inactive permissions: no editor sees them."""
+        active = {
+            str(p.id)
+            for p in await self._permission_repo.get_by_ids(
+                [str(g.permission_id) for g in role.grants]
+            )
+        }
+        return [g for g in role.grants if str(g.permission_id) not in active]
 
     def _ensure_escalation_free(
         self, held: list[EffectiveGrant], entries: list[GrantEntry]
@@ -1019,6 +1052,24 @@ def _to_grants(refs: list[GrantRef]) -> list[Grant]:
         )
         for r in refs
     ]
+
+
+def _ref(grant: Grant) -> GrantRef:
+    return GrantRef(
+        permission_id=str(grant.permission_id),
+        condition_id=str(grant.condition_id) if grant.condition_id else None,
+    )
+
+
+def _deduplicated(grants: list[Grant]) -> list[Grant]:
+    """Each (permission, condition) once, first occurrence kept."""
+    seen: set[GrantRef] = set()
+    kept: list[Grant] = []
+    for grant in grants:
+        if _ref(grant) not in seen:
+            seen.add(_ref(grant))
+            kept.append(grant)
+    return kept
 
 
 def _live(assignment: UserRole, now: float) -> bool:

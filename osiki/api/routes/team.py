@@ -71,7 +71,9 @@ async def create_role(data: TeamRoleCreate, team: Team) -> TeamRoleRead:
 
 @router.patch("/roles/{role_id}")
 async def update_role(role_id: str, data: TeamRoleUpdate, team: Team) -> TeamRoleRead:
-    role = await team.update_role(role_id, data.name, _refs(data.grants))
+    role = await team.update_role(
+        role_id, data.name, _refs(data.grants), data.expected_updated_at
+    )
     return TeamRoleRead.from_role(role)
 
 

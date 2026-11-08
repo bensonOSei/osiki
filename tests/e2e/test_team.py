@@ -183,6 +183,29 @@ def test_role_update_assign_revoke_and_delete(client: TestClient, world: World) 
     assert gone.status_code == 404
 
 
+def test_expected_updated_at_round_trips_json(client: TestClient, world: World) -> None:
+    role = world.role("Cashier", world.sales_read, headers=OWNER)
+    listed = {r["id"]: r for r in client.get(f"{T1}/roles", headers=OWNER).json()}
+    token = listed[role]["updated_at"]
+    assert isinstance(token, float)
+
+    patched = client.patch(
+        f"{T1}/roles/{role}",
+        headers=OWNER,
+        json={"name": "Till", "expected_updated_at": token},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["updated_at"] > token
+
+    stale = client.patch(
+        f"{T1}/roles/{role}",
+        headers=OWNER,
+        json={"name": "Stock", "expected_updated_at": token},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["details"]["reason"] == "stale"
+
+
 def test_members_are_paginated_with_a_total(client: TestClient, world: World) -> None:
     role = world.role("Cashier", world.sales_read, headers=OWNER)
     for i in range(3):

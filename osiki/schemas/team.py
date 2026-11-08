@@ -51,6 +51,8 @@ class TeamRoleCreate(_Input):
 class TeamRoleUpdate(_Input):
     name: RoleName | None = None
     grants: list[GrantRefIn] | None = None
+    # The ``updated_at`` the editor read; a different stored value is a 409.
+    expected_updated_at: float | None = None
 
 
 class TeamMemberAdd(_Input):
@@ -162,6 +164,7 @@ class TeamRoleRead(BaseModel):
     grants: list[GrantEntryRead]
     copied_from: str | None
     holders: int
+    updated_at: float
 
     @classmethod
     def from_role(cls, role: TeamRole) -> "TeamRoleRead":
@@ -172,6 +175,7 @@ class TeamRoleRead(BaseModel):
             grants=[GrantEntryRead.from_entry(g) for g in role.grants],
             copied_from=role.copied_from,
             holders=role.holders,
+            updated_at=role.updated_at,
         )
 
 

@@ -37,6 +37,7 @@ class TeamRole(BaseModel):
     name: str
     kind: Literal["template", "tenant", "project"]
     grants: list[GrantEntry]
+    updated_at: float
     copied_from: str | None = None
     holders: int = 0
 
@@ -165,4 +166,12 @@ class ConstraintViolated(_TeamConflictError):
                 "constraint": constraint_name or "",
                 "detail": reason or "",
             },
+        )
+
+
+class StaleRole(_TeamConflictError):
+    def __init__(self, role_id: str) -> None:
+        super().__init__(
+            "Role has changed since it was read",
+            details={"reason": "stale", "role_id": role_id},
         )

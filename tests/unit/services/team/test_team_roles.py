@@ -35,6 +35,7 @@ from osiki.services.team.models import (
     NotManager,
     NotOffered,
     RoleInUse,
+    StaleRole,
     TeamCondition,
     TeamRole,
 )
@@ -1081,11 +1082,9 @@ async def test_unmarked_permission_existing_role_keeps_working_but_edit_must_dro
     assert bundle is not None
     assert "invoices:read" in {g.permission for r in bundle.roles for g in r.grants}
 
-    with pytest.raises(NotAssignable) as exc:
-        await env.service().update_role(role.id, None, [ref(read), ref(keep)])
-    assert exc.value.permissions == ["invoices:read"]
-
-    # a rename alone leaves the grant in place; dropping it succeeds
+    # resending it unchanged keeps it (grandfathered); dropping it succeeds
+    kept = await env.service().update_role(role.id, None, [ref(read), ref(keep)])
+    assert kept.grants == [entry("invoices:read"), entry("invoices:write")]
     await env.service().update_role(role.id, "Till", None)
     updated = await env.service().update_role(role.id, None, [ref(keep)])
     assert updated.grants == [entry("invoices:write")]
@@ -1267,7 +1266,7 @@ def test_team_error_shapes() -> None:
 
 
 def test_team_role_defaults() -> None:
-    role = TeamRole(id="1", name="n", kind="tenant", grants=[])
+    role = TeamRole(id="1", name="n", kind="tenant", grants=[], updated_at=1.0)
     assert (role.copied_from, role.holders) == (None, 0)
 
 
@@ -1328,3 +1327,149 @@ async def test_list_conditions_requires_manager(env: Env) -> None:
 
     with pytest.raises(NotManager):
         await env.service(actor).list_conditions()
+
+
+# --- edits keep hidden and grandfathered grants (D2) --------------------------------
+
+
+async def _stored_grants(env: Env, role_id: str) -> list[GrantRef]:
+    stored = await env.roles.get_by_id(role_id)
+    assert stored is not None
+    return [
+        GrantRef(
+            permission_id=str(g.permission_id),
+            condition_id=str(g.condition_id) if g.condition_id else None,
+        )
+        for g in stored.grants
+    ]
+
+
+async def test_patch_keeps_grant_on_inactive_permission(env: Env) -> None:
+    create = await env.permission("sales", "create")
+    read = await env.permission("sales", "read")
+    old = await env.permission("old", "thing")
+    role = await env.service().create_role("Till", [ref(create), ref(old)], None)
+    await env.permissions.deactivate(str(old.id))
+
+    updated = await env.service().update_role(role.id, None, [ref(create), ref(read)])
+
+    assert updated.grants == [entry("sales:create"), entry("sales:read")]
+    assert await _stored_grants(env, role.id) == [ref(create), ref(read), ref(old)]
+    old.is_active = True
+    await env.permissions.update(old)
+    (listed,) = await env.service().list_roles()
+    assert listed.grants == [
+        entry("sales:create"),
+        entry("sales:read"),
+        entry("old:thing"),
+    ]
+
+
+async def test_patch_resending_hidden_grant_does_not_duplicate(env: Env) -> None:
+    create = await env.permission("sales", "create")
+    read = await env.permission("sales", "read")
+    old = await env.permission("old", "thing")
+    role = await env.service().create_role("Till", [ref(create), ref(old)], None)
+    await env.permissions.deactivate(str(old.id))
+
+    await env.service().update_role(role.id, None, [ref(create), ref(read), ref(old)])
+
+    assert await _stored_grants(env, role.id) == [ref(create), ref(read), ref(old)]
+
+
+async def test_patch_keeps_grandfathered_unassignable_grant(env: Env) -> None:
+    refund = await env.permission("refunds", "create")
+    other = await env.permission("payroll", "read", assignable=False)
+    role = await env.service().create_role("Refunder", [ref(refund)], None)
+    refund.assignable = False
+    await env.permissions.update(refund)
+
+    updated = await env.service().update_role(role.id, "Refunds", [ref(refund)])
+
+    assert (updated.name, updated.grants) == ("Refunds", [entry("refunds:create")])
+    with pytest.raises(NotAssignable) as exc:
+        await env.service().update_role(role.id, None, [ref(refund), ref(other)])
+    assert exc.value.permissions == ["payroll:read"]
+
+
+async def test_patch_keeps_grant_on_deleted_condition(env: Env) -> None:
+    create = await env.permission("sales", "create")
+    branch = await env.condition("own-branch")
+    role = await env.service().create_role("Till", [ref(create, branch)], None)
+    await env.conditions.deactivate(str(branch.id))
+
+    updated = await env.service().update_role(
+        role.id, "Branch till", [ref(create, branch)]
+    )
+
+    assert updated.grants == [entry("sales:create", "own-branch")]
+    assert await _stored_grants(env, role.id) == [ref(create, branch)]
+
+
+async def test_grandfathered_grant_cannot_widen_into_a_new_grant(env: Env) -> None:
+    """A grant the manager does not hold may stay, but it is no basis for
+    adding the same permission unconditionally or under another condition."""
+    read = await env.permission("invoices", "read")
+    refund = await env.permission("refunds", "create")
+    own = await env.condition("own")
+    shift = await env.condition("on_shift")
+    actor = await env.manager(holds=[read])
+    role = await env.service().create_role("Till", [ref(refund, own)], None)
+
+    kept = await env.service(actor).update_role(
+        role.id, None, [ref(refund, own), ref(read)]
+    )
+    assert kept.grants == [entry("refunds:create", "own"), entry("invoices:read")]
+
+    for widened in (ref(refund), ref(refund, shift)):
+        with pytest.raises(EscalationRefused):
+            await env.service(actor).update_role(
+                role.id, None, [ref(refund, own), widened]
+            )
+    assert await _stored_grants(env, role.id) == [ref(refund, own), ref(read)]
+
+
+# --- stale edits (D3) ---------------------------------------------------------------
+
+
+async def test_patch_with_stale_updated_at_409(env: Env) -> None:
+    role = await env.service().create_role("Till", [], None)
+    first = role.updated_at
+    changed = await env.service().update_role(role.id, "Cashier", None)
+    assert changed.updated_at != first
+
+    with pytest.raises(StaleRole) as exc:
+        await env.service().update_role(role.id, "Waiter", None, first)
+    assert isinstance(exc.value, ConflictError)
+    assert exc.value.details["reason"] == "stale"
+    stored = await env.roles.get_by_id(role.id)
+    assert stored is not None and stored.name == "Cashier"
+
+    current = await env.service().update_role(
+        role.id, "Waiter", None, changed.updated_at
+    )
+    assert current.name == "Waiter"
+    assert current.updated_at > changed.updated_at
+    assert (await env.service().update_role(role.id, "Host", None)).name == "Host"
+
+
+async def test_stale_updated_at_refuses_even_a_no_op_edit(env: Env) -> None:
+    role = await env.service().create_role("Till", [], None)
+    await env.service().update_role(role.id, "Cashier", None)
+
+    with pytest.raises(StaleRole):
+        await env.service().update_role(role.id, None, None, role.updated_at)
+
+
+async def test_validate_update_role_stale_raises(env: Env) -> None:
+    role = await env.service().create_role("Till", [], None)
+    await env.service().update_role(role.id, "Cashier", None)
+
+    with pytest.raises(StaleRole):
+        await env.service().validate(
+            "update_role",
+            role_id=role.id,
+            name="Waiter",
+            grants=None,
+            expected_updated_at=role.updated_at,
+        )
