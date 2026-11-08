@@ -82,6 +82,9 @@ class _EnvironmentBound[T: EnvironmentMixin]:
 
     def _get(self, key: str) -> T | None:
         doc = self._data.get(key)
+        if doc is None and PydanticObjectId.is_valid(key):
+            # Mongo matches an ObjectId whatever its hex case.
+            doc = self._data.get(str(PydanticObjectId(key)))
         if doc is None or doc.environment_id != self.environment_id:
             return None
         return doc
@@ -564,6 +567,19 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         await self._bump_for(role)
         return role
 
+    async def update_if_unchanged(
+        self,
+        role: Role,
+        expected_updated_at: float,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> bool:
+        stored = self._get(str(role.id))
+        if stored is None or stored.updated_at != expected_updated_at:
+            return False
+        await self.update(role, session=session)
+        return True
+
     async def deactivate(
         self, role_id: str, *, session: AsyncClientSession | None = None
     ) -> bool:
@@ -575,7 +591,11 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
-        active = [r for r in self._scoped() if r.is_active and r.tenant_id is None]
+        # Mirrors the real repository's ``_id`` order (hex order is ObjectId order).
+        active = sorted(
+            (r for r in self._scoped() if r.is_active and r.tenant_id is None),
+            key=lambda r: str(r.id),
+        )
         return active[skip : skip + limit]
 
     async def add_permission(
@@ -662,8 +682,8 @@ class MockPermissionRepository(_ConfigBound[Permission], BasePermissionRepositor
         return permission
 
     async def deactivate(self, permission_id: str) -> bool:
-        if self._get(permission_id) is not None:
-            self._data[permission_id].is_active = False
+        if (permission := self._get(permission_id)) is not None:
+            permission.is_active = False
             await self._bump()
             await self._state.bump_assignments_version()
             return True

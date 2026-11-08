@@ -407,6 +407,26 @@ def test_permission_writes_are_audited(client: TestClient) -> None:
     assert delete["after"] is None
 
 
+def test_permission_audit_targets_the_canonical_id(client: TestClient) -> None:
+    perm_id = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    ).json()["id"]
+    upper = perm_id.upper()
+    assert upper != perm_id
+
+    patched = client.patch(f"{API}/permissions/{upper}", json={"assignable": True})
+    assert patched.status_code == 200
+    assert client.delete(f"{API}/permissions/{upper}").status_code == 204
+
+    items = client.get(f"{API}/audit-logs").json()["items"]
+    targets = {
+        i["action"]: i["target_id"]
+        for i in items
+        if i["action"] in ("permission.update", "permission.delete")
+    }
+    assert targets == {"permission.update": perm_id, "permission.delete": perm_id}
+
+
 def test_refused_permission_write_is_not_audited(client: TestClient) -> None:
     client.post(f"{API}/permissions", json={"resource": "docs", "action": "read"})
     dup = client.post(f"{API}/permissions", json={"resource": "docs", "action": "read"})

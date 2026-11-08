@@ -76,6 +76,18 @@ class BaseRoleRepository(ABC):
     ) -> Role: ...
 
     @abstractmethod
+    async def update_if_unchanged(
+        self,
+        role: Role,
+        expected_updated_at: float,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> bool:
+        """Save ``role`` only while the stored ``updated_at`` still equals
+        ``expected_updated_at``; False (nothing written) once another write
+        has moved it. Bumps the environment state as ``update`` does."""
+
+    @abstractmethod
     async def deactivate(
         self, role_id: str, *, session: AsyncClientSession | None = None
     ) -> bool: ...

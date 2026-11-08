@@ -302,7 +302,7 @@ async def update_role(
         actor,
         "role.update",
         "role",
-        role_id,
+        str(role.id),
         tenant_id=None,
         before=before,
         after=await _audit_state(updated, permission_repo, condition_repo),
@@ -326,14 +326,14 @@ async def delete_role(
             details={"role_id": role_id},
         )
     before = await _audit_state(role, permission_repo, condition_repo)
-    success = await role_repo.deactivate(role_id)
+    success = await role_repo.deactivate(str(role.id))
     if not success:
         raise NotFoundError("Role not found", details={"role_id": role_id})
     await audit.record(
         actor,
         "role.delete",
         "role",
-        role_id,
+        str(role.id),
         tenant_id=None,
         before=before,
         after=None,

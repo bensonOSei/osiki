@@ -444,7 +444,13 @@ class TeamService:
             if not changed:
                 return (await self._render([role]))[0]
             try:
-                role = await self._role_repo.update(role, session=session)
+                if expected_updated_at is None:
+                    role = await self._role_repo.update(role, session=session)
+                elif not await self._role_repo.update_if_unchanged(
+                    role, expected_updated_at, session=session
+                ):
+                    # Another edit landed after the check: refuse, never overwrite.
+                    raise StaleRole(role_id)
             except DuplicateKeyError as exc:
                 raise _name_taken(role.name) from exc
             rendered = (await self._render([role]))[0]
@@ -1143,6 +1149,18 @@ class TeamService:
         (permission string plus condition key), which the escalation check
         takes, and every deduplicated ref.
         """
+        # Canonical ids first: a case variant of a held grant is that grant.
+        grants = [
+            GrantRef(
+                permission_id=_canonical_id(g.permission_id),
+                condition_id=(
+                    _canonical_id(g.condition_id)
+                    if g.condition_id is not None
+                    else None
+                ),
+            )
+            for g in grants
+        ]
         unique = list(dict.fromkeys(grants))
         held = {_ref(g) for g in existing}
         new = [ref for ref in unique if ref not in held]
@@ -1320,7 +1338,8 @@ def _assignment_state(
 
 
 def _canonical_id(role_id: str) -> str:
-    """The role id in the one spelling stored ids compare equal to.
+    """An id (role, permission, condition) in the one spelling stored ids
+    compare equal to.
 
     Mongo matches an ObjectId whatever its hex case, but the guards compare
     ids as strings: an uncanonical spelling would find a row the guards then

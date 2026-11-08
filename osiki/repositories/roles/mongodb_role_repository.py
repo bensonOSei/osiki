@@ -1,6 +1,7 @@
 import time
 
 from beanie import PydanticObjectId
+from beanie.odm.utils.dump import get_dict
 from loguru import logger
 from pymongo.asynchronous.client_session import AsyncClientSession
 
@@ -153,6 +154,35 @@ class MongoDBRoleRepository(BaseRoleRepository):
         logger.debug("Role updated", role_id=str(role.id))
         return role
 
+    async def update_if_unchanged(
+        self,
+        role: Role,
+        expected_updated_at: float,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> bool:
+        # One filtered write: a concurrent edit that moved ``updated_at``
+        # since the editor's read makes the filter miss, so nothing is lost.
+        updated_at = time.time()
+        document = get_dict(role, to_db=True, keep_nulls=True)
+        document["updated_at"] = updated_at
+        result = await Role.get_pymongo_collection().replace_one(
+            {
+                "_id": role.id,
+                "environment_id": self.environment_id,
+                "updated_at": expected_updated_at,
+            },
+            document,
+            session=session,
+        )
+        if result.matched_count == 0:
+            logger.debug("Role changed since read", role_id=str(role.id))
+            return False
+        role.updated_at = updated_at
+        await self._bump(role, session)
+        logger.debug("Role updated", role_id=str(role.id))
+        return True
+
     async def deactivate(
         self, role_id: str, *, session: AsyncClientSession | None = None
     ) -> bool:
@@ -177,6 +207,7 @@ class MongoDBRoleRepository(BaseRoleRepository):
                 {"tenant_id": None},
                 Role.is_active == True,
             )
+            .sort("_id")
             .skip(skip)
             .limit(limit)
             .to_list()

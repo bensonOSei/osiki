@@ -650,6 +650,19 @@ def test_role_writes_are_audited(client: TestClient) -> None:
     assert delete["actor_id"] == "dev-1"
 
 
+def test_role_audit_targets_the_canonical_id(client: TestClient) -> None:
+    role_id = client.post(f"{API}/roles", json={"name": "seller"}).json()["id"]
+    upper = role_id.upper()
+    assert upper != role_id
+
+    assert client.patch(f"{API}/roles/{upper}", json={"name": "c"}).status_code == 200
+    assert client.delete(f"{API}/roles/{upper}").status_code == 204
+
+    [update] = _audit(client, "role.update")
+    [delete] = _audit(client, "role.delete")
+    assert update["target_id"] == delete["target_id"] == role_id
+
+
 def test_conditional_grant_audit_string(client: TestClient) -> None:
     perm = _perm(client, "sales", "create")
     cond = _condition(client, "own_branch")

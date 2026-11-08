@@ -496,3 +496,54 @@ async def test_project_role_ids_excludes_tenant_and_unknown_roles() -> None:
     )
 
     assert result == {str(live.id), str(deleted.id)}
+
+
+async def test_list_active_pages_in_id_order() -> None:
+    repo = MongoDBRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    low, high = sorted([PydanticObjectId(), PydanticObjectId()])
+    await repo.create(Role(id=high, name="order-high"))
+    await repo.create(Role(id=low, name="order-low"))
+
+    ids = [r.id for r in await repo.list_active(0, 1000)]
+
+    assert ids == sorted(ids)
+    assert ids.index(low) < ids.index(high)
+
+
+async def test_update_if_unchanged_writes_only_while_unchanged() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    role = await repo.create(Role(name="token-role"))
+    read_at = role.updated_at
+    config = await state.get_config_version()
+
+    edit = role.model_copy(deep=True)
+    edit.name = "token-role-2"
+    assert await repo.update_if_unchanged(edit, read_at) is True
+    assert edit.updated_at > read_at
+    assert await state.get_config_version() == config + 1
+
+    stale = role.model_copy(deep=True)
+    stale.name = "token-role-3"
+    assert await repo.update_if_unchanged(stale, read_at) is False
+    assert await state.get_config_version() == config + 1
+    stored = await repo.get_by_id(str(role.id))
+    assert stored is not None
+    assert (stored.name, stored.updated_at) == ("token-role-2", edit.updated_at)
+
+
+async def test_update_if_unchanged_bumps_assignments_for_tenant_roles() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    role = await repo.create(Role(name="token-tenant", tenant_id="acme"))
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+
+    assert await repo.update_if_unchanged(role, role.updated_at) is True
+
+    assert await state.get_config_version() == config
+    assert await state.get_assignments_version() == assignments + 1

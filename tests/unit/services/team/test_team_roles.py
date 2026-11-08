@@ -1411,6 +1411,30 @@ async def test_patch_keeps_grandfathered_unassignable_grant(env: Env) -> None:
     assert exc.value.permissions == ["payroll:read"]
 
 
+async def test_resent_grandfathered_grant_matches_whatever_the_id_case(
+    env: Env,
+) -> None:
+    refund = await env.permission("refunds", "create")
+    own = await env.condition("own")
+    role = await env.service().create_role("Refunder", [ref(refund, own)], None)
+    refund.assignable = False
+    await env.permissions.update(refund)
+    upper = GrantRef(
+        permission_id=str(refund.id).upper(), condition_id=str(own.id).upper()
+    )
+
+    assert (
+        await env.service().validate(
+            "update_role", role_id=role.id, name=None, grants=[upper]
+        )
+        == []
+    )
+    updated = await env.service().update_role(role.id, "Refunds", [upper])
+
+    assert updated.grants == [entry("refunds:create", "own")]
+    assert await _stored_grants(env, role.id) == [ref(refund, own)]
+
+
 async def test_patch_keeps_grant_on_deleted_condition(env: Env) -> None:
     create = await env.permission("sales", "create")
     branch = await env.condition("own-branch")
@@ -1478,6 +1502,48 @@ async def test_stale_updated_at_refuses_even_a_no_op_edit(env: Env) -> None:
 
     with pytest.raises(StaleRole):
         await env.service().update_role(role.id, None, None, role.updated_at)
+
+
+async def test_edit_landing_after_the_stale_check_is_not_overwritten(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    role = await env.service().create_role("Till", [], None)
+    check = TeamService._check_update_role
+
+    async def check_then_race(
+        self: TeamService, *args: object, **kwargs: object
+    ) -> tuple[Role, dict[str, object], bool]:
+        result = await check(self, *args, **kwargs)  # type: ignore[arg-type]
+        # A concurrent PATCH with the same token commits in between.
+        stored = await env.roles.get_by_id(role.id)
+        assert stored is not None
+        racer = stored.model_copy(deep=True)
+        racer.name = "Cashier"
+        await env.roles.update(racer)
+        racer.updated_at = role.updated_at + 1  # moved, even on a coarse clock
+        return result
+
+    monkeypatch.setattr(TeamService, "_check_update_role", check_then_race)
+
+    with pytest.raises(StaleRole):
+        await env.service().update_role(role.id, "Waiter", None, role.updated_at)
+    stored = await env.roles.get_by_id(role.id)
+    assert stored is not None and stored.name == "Cashier"
+
+
+async def test_update_if_unchanged_writes_only_on_matching_token(env: Env) -> None:
+    role = await env.service().create_role("Till", [], None)
+    stored = await env.roles.get_by_id(role.id)
+    assert stored is not None
+    edit = stored.model_copy(deep=True)
+    edit.name = "Cashier"
+
+    assert await env.roles.update_if_unchanged(edit, role.updated_at - 1) is False
+    assert await env.roles.update_if_unchanged(edit, role.updated_at) is True
+    missing = make_role("ghost")
+    assert await env.roles.update_if_unchanged(missing, 0.0) is False
+    current = await env.roles.get_by_id(role.id)
+    assert current is not None and current.name == "Cashier"
 
 
 async def test_validate_update_role_stale_raises(env: Env) -> None:
