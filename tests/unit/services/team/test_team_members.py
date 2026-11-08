@@ -1164,7 +1164,3 @@ async def test_inactive_permission_the_manager_holds_does_not_block(
         "u-new", name=None, email=None, role_id=str(role.id)
     )
     assert [r.id for r in result.roles] == [str(role.id)]
-
-
-async def test_direct_role_names_of_an_unknown_user_is_empty(env: Env) -> None:
-    assert await env.service()._direct_role_names("ghost", None) == []

@@ -322,12 +322,20 @@ class TeamService:
         copied_from: str | None,
         *,
         session: AsyncClientSession | None = None,
-    ) -> tuple[Role, list[GrantEntry]]:
+    ) -> tuple[Role, list[GrantEntry], Role | None]:
         held = await self._held_grants()
         entries, unique = await self._check_grants(grants)
+        source: Role | None = None
         if copied_from is not None:
-            offered = {str(t.id) for t in await self._offered_templates()}
-            if copied_from not in offered:
+            source = next(
+                (
+                    t
+                    for t in await self._offered_templates()
+                    if str(t.id) == copied_from
+                ),
+                None,
+            )
+            if source is None:
                 raise NotOffered(copied_from)
         self._ensure_escalation_free(held, entries)
         await self._ensure_name_free(name, None)
@@ -338,21 +346,22 @@ class TeamService:
             parent_role_id=None,
             copied_from=PydanticObjectId(copied_from) if copied_from else None,
         )
-        return role, entries
+        return role, entries, source
 
     async def create_role(
         self, name: str, grants: list[GrantRef], copied_from: str | None
     ) -> TeamRole:
         async def operation(session: AsyncClientSession | None) -> Role:
-            role, entries = await self._check_create_role(name, grants, copied_from)
+            role, entries, source = await self._check_create_role(
+                name, grants, copied_from
+            )
             try:
                 role = await self._role_repo.create(role, session=session)
             except DuplicateKeyError as exc:
                 raise _name_taken(name) from exc
             after = _audit_state(name, entries)
-            if copied_from is not None:
-                (template,) = await self._role_repo.get_by_ids([copied_from])
-                after["copied_from"] = {"id": copied_from, "name": template.name}
+            if source is not None:
+                after["copied_from"] = {"id": str(source.id), "name": source.name}
             await self._audit.record(
                 self._actor,
                 "role.create",
@@ -577,7 +586,7 @@ class TeamService:
                 before=None,
                 after=_member_state(
                     user_id,
-                    await self._direct_role_names(user_id, session),
+                    await self._direct_role_names(user, session),
                     name=user.name,
                     email=user.email,
                 ),
@@ -592,9 +601,9 @@ class TeamService:
             user, role, stale = await self._check_assign_role(
                 user_id, role_id, session=session
             )
-            before = await self._direct_role_names(user_id, session)
+            before = await self._direct_role_names(user, session)
             created = await self._assign(user, role, stale, session)
-            after = await self._direct_role_names(user_id, session)
+            after = await self._direct_role_names(user, session)
             await self._audit.record(
                 self._actor,
                 "assignment.create",
@@ -611,12 +620,12 @@ class TeamService:
 
     async def revoke_role(self, user_id: str, role_id: str) -> None:
         async def operation(session: AsyncClientSession | None) -> None:
-            assignment, role = await self._check_revoke_role(
+            assignment, role, user = await self._check_revoke_role(
                 user_id, role_id, session=session
             )
-            before = await self._direct_role_names(user_id, session)
+            before = await self._direct_role_names(user, session)
             await self._user_role_repo.revoke(str(assignment.id), session=session)
-            after = await self._direct_role_names(user_id, session)
+            after = await self._direct_role_names(user, session)
             await self._audit.record(
                 self._actor,
                 "assignment.revoke",
@@ -659,12 +668,13 @@ class TeamService:
         await self._team_write(operation)
 
     async def _direct_role_names(
-        self, user_id: str, session: AsyncClientSession | None
+        self, user: User, session: AsyncClientSession | None
     ) -> list[str]:
-        """Sorted names of the member's live direct roles in this tenant."""
-        user = await self._user_repo.get_by_external_id(user_id)
-        if user is None:
-            return []
+        """Sorted names of the member's live direct roles in this tenant.
+
+        Takes the loaded user: re-reading one a transaction just created would
+        miss it, as the insert is not committed yet.
+        """
         now = time.time()
         role_ids = list(
             dict.fromkeys(
@@ -783,7 +793,7 @@ class TeamService:
         role_id: str,
         *,
         session: AsyncClientSession | None = None,
-    ) -> tuple[UserRole, Role | None]:
+    ) -> tuple[UserRole, Role | None, User]:
         await self.require_manager()
         user = await self._member_user(user_id, session)
         assignment = (
@@ -799,7 +809,7 @@ class TeamService:
                 details={"user_id": user_id, "role_id": role_id},
             )
         await self._ensure_manager_remains(without_assignment=(user_id, role_id))
-        return assignment, await self._role_repo.get_by_id(role_id)
+        return assignment, await self._role_repo.get_by_id(role_id), user
 
     async def _check_remove_member(
         self, user_id: str, *, session: AsyncClientSession | None = None
