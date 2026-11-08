@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 import weakref
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import httpx
@@ -18,9 +18,15 @@ from osiki_sdk._decision.models import (
     FilterResult,
     Snapshot,
 )
-from osiki_sdk.client import EngineClient
+from osiki_sdk.client import EngineClient, EngineError, PermissionItem
 from osiki_sdk.config import OsikiConfig
 from osiki_sdk.logs import DecisionLogBatcher
+from osiki_sdk.permissions import (
+    EnsureResult,
+    PermissionDeleted,
+    PermissionSpec,
+    is_deleted_conflict,
+)
 from osiki_sdk.records import to_record
 from osiki_sdk.routes import list_routes
 from osiki_sdk.store import PolicyStore
@@ -86,6 +92,83 @@ class _Tenants:
         return removed
 
 
+_PERMISSION_PAGE = 100
+
+
+class _Permissions:
+    def __init__(self, osiki: "Osiki") -> None:
+        self._osiki = osiki
+
+    async def _active(self) -> dict[str, PermissionItem]:
+        found: dict[str, PermissionItem] = {}
+        page = 1
+        while True:
+            items = await self._osiki._client.list_permissions(page, _PERMISSION_PAGE)
+            for item in items:
+                found[item.key] = item
+            if len(items) < _PERMISSION_PAGE:
+                return found
+            page += 1
+
+    async def _create(self, spec: PermissionSpec) -> tuple[PermissionItem, bool]:
+        """Create ``spec``; (permission, created). A lost race adopts the winner."""
+        try:
+            item = await self._osiki._client.create_permission(
+                spec.resource, spec.action, spec.description
+            )
+        except EngineError as exc:
+            if exc.status != 409:
+                raise
+            if is_deleted_conflict(exc):
+                raise PermissionDeleted(spec.key, exc.status, exc.body) from exc
+            # Another process created it first: continue with what it made.
+            winner = (await self._active()).get(spec.key)
+            if winner is None:
+                raise
+            return winner, False
+        return item, True
+
+    async def ensure(self, specs: Sequence[PermissionSpec]) -> EnsureResult:
+        """Create the app's missing permissions and set the fields specs name.
+
+        Matches active permissions on ``resource:action``. Fields a spec leaves
+        as ``None`` are never touched, and nothing is ever deleted or
+        deactivated. Raises ``PermissionDeleted`` when a spec names a
+        permission that was deleted earlier. A failure part-way leaves the
+        earlier changes applied; running ``ensure`` again is safe.
+        """
+        keys = [spec.key for spec in specs]
+        if len(set(keys)) != len(keys):
+            dupes = sorted({k for k in keys if keys.count(k) > 1})
+            raise ValueError(f"duplicate permission specs: {', '.join(dupes)}")
+        client = self._osiki._client
+        existing = await self._active()
+        created: list[str] = []
+        updated: list[str] = []
+        unchanged: list[str] = []
+        for spec in specs:
+            current = existing.get(spec.key)
+            was_created = False
+            if current is None:
+                current, was_created = await self._create(spec)
+            fields: dict[str, Any] = {}
+            if spec.description is not None and (
+                current.description != spec.description
+            ):
+                fields["description"] = spec.description
+            if spec.assignable is not None and current.assignable != spec.assignable:
+                fields["assignable"] = spec.assignable
+            if fields:
+                await client.update_permission(current.id, fields)
+            if was_created:
+                created.append(spec.key)
+            elif fields:
+                updated.append(spec.key)
+            else:
+                unchanged.append(spec.key)
+        return EnsureResult(sorted(created), sorted(updated), sorted(unchanged))
+
+
 class Osiki:
     """Local authorization decisions against a cached Osiki snapshot."""
 
@@ -122,6 +205,7 @@ class Osiki:
         self.started = False
         self.users = _Users(self)
         self.tenants = _Tenants(self)
+        self.permissions = _Permissions(self)
 
     # Loaders -----------------------------------------------------------------
 

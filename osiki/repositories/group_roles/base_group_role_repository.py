@@ -37,3 +37,13 @@ class BaseGroupRoleRepository(ABC):
 
     @abstractmethod
     async def get_expired(self, current_time: float) -> list[GroupRole]: ...
+
+    @abstractmethod
+    async def tenants_with_role(
+        self, role_ids: list[str], now: float
+    ) -> dict[str, set[str]]:
+        """Distinct tenants holding each role through a live group assignment.
+
+        Live means active and unexpired at ``now``; assignments with no tenant
+        in scope count for no tenant. Roles nobody holds are absent.
+        """

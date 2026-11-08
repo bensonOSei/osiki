@@ -63,6 +63,11 @@ from osiki.repositories.user_roles.base_user_role_repository import (
 from osiki.repositories.users.base_user_repository import BaseUserRepository
 
 
+def _same_id(stored: PydanticObjectId, given: str) -> bool:
+    """Compare as Mongo does: as ObjectIds, whatever the hex case."""
+    return PydanticObjectId.is_valid(given) and stored == PydanticObjectId(given)
+
+
 class _EnvironmentBound[T: EnvironmentMixin]:
     """In-memory store whose reads and writes are scoped to one environment."""
 
@@ -77,6 +82,9 @@ class _EnvironmentBound[T: EnvironmentMixin]:
 
     def _get(self, key: str) -> T | None:
         doc = self._data.get(key)
+        if doc is None and PydanticObjectId.is_valid(key):
+            # Mongo matches an ObjectId whatever its hex case.
+            doc = self._data.get(str(PydanticObjectId(key)))
         if doc is None or doc.environment_id != self.environment_id:
             return None
         return doc
@@ -285,7 +293,7 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
         for ur in self._scoped():
             if (
                 str(ur.user_id) == user_id
-                and str(ur.role_id) == role_id
+                and _same_id(ur.role_id, role_id)
                 and ur.is_active
             ):
                 if ur.scope.tenant_id == tenant_id:
@@ -301,6 +309,11 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
             return True
         return False
 
+    async def tenants_with_role(
+        self, role_ids: list[str], now: float
+    ) -> dict[str, set[str]]:
+        return _live_tenants(self._scoped(), role_ids, now)
+
     async def get_expired(self, current_time: float) -> list[UserRole]:
         return [
             ur
@@ -309,6 +322,23 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
             and ur.expires_at is not None
             and ur.expires_at <= current_time
         ]
+
+
+def _live_tenants(
+    rows: list[UserRole] | list[GroupRole], role_ids: list[str], now: float
+) -> dict[str, set[str]]:
+    wanted = [PydanticObjectId(r) for r in role_ids]
+    tenants: dict[str, set[str]] = {}
+    for row in rows:
+        tenant = row.scope.tenant_id
+        if (
+            row.is_active
+            and row.role_id in wanted
+            and tenant is not None
+            and (row.expires_at is None or row.expires_at > now)
+        ):
+            tenants.setdefault(str(row.role_id), set()).add(tenant)
+    return tenants
 
 
 class MockUserGroupRepository(_AssignmentBound[UserGroup], BaseUserGroupRepository):
@@ -403,6 +433,11 @@ class MockGroupRoleRepository(_AssignmentBound[GroupRole], BaseGroupRoleReposito
             return True
         return False
 
+    async def tenants_with_role(
+        self, role_ids: list[str], now: float
+    ) -> dict[str, set[str]]:
+        return _live_tenants(self._scoped(), role_ids, now)
+
     async def get_expired(self, current_time: float) -> list[GroupRole]:
         return [
             gr
@@ -453,6 +488,12 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
                 return role
         return None
 
+    async def name_in_use(self, name: str, tenant_id: str | None = None) -> bool:
+        return any(r.name == name and r.tenant_id == tenant_id for r in self._scoped())
+
+    async def count_active_project(self) -> int:
+        return sum(1 for r in self._scoped() if r.is_active and r.tenant_id is None)
+
     async def list_tenant(
         self, tenant_id: str, *, session: AsyncClientSession | None = None
     ) -> list[Role]:
@@ -475,6 +516,28 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
             for r in self._scoped()
             if r.copied_from is not None and str(r.copied_from) == template_id
         ]
+
+    async def copies_of(self, role_ids: list[str]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for role in self._scoped():
+            if (
+                role.is_active
+                and role.tenant_id is not None
+                and role.copied_from is not None
+                and any(_same_id(role.copied_from, rid) for rid in role_ids)
+            ):
+                key = str(role.copied_from)
+                counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    async def project_role_ids(self, role_ids: list[str]) -> set[str]:
+        return {
+            str(role.id)
+            for role in self._scoped()
+            if role.tenant_id is None
+            and role.id is not None
+            and any(_same_id(role.id, rid) for rid in role_ids)
+        }
 
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         return [
@@ -504,6 +567,19 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         await self._bump_for(role)
         return role
 
+    async def update_if_unchanged(
+        self,
+        role: Role,
+        expected_updated_at: float,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> bool:
+        stored = self._get(str(role.id))
+        if stored is None or stored.updated_at != expected_updated_at:
+            return False
+        await self.update(role, session=session)
+        return True
+
     async def deactivate(
         self, role_id: str, *, session: AsyncClientSession | None = None
     ) -> bool:
@@ -515,7 +591,11 @@ class MockRoleRepository(_ConfigBound[Role], BaseRoleRepository):
         return True
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[Role]:
-        active = [r for r in self._scoped() if r.is_active and r.tenant_id is None]
+        # Mirrors the real repository's ``_id`` order (hex order is ObjectId order).
+        active = sorted(
+            (r for r in self._scoped() if r.is_active and r.tenant_id is None),
+            key=lambda r: str(r.id),
+        )
         return active[skip : skip + limit]
 
     async def add_permission(
@@ -580,6 +660,17 @@ class MockPermissionRepository(_ConfigBound[Permission], BasePermissionRepositor
                 return perm
         return None
 
+    async def get_by_resource_action_any(
+        self, resource: str, action: str
+    ) -> Permission | None:
+        for perm in self._scoped():
+            if perm.resource == resource and perm.action == action:
+                return perm
+        return None
+
+    async def count_active(self) -> int:
+        return sum(1 for p in self._scoped() if p.is_active)
+
     async def get_by_resource(self, resource: str) -> list[Permission]:
         return [p for p in self._scoped() if p.resource == resource and p.is_active]
 
@@ -591,8 +682,8 @@ class MockPermissionRepository(_ConfigBound[Permission], BasePermissionRepositor
         return permission
 
     async def deactivate(self, permission_id: str) -> bool:
-        if self._get(permission_id) is not None:
-            self._data[permission_id].is_active = False
+        if (permission := self._get(permission_id)) is not None:
+            permission.is_active = False
             await self._bump()
             await self._state.bump_assignments_version()
             return True
@@ -803,7 +894,12 @@ class MockTenantMemberRepository(
     ) -> None:
         key = self._key(tenant_id, user_id)
         if self._get(key) is None:
-            self._store(key, TenantMember(tenant_id=tenant_id, user_id=user_id))
+            self._store(
+                key,
+                TenantMember(
+                    tenant_id=tenant_id, user_id=user_id, created_at=time.time()
+                ),
+            )
             await self._bump()
 
     async def remove(
@@ -820,6 +916,10 @@ class MockTenantMemberRepository(
         self, tenant_id: str, user_id: str, *, session: AsyncClientSession | None = None
     ) -> bool:
         return self._get(self._key(tenant_id, user_id)) is not None
+
+    async def joined_at(self, tenant_id: str, user_id: str) -> float | None:
+        member = self._get(self._key(tenant_id, user_id))
+        return member.created_at if member is not None else None
 
     async def tenants_for_user(self, user_id: str) -> list[str]:
         return [m.tenant_id for m in self._scoped() if m.user_id == user_id]

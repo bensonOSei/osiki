@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from osiki.api.exceptions import AuthorizationError, ConflictError, OsikiError
-from osiki.decision.models import GrantEntry
+from osiki.decision import models as decision
 
 
 class GrantRef(BaseModel):
@@ -20,6 +20,16 @@ class GrantRef(BaseModel):
     condition_id: str | None = None
 
 
+class GrantEntry(decision.GrantEntry):
+    """A grant as the team sees it on a role.
+
+    ``inherited_from`` names the ancestor role a template inherits it from;
+    ``None`` is the role's own grant.
+    """
+
+    inherited_from: str | None = None
+
+
 class TeamRole(BaseModel):
     """A role as a tenant's team manager sees it."""
 
@@ -27,6 +37,7 @@ class TeamRole(BaseModel):
     name: str
     kind: Literal["template", "tenant", "project"]
     grants: list[GrantEntry]
+    updated_at: float
     copied_from: str | None = None
     holders: int = 0
 
@@ -46,6 +57,15 @@ class TeamMember(BaseModel):
     name: str | None
     email: str | None
     roles: list[TeamRoleRef]
+    member_since: float | None = None
+
+
+class TeamCondition(BaseModel):
+    """A condition a team role's grant may carry."""
+
+    id: str
+    key: str
+    description: str | None
 
 
 class EffectiveSource(BaseModel):
@@ -88,7 +108,7 @@ class _TeamConflictError(TeamError, ConflictError):
     """409 with a machine-readable ``details["reason"]``."""
 
 
-def _render(entries: list[GrantEntry]) -> str:
+def _render(entries: list[decision.GrantEntry]) -> str:
     return ", ".join(
         e.permission if e.condition is None else f"{e.permission}@{e.condition}"
         for e in entries
@@ -96,7 +116,7 @@ def _render(entries: list[GrantEntry]) -> str:
 
 
 class EscalationRefused(_TeamConflictError):
-    def __init__(self, uncovered: list[GrantEntry]) -> None:
+    def __init__(self, uncovered: list[decision.GrantEntry]) -> None:
         self.uncovered = uncovered
         super().__init__(
             "Cannot grant permissions you do not hold",
@@ -146,4 +166,12 @@ class ConstraintViolated(_TeamConflictError):
                 "constraint": constraint_name or "",
                 "detail": reason or "",
             },
+        )
+
+
+class StaleRole(_TeamConflictError):
+    def __init__(self, role_id: str) -> None:
+        super().__init__(
+            "Role has changed since it was read",
+            details={"reason": "stale", "role_id": role_id},
         )

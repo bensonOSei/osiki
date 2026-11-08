@@ -1,19 +1,54 @@
+import time
+from typing import Annotated, Any
+
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Query, status
+from pymongo.errors import DuplicateKeyError
 
+from osiki.api.actor import ActorDep
 from osiki.api.dependencies import (
+    AuditWriterDep,
     ConditionRepository,
+    GroupRoleRepository,
     PermissionRepository,
     RoleRepository,
+    UserRoleRepository,
 )
 from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
 from osiki.models.role import Grant, Role
 from osiki.schemas.base import PaginatedResponse
-from osiki.schemas.role import GrantSchema, RoleCreate, RoleRead, RoleUpdate
+from osiki.schemas.role import (
+    GrantSchema,
+    RoleCreate,
+    RoleRead,
+    RoleUpdate,
+    RoleUsageRead,
+)
+from osiki.services.audit.project_state import role_audit_state
 from osiki.services.builtins import BUILTIN_TEAM_MANAGE, is_owner_template
 from osiki.services.roles.validation import validate_references
 
 router = APIRouter(prefix="/roles", tags=["roles"])
+
+
+def _name_taken(name: str) -> ConflictError:
+    return ConflictError("Role with this name already exists", details={"name": name})
+
+
+async def _audit_state(
+    role: Role,
+    permission_repo: PermissionRepository,
+    condition_repo: ConditionRepository,
+) -> dict[str, Any]:
+    """The role's audit snapshot; inactive permissions and conditions resolve."""
+    permissions = {
+        str(p.id): p.permission_string
+        for p in await permission_repo.get_by_ids_any(
+            [str(g.permission_id) for g in role.grants]
+        )
+    }
+    conditions = {str(c.id): c.key for c in await condition_repo.get_all()}
+    return role_audit_state(role, permissions, conditions)
 
 
 def _to_read(role: Role) -> RoleRead:
@@ -132,13 +167,11 @@ async def create_role(
     role_repo: RoleRepository,
     permission_repo: PermissionRepository,
     condition_repo: ConditionRepository,
+    audit: AuditWriterDep,
+    actor: ActorDep,
 ) -> RoleRead:
-    existing = await role_repo.get_by_name(data.name)
-    if existing:
-        raise ConflictError(
-            "Role with this name already exists",
-            details={"name": data.name},
-        )
+    if await role_repo.name_in_use(data.name):
+        raise _name_taken(data.name)
 
     grants = _merge_grants(data.grants, data.permission_ids)
     await validate_references(
@@ -156,7 +189,53 @@ async def create_role(
         is_template=data.is_template,
         metadata=data.metadata or {},
     )
-    return _to_read(await role_repo.create(role))
+    try:
+        created = await role_repo.create(role)
+    except DuplicateKeyError as exc:
+        raise _name_taken(data.name) from exc
+    await audit.record(
+        actor,
+        "role.create",
+        "role",
+        str(created.id),
+        tenant_id=None,
+        before=None,
+        after=await _audit_state(created, permission_repo, condition_repo),
+    )
+    return _to_read(created)
+
+
+@router.get("/usage")
+async def role_usage(
+    role_id: Annotated[list[str], Query(min_length=1, max_length=100)],
+    role_repo: RoleRepository,
+    user_role_repo: UserRoleRepository,
+    group_role_repo: GroupRoleRepository,
+) -> list[RoleUsageRead]:
+    """Tenants using, and tenant copies of, each project role."""
+    # Canonical ids; anything that is not an ObjectId is reported as unused.
+    requested: list[str] = []
+    valid: list[str] = []
+    for rid in role_id:
+        if PydanticObjectId.is_valid(rid):
+            rid = str(PydanticObjectId(rid))
+            valid.append(rid)
+        requested.append(rid)
+    ids = sorted(await role_repo.project_role_ids(valid)) if valid else []
+    if not ids:
+        return [RoleUsageRead(role_id=rid, tenants=0, copies=0) for rid in requested]
+    now = time.time()
+    by_user = await user_role_repo.tenants_with_role(ids, now)
+    by_group = await group_role_repo.tenants_with_role(ids, now)
+    copies = await role_repo.copies_of(ids)
+    return [
+        RoleUsageRead(
+            role_id=rid,
+            tenants=len(by_user.get(rid, set()) | by_group.get(rid, set())),
+            copies=copies.get(rid, 0),
+        )
+        for rid in requested
+    ]
 
 
 @router.get("/{role_id}")
@@ -174,6 +253,8 @@ async def update_role(
     role_repo: RoleRepository,
     permission_repo: PermissionRepository,
     condition_repo: ConditionRepository,
+    audit: AuditWriterDep,
+    actor: ActorDep,
 ) -> RoleRead:
     role = await _get_project_role(role_id, role_repo)
 
@@ -191,6 +272,15 @@ async def update_role(
             role, data, grants if replace_grants else None, permission_repo
         )
 
+    if (
+        data.name is not None
+        and data.name != role.name
+        and await role_repo.name_in_use(data.name)
+    ):
+        raise _name_taken(data.name)
+
+    before = await _audit_state(role, permission_repo, condition_repo)
+
     if data.name is not None:
         role.name = data.name
     if data.description is not None:
@@ -204,13 +294,30 @@ async def update_role(
     if data.metadata is not None:
         role.metadata = data.metadata
 
-    return _to_read(await role_repo.update(role))
+    try:
+        updated = await role_repo.update(role)
+    except DuplicateKeyError as exc:
+        raise _name_taken(role.name) from exc
+    await audit.record(
+        actor,
+        "role.update",
+        "role",
+        str(role.id),
+        tenant_id=None,
+        before=before,
+        after=await _audit_state(updated, permission_repo, condition_repo),
+    )
+    return _to_read(updated)
 
 
 @router.delete("/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_role(
     role_id: str,
     role_repo: RoleRepository,
+    permission_repo: PermissionRepository,
+    condition_repo: ConditionRepository,
+    audit: AuditWriterDep,
+    actor: ActorDep,
 ) -> None:
     role = await _get_project_role(role_id, role_repo)
     if is_owner_template(role):
@@ -218,9 +325,19 @@ async def delete_role(
             "The built-in Owner template cannot be deleted",
             details={"role_id": role_id},
         )
-    success = await role_repo.deactivate(role_id)
+    before = await _audit_state(role, permission_repo, condition_repo)
+    success = await role_repo.deactivate(str(role.id))
     if not success:
         raise NotFoundError("Role not found", details={"role_id": role_id})
+    await audit.record(
+        actor,
+        "role.delete",
+        "role",
+        str(role.id),
+        tenant_id=None,
+        before=before,
+        after=None,
+    )
 
 
 @router.get("")
@@ -234,5 +351,5 @@ async def list_roles(
 
     items = [_to_read(r) for r in roles]
 
-    total = len(items) + skip
+    total = await role_repo.count_active_project()
     return PaginatedResponse.create(items, total, page, page_size)

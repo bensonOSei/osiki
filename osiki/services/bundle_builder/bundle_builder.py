@@ -115,7 +115,7 @@ class BundleBuilder:
                 if t.is_active and t.external_id in tenant_ids
             },
             assignments=assignments,
-            roles=await self._render_roles([r for r in roles if str(r.id) in kept]),
+            roles=await self.render_roles([r for r in roles if str(r.id) in kept]),
         )
 
     async def _tenant_roles(self, assignments: list[AssignmentEntry]) -> list[Role]:
@@ -129,7 +129,10 @@ class BundleBuilder:
             if r.tenant_id is not None
         ]
 
-    async def _render_roles(self, roles: list[Role]) -> list[RoleEntry]:
+    async def render_roles(self, roles: list[Role]) -> list[RoleEntry]:
+        """Tenant roles as a bundle carries them: grants on active permissions
+        only. The team last-manager guard renders an added role through this,
+        so its end-state bundle matches what ``build`` would return."""
         if not roles:
             return []
         permission_ids = list(

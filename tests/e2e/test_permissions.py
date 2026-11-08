@@ -365,3 +365,114 @@ def test_patch_permission_bumps_snapshot_version(client: TestClient) -> None:
     before = client.get(f"{API}/snapshot").json()["version"]
     client.patch(f"{API}/permissions/{pid}", json={"assignable": True})
     assert client.get(f"{API}/snapshot").json()["version"] > before
+
+
+def test_permission_writes_are_audited(client: TestClient) -> None:
+    dev = {"X-Osiki-Actor": "developer:dev-1"}
+    created = client.post(
+        f"{API}/permissions",
+        json={"resource": "docs", "action": "read", "description": "Read docs"},
+        headers=dev,
+    )
+    perm_id = created.json()["id"]
+    patched = client.patch(
+        f"{API}/permissions/{perm_id}", json={"assignable": True}, headers=dev
+    )
+    assert patched.status_code == 200
+    assert client.delete(f"{API}/permissions/{perm_id}", headers=dev).status_code == 204
+
+    items = client.get(f"{API}/audit-logs").json()["items"]
+    by_action = {i["action"]: i for i in items}
+    assert set(by_action) == {
+        "permission.create",
+        "permission.update",
+        "permission.delete",
+    }
+    create = by_action["permission.create"]
+    assert (create["actor_id"], create["tenant_id"]) == ("dev-1", None)
+    assert create["target_type"] == "permission"
+    assert create["target_id"] == perm_id
+    assert create["before"] is None
+    assert create["after"] == {
+        "permission": "docs:read",
+        "description": "Read docs",
+        "assignable": False,
+        "is_active": True,
+    }
+    update = by_action["permission.update"]
+    assert update["before"]["assignable"] is False
+    assert update["after"]["assignable"] is True
+    delete = by_action["permission.delete"]
+    assert delete["before"] == update["after"]
+    assert delete["after"] is None
+
+
+def test_permission_audit_targets_the_canonical_id(client: TestClient) -> None:
+    perm_id = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    ).json()["id"]
+    upper = perm_id.upper()
+    assert upper != perm_id
+
+    patched = client.patch(f"{API}/permissions/{upper}", json={"assignable": True})
+    assert patched.status_code == 200
+    assert client.delete(f"{API}/permissions/{upper}").status_code == 204
+
+    items = client.get(f"{API}/audit-logs").json()["items"]
+    targets = {
+        i["action"]: i["target_id"]
+        for i in items
+        if i["action"] in ("permission.update", "permission.delete")
+    }
+    assert targets == {"permission.update": perm_id, "permission.delete": perm_id}
+
+
+def test_refused_permission_write_is_not_audited(client: TestClient) -> None:
+    client.post(f"{API}/permissions", json={"resource": "docs", "action": "read"})
+    dup = client.post(f"{API}/permissions", json={"resource": "docs", "action": "read"})
+    assert dup.status_code == 409
+    assert client.delete(f"{API}/permissions/{PydanticObjectId()}").status_code == 404
+    actions = [i["action"] for i in client.get(f"{API}/audit-logs").json()["items"]]
+    assert actions == ["permission.create"]
+
+
+def test_create_permission_conflict_reasons(client: TestClient) -> None:
+    body = {"resource": "docs", "action": "read"}
+    perm_id = client.post(f"{API}/permissions", json=body).json()["id"]
+
+    active = client.post(f"{API}/permissions", json=body)
+    assert active.status_code == 409
+    assert active.json()["details"]["reason"] == "exists"
+    assert active.json()["details"]["permission"] == "docs:read"
+
+    assert client.delete(f"{API}/permissions/{perm_id}").status_code == 204
+    deleted = client.post(f"{API}/permissions", json=body)
+    assert deleted.status_code == 409
+    assert deleted.json()["details"] == {"permission": "docs:read", "reason": "deleted"}
+    assert "docs:read was deleted and cannot be recreated" in deleted.json()["message"]
+
+
+def test_create_permission_duplicate_key_race_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pymongo.errors import DuplicateKeyError
+
+    async def boom(*_: object, **__: object) -> None:
+        raise DuplicateKeyError("E11000 duplicate key")
+
+    monkeypatch.setattr(
+        "tests.mocks.repositories.MockPermissionRepository.create", boom
+    )
+    response = client.post(
+        f"{API}/permissions", json={"resource": "docs", "action": "read"}
+    )
+    assert response.status_code == 409
+    assert response.json()["details"]["reason"] == "exists"
+
+
+def test_list_permissions_total_is_real(client: TestClient) -> None:
+    for action in ["read", "write", "delete"]:
+        client.post(f"{API}/permissions", json={"resource": "docs", "action": action})
+    data = client.get(f"{API}/permissions", params={"page_size": 2}).json()
+    assert len(data["items"]) == 2
+    assert data["total"] == 3

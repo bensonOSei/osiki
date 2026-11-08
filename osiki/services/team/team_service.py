@@ -13,9 +13,15 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import DuplicateKeyError
 
 from osiki.api.actor import Actor
-from osiki.api.exceptions import ConflictError, NotFoundError
+from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
 from osiki.decision.decide import effective_grants
-from osiki.decision.models import EffectiveGrant, GrantEntry, RoleEntry, UserBundle
+from osiki.decision.models import (
+    AssignmentEntry,
+    EffectiveGrant,
+    GrantEntry,
+    RoleEntry,
+    UserBundle,
+)
 from osiki.decision.scope import scope_matches
 from osiki.models.base import Scope
 from osiki.models.permission import Permission
@@ -61,6 +67,8 @@ from osiki.services.team.models import (
     NotManager,
     NotOffered,
     RoleInUse,
+    StaleRole,
+    TeamCondition,
     TeamError,
     TeamMember,
     TeamRole,
@@ -68,6 +76,7 @@ from osiki.services.team.models import (
     Violation,
     ViolationKind,
 )
+from osiki.services.team.models import GrantEntry as ShownGrant
 from osiki.services.unit_of_work import Operation, UnitOfWork
 
 _MANAGE = GrantEntry(permission="osiki.team:manage")
@@ -80,6 +89,7 @@ DryRunOp = Literal[
     "add_member",
     "revoke_role",
     "remove_member",
+    "replace_role",
 ]
 
 # The refusals a dry run reports as violations rather than raising.
@@ -169,7 +179,7 @@ class TeamService:
         await self.require_manager()
         offered = await self._offered_templates()
         own = await self._role_repo.list_tenant(self._tenant_id)
-        return await self._render([*offered, *own])
+        return await self._render([*offered, *own], inherited=True)
 
     async def list_assignable_permissions(self) -> list[Permission]:
         """Permissions the role editor may offer: the ones a tenant role may hold."""
@@ -181,21 +191,26 @@ class TeamService:
             skip += _MEMBER_PAGE
         return found
 
+    async def list_conditions(self) -> list[TeamCondition]:
+        """Active conditions, which a team role's grants may carry."""
+        await self.require_manager()
+        found: list[TeamCondition] = []
+        skip = 0
+        while page := await self._condition_repo.list_active(skip, _MEMBER_PAGE):
+            found.extend(
+                TeamCondition(id=str(c.id), key=c.key, description=c.description)
+                for c in page
+            )
+            skip += _MEMBER_PAGE
+        return found
+
     async def _offered_templates(self) -> list[Role]:
-        """Active project templates whose every grant is assignable or built-in."""
-        offered: list[Role] = []
-        for template in await self._role_repo.list_templates():
-            permissions = [
-                p
-                for ancestor in await self._lineage(template)
-                for p in await self._permissions_of(ancestor)
-            ]
-            if all(
-                p is not None and (is_builtin(p) or (p.is_active and p.assignable))
-                for p in permissions
-            ):
-                offered.append(template)
-        return offered
+        """Every active project template: the developer's own definition.
+
+        ``assignable`` does not hide one. Assigning it still passes the
+        no-escalation check, and a copy still carries only assignable grants.
+        """
+        return await self._role_repo.list_templates()
 
     async def _lineage(self, role: Role) -> list[Role]:
         """The role then its ancestors; stops at a missing or inactive parent
@@ -212,20 +227,34 @@ class TeamService:
             parent_id = parent.parent_role_id
         return lineage
 
-    async def _permissions_of(self, role: Role) -> list[Permission | None]:
-        return [
-            await self._permission_repo.get_by_id(str(g.permission_id))
-            for g in role.grants
-        ]
-
     async def _render(
-        self, roles: list[Role], *, include_inactive: bool = False
+        self,
+        roles: list[Role],
+        *,
+        include_inactive: bool = False,
+        inherited: bool = False,
     ) -> list[TeamRole]:
         """Roles as the team sees them. Grants on inactive permissions are
         left out unless ``include_inactive``, which escalation checks use: a
-        later reactivation would hand them out."""
+        later reactivation would hand them out.
+
+        With ``inherited``, a template also shows the grants of its active
+        ancestors (nearest first, each once), marked with the ancestor's name.
+        """
+        lineages = {
+            str(role.id): (
+                (await self._lineage(role))[1:]
+                if inherited and _kind(role) == "template"
+                else []
+            )
+            for role in roles
+        }
         permission_ids = list(
-            dict.fromkeys(str(g.permission_id) for r in roles for g in r.grants)
+            dict.fromkeys(
+                str(g.permission_id)
+                for r in [*roles, *(a for ls in lineages.values() for a in ls)]
+                for g in r.grants
+            )
         )
         found = (
             await self._permission_repo.get_by_ids_any(permission_ids)
@@ -234,21 +263,37 @@ class TeamService:
         )
         permissions = {str(p.id): p.permission_string for p in found}
         conditions = {str(c.id): c.key for c in await self._condition_repo.get_all()}
+
+        def shown(role: Role, inherited_from: str | None) -> list[ShownGrant]:
+            return [
+                ShownGrant(
+                    permission=permissions[str(g.permission_id)],
+                    condition=(
+                        conditions[str(g.condition_id)] if g.condition_id else None
+                    ),
+                    inherited_from=inherited_from,
+                )
+                for g in role.grants
+                if str(g.permission_id) in permissions
+            ]
+
+        def grants_of(role: Role) -> list[ShownGrant]:
+            grants = shown(role, None)
+            seen = {(g.permission, g.condition) for g in grants}
+            for ancestor in lineages[str(role.id)]:
+                for grant in shown(ancestor, ancestor.name):
+                    if (grant.permission, grant.condition) not in seen:
+                        seen.add((grant.permission, grant.condition))
+                        grants.append(grant)
+            return grants
+
         return [
             TeamRole(
                 id=str(role.id),
                 name=role.name,
                 kind=_kind(role),
-                grants=[
-                    GrantEntry(
-                        permission=permissions[str(g.permission_id)],
-                        condition=(
-                            conditions[str(g.condition_id)] if g.condition_id else None
-                        ),
-                    )
-                    for g in role.grants
-                    if str(g.permission_id) in permissions
-                ],
+                grants=grants_of(role),
+                updated_at=role.updated_at,
                 copied_from=str(role.copied_from) if role.copied_from else None,
                 holders=await self._holders(str(role.id)),
             )
@@ -284,12 +329,21 @@ class TeamService:
         copied_from: str | None,
         *,
         session: AsyncClientSession | None = None,
-    ) -> tuple[Role, list[GrantEntry]]:
+    ) -> tuple[Role, list[GrantEntry], Role | None]:
+        copied_from = _canonical_id(copied_from) if copied_from is not None else None
         held = await self._held_grants()
         entries, unique = await self._check_grants(grants)
+        source: Role | None = None
         if copied_from is not None:
-            offered = {str(t.id) for t in await self._offered_templates()}
-            if copied_from not in offered:
+            source = next(
+                (
+                    t
+                    for t in await self._offered_templates()
+                    if str(t.id) == copied_from
+                ),
+                None,
+            )
+            if source is None:
                 raise NotOffered(copied_from)
         self._ensure_escalation_free(held, entries)
         await self._ensure_name_free(name, None)
@@ -300,17 +354,24 @@ class TeamService:
             parent_role_id=None,
             copied_from=PydanticObjectId(copied_from) if copied_from else None,
         )
-        return role, entries
+        return role, entries, source
 
     async def create_role(
         self, name: str, grants: list[GrantRef], copied_from: str | None
     ) -> TeamRole:
+        copied_from = _canonical_id(copied_from) if copied_from is not None else None
+
         async def operation(session: AsyncClientSession | None) -> Role:
-            role, entries = await self._check_create_role(name, grants, copied_from)
+            role, entries, source = await self._check_create_role(
+                name, grants, copied_from
+            )
             try:
                 role = await self._role_repo.create(role, session=session)
             except DuplicateKeyError as exc:
                 raise _name_taken(name) from exc
+            after = _audit_state(name, entries)
+            if source is not None:
+                after["copied_from"] = {"id": str(source.id), "name": source.name}
             await self._audit.record(
                 self._actor,
                 "role.create",
@@ -318,7 +379,7 @@ class TeamService:
                 str(role.id),
                 tenant_id=self._tenant_id,
                 before=None,
-                after=_audit_state(name, entries),
+                after=after,
                 session=session,
             )
             return role
@@ -331,21 +392,33 @@ class TeamService:
         role_id: str,
         name: str | None,
         grants: list[GrantRef] | None,
+        expected_updated_at: float | None = None,
         *,
         session: AsyncClientSession | None = None,
     ) -> tuple[Role, dict[str, Any], bool]:
         """The role with every change applied (a copy), its audit state before,
-        and whether anything changes."""
+        and whether anything changes.
+
+        Sent grants replace the role's, except that grants on inactive
+        permissions are kept: the editor could not see them. A sent grant the
+        role already has is kept as is (grandfathered); only new ones pass the
+        assignable, reference and escalation checks.
+        """
+        role_id = _canonical_id(role_id)
         held = await self._held_grants()
         role = await self._own_role(role_id)
+        if expected_updated_at is not None and expected_updated_at != role.updated_at:
+            raise StaleRole(role_id)
         before = _audit_state(role.name, (await self._render([role]))[0].grants)
         if grants is None and (name is None or name == role.name):
             return role, before, False
         new_grants: list[Grant] | None = None
         if grants is not None:
-            entries, unique = await self._check_grants(grants)
+            entries, unique = await self._check_grants(grants, existing=role.grants)
             self._ensure_escalation_free(held, entries)
-            new_grants = _to_grants(unique)
+            new_grants = _deduplicated(
+                [*_to_grants(unique), *await self._hidden_grants(role)]
+            )
         if name is not None and name != role.name:
             await self._ensure_name_free(name, role_id)
         # Mutate only once every rule has passed.
@@ -356,14 +429,28 @@ class TeamService:
         return role, before, True
 
     async def update_role(
-        self, role_id: str, name: str | None, grants: list[GrantRef] | None
+        self,
+        role_id: str,
+        name: str | None,
+        grants: list[GrantRef] | None,
+        expected_updated_at: float | None = None,
     ) -> TeamRole:
+        role_id = _canonical_id(role_id)
+
         async def operation(session: AsyncClientSession | None) -> TeamRole:
-            role, before, changed = await self._check_update_role(role_id, name, grants)
+            role, before, changed = await self._check_update_role(
+                role_id, name, grants, expected_updated_at
+            )
             if not changed:
                 return (await self._render([role]))[0]
             try:
-                role = await self._role_repo.update(role, session=session)
+                if expected_updated_at is None:
+                    role = await self._role_repo.update(role, session=session)
+                elif not await self._role_repo.update_if_unchanged(
+                    role, expected_updated_at, session=session
+                ):
+                    # Another edit landed after the check: refuse, never overwrite.
+                    raise StaleRole(role_id)
             except DuplicateKeyError as exc:
                 raise _name_taken(role.name) from exc
             rendered = (await self._render([role]))[0]
@@ -382,6 +469,8 @@ class TeamService:
         return await self._uow.run(operation)
 
     async def delete_role(self, role_id: str) -> None:
+        role_id = _canonical_id(role_id)
+
         async def operation(session: AsyncClientSession | None) -> None:
             await self.require_manager()
             role = await self._own_role(role_id)
@@ -418,9 +507,16 @@ class TeamService:
         self, user_id: str, assignments: list[UserRole] | None = None
     ) -> TeamMember:
         """A member with the live roles assigned to them directly in the tenant."""
+        member_since = await self._member_repo.joined_at(self._tenant_id, user_id)
         user = await self._user_repo.get_by_external_id(user_id)
         if user is None:
-            return TeamMember(user_id=user_id, name=None, email=None, roles=[])
+            return TeamMember(
+                user_id=user_id,
+                name=None,
+                email=None,
+                roles=[],
+                member_since=member_since,
+            )
         if assignments is None:
             assignments = await self._user_role_repo.get_by_tenant(self._tenant_id)
         role_ids = list(
@@ -443,6 +539,7 @@ class TeamService:
                 )
                 for r in roles
             ],
+            member_since=member_since,
         )
 
     async def effective(self, user_id: str) -> list[EffectiveSource]:
@@ -493,6 +590,7 @@ class TeamService:
         engine returns that user's environment-wide name and email to the
         tenant's managers.
         """
+        role_id = _canonical_id(role_id)
 
         async def operation(session: AsyncClientSession | None) -> None:
             role, stale = await self._check_add_member(
@@ -508,7 +606,12 @@ class TeamService:
                 user_id,
                 tenant_id=self._tenant_id,
                 before=None,
-                after=_member_state(user_id, [role.name]),
+                after=_member_state(
+                    user_id,
+                    await self._direct_role_names(user, session),
+                    name=user.name,
+                    email=user.email,
+                ),
                 session=session,
             )
 
@@ -516,19 +619,23 @@ class TeamService:
         return await self._member(user_id)
 
     async def assign_role(self, user_id: str, role_id: str) -> TeamMember:
+        role_id = _canonical_id(role_id)
+
         async def operation(session: AsyncClientSession | None) -> None:
             user, role, stale = await self._check_assign_role(
                 user_id, role_id, session=session
             )
+            before = await self._direct_role_names(user, session)
             created = await self._assign(user, role, stale, session)
+            after = await self._direct_role_names(user, session)
             await self._audit.record(
                 self._actor,
                 "assignment.create",
                 "assignment",
                 str(created.id),
                 tenant_id=self._tenant_id,
-                before=None,
-                after=_assignment_state(user_id, role_id, role),
+                before={"user_id": user_id, "roles": before},
+                after=_assignment_state(user_id, role_id, role, after),
                 session=session,
             )
 
@@ -536,27 +643,73 @@ class TeamService:
         return await self._member(user_id)
 
     async def revoke_role(self, user_id: str, role_id: str) -> None:
+        role_id = _canonical_id(role_id)
+
         async def operation(session: AsyncClientSession | None) -> None:
-            assignment, role = await self._check_revoke_role(
+            assignment, role, user = await self._check_revoke_role(
                 user_id, role_id, session=session
             )
+            before = await self._direct_role_names(user, session)
             await self._user_role_repo.revoke(str(assignment.id), session=session)
+            after = await self._direct_role_names(user, session)
             await self._audit.record(
                 self._actor,
                 "assignment.revoke",
                 "assignment",
                 str(assignment.id),
                 tenant_id=self._tenant_id,
-                before=_assignment_state(user_id, role_id, role),
-                after=None,
+                before=_assignment_state(user_id, role_id, role, before),
+                after={"user_id": user_id, "roles": after},
                 session=session,
             )
 
         await self._team_write(operation)
 
+    async def replace_role(
+        self, user_id: str, from_role_id: str, to_role_id: str
+    ) -> TeamMember:
+        """Swap one direct role for another in one write: never both, never
+        neither. The rules are revoke-then-assign judged on the end state."""
+        from_role_id = _canonical_id(from_role_id)
+        to_role_id = _canonical_id(to_role_id)
+
+        async def operation(session: AsyncClientSession | None) -> None:
+            (
+                assignment,
+                from_role,
+                user,
+                to_role,
+                stale,
+            ) = await self._check_replace_role(
+                user_id, from_role_id, to_role_id, session=session
+            )
+            before = await self._direct_role_names(user, session)
+            await self._user_role_repo.revoke(str(assignment.id), session=session)
+            await self._assign(user, to_role, stale, session)
+            after = await self._direct_role_names(user, session)
+            await self._audit.record(
+                self._actor,
+                "assignment.replace",
+                "member",
+                user_id,
+                tenant_id=self._tenant_id,
+                before={"user_id": user_id, "roles": before},
+                after={
+                    "user_id": user_id,
+                    "roles": after,
+                    "from_role": from_role.name if from_role else None,
+                    "to_role": to_role.name,
+                },
+                session=session,
+            )
+
+        await self._team_write(operation)
+        return await self._member(user_id)
+
     async def remove_member(self, user_id: str) -> None:
         async def operation(session: AsyncClientSession | None) -> None:
             assignments = await self._check_remove_member(user_id, session=session)
+            user = await self._user_repo.get_by_external_id(user_id)
             for assignment in assignments:
                 await self._user_role_repo.revoke(str(assignment.id), session=session)
             await self._member_repo.remove(self._tenant_id, user_id, session=session)
@@ -569,12 +722,38 @@ class TeamService:
                 "member",
                 user_id,
                 tenant_id=self._tenant_id,
-                before=_member_state(user_id, [r.name for r in roles]),
+                before=_member_state(
+                    user_id,
+                    [r.name for r in roles],
+                    name=user.name if user else None,
+                    email=user.email if user else None,
+                ),
                 after=None,
                 session=session,
             )
 
         await self._team_write(operation)
+
+    async def _direct_role_names(
+        self, user: User, session: AsyncClientSession | None
+    ) -> list[str]:
+        """Sorted names of the member's live direct roles in this tenant.
+
+        Takes the loaded user: re-reading one a transaction just created would
+        miss it, as the insert is not committed yet.
+        """
+        now = time.time()
+        role_ids = list(
+            dict.fromkeys(
+                str(a.role_id)
+                for a in await self._user_role_repo.get_by_tenant(
+                    self._tenant_id, session=session
+                )
+                if a.user_id == user.id and _live(a, now)
+            )
+        )
+        roles = await self._role_repo.get_by_ids(role_ids) if role_ids else []
+        return sorted(r.name for r in roles)
 
     async def _existing_or_new_user(
         self,
@@ -653,6 +832,7 @@ class TeamService:
         session: AsyncClientSession | None = None,
     ) -> tuple[Role, UserRole | None]:
         """The user need not exist yet: the write upserts it."""
+        role_id = _canonical_id(role_id)
         held = await self._held_grants()
         user = await self._user_repo.get_by_external_id(user_id)
         # An existing user's profile is never changed, so their email is not
@@ -670,6 +850,7 @@ class TeamService:
         *,
         session: AsyncClientSession | None = None,
     ) -> tuple[User, Role, UserRole | None]:
+        role_id = _canonical_id(role_id)
         held = await self._held_grants()
         user = await self._member_user(user_id, session)
         role, stale = await self._check_assignment(held, role_id, user, session=session)
@@ -681,9 +862,51 @@ class TeamService:
         role_id: str,
         *,
         session: AsyncClientSession | None = None,
-    ) -> tuple[UserRole, Role | None]:
+    ) -> tuple[UserRole, Role | None, User]:
+        role_id = _canonical_id(role_id)
         await self.require_manager()
         user = await self._member_user(user_id, session)
+        assignment = await self._direct_assignment(user, role_id, session)
+        await self._ensure_manager_remains(without_assignment=(user_id, role_id))
+        return assignment, await self._role_repo.get_by_id(role_id), user
+
+    async def _check_replace_role(
+        self,
+        user_id: str,
+        from_role_id: str,
+        to_role_id: str,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> tuple[UserRole, Role | None, User, Role, UserRole | None]:
+        """The revoke checks on ``from`` and the assign checks on ``to``, all
+        judged on the end state: constraints without ``from``, and the
+        last-manager guard with ``from`` gone and ``to`` held.
+
+        Every check runs before any write, so a refusal changes nothing even
+        without transactions.
+        """
+        from_role_id = _canonical_id(from_role_id)
+        to_role_id = _canonical_id(to_role_id)
+        held = await self._held_grants()
+        if from_role_id == to_role_id:
+            raise ValidationError(
+                "Role cannot replace itself", details={"role_id": from_role_id}
+            )
+        user = await self._member_user(user_id, session)
+        assignment = await self._direct_assignment(user, from_role_id, session)
+        to_role, stale = await self._check_assignment(
+            held, to_role_id, user, session=session, without_role_id=from_role_id
+        )
+        await self._ensure_manager_remains(
+            without_assignment=(user_id, from_role_id), adding=to_role
+        )
+        from_role = await self._role_repo.get_by_id(from_role_id)
+        return assignment, from_role, user, to_role, stale
+
+    async def _direct_assignment(
+        self, user: User, role_id: str, session: AsyncClientSession | None
+    ) -> UserRole:
+        """The member's direct assignment of ``role_id`` in this tenant."""
         assignment = (
             await self._user_role_repo.find_assignment(
                 str(user.id), role_id, self._tenant_id, session=session
@@ -694,10 +917,9 @@ class TeamService:
         if assignment is None:
             raise NotFoundError(
                 "Role assignment not found",
-                details={"user_id": user_id, "role_id": role_id},
+                details={"user_id": user.external_id, "role_id": role_id},
             )
-        await self._ensure_manager_remains(without_assignment=(user_id, role_id))
-        return assignment, await self._role_repo.get_by_id(role_id)
+        return assignment
 
     async def _check_remove_member(
         self, user_id: str, *, session: AsyncClientSession | None = None
@@ -727,12 +949,14 @@ class TeamService:
         user: User | None,
         *,
         session: AsyncClientSession | None,
+        without_role_id: str | None = None,
     ) -> tuple[Role, UserRole | None]:
         """The role to assign and any expired row holding its slot.
 
         Escalation covers every grant the role gives, built-ins included, so
         assigning Owner needs ``osiki.team:manage``: owners hand on management.
-        ``user=None`` is a user who does not exist yet.
+        ``user=None`` is a user who does not exist yet. ``without_role_id`` is
+        the direct role a replace takes away; constraints judge without it.
         """
         role = await self._assignable_role(role_id)
         self._ensure_escalation_free(held, await self._role_grants(role))
@@ -749,6 +973,7 @@ class TeamService:
             role_id,
             self._scope(),
             session=session,
+            without_role_id=without_role_id,
         )
         if not result.valid:
             raise ConstraintViolated(result.constraint_name, result.reason)
@@ -781,13 +1006,15 @@ class TeamService:
         grants on inactive permissions too: reactivating one must not hand out
         what the assigner could not."""
         if role.tenant_id is not None:
-            return (await self._render([role], include_inactive=True))[0].grants
+            return _plain((await self._render([role], include_inactive=True))[0].grants)
         lineage = await self._lineage(role)
-        dormant = [
-            g
-            for rendered in await self._render(lineage, include_inactive=True)
-            for g in rendered.grants
-        ]
+        dormant = _plain(
+            [
+                g
+                for rendered in await self._render(lineage, include_inactive=True)
+                for g in rendered.grants
+            ]
+        )
         snapshot = await self._snapshot_builder.build()
         roles = {r.id: r for r in snapshot.roles}
         if str(role.id) not in roles:
@@ -812,12 +1039,15 @@ class TeamService:
         *,
         without_member: str | None = None,
         without_assignment: tuple[str, str] | None = None,
+        adding: Role | None = None,
     ) -> None:
         """``LastManager`` unless some member would still effectively hold
         ``osiki.team:manage`` in the tenant after the change.
 
         The change is the removal of ``without_member`` or of the direct
-        tenant-scoped assignment ``without_assignment`` (user id, role id).
+        tenant-scoped assignment ``without_assignment`` (user id, role id),
+        with, for a replace, the same member then holding ``adding`` directly
+        in the tenant, rendered as the bundle would render it after the write.
         Effective means what decides access: direct or group, unexpired,
         scope matching the tenant, via the role and its ancestors.
         Run it after the tenant lock is taken, so a concurrent change
@@ -826,6 +1056,7 @@ class TeamService:
         snapshot = await self._snapshot_builder.build()
         scope = self._scope()
         now = time.time()
+        added = await self._added_entries(adding) if adding is not None else None
         skip = 0
         while True:
             page = await self._member_repo.members(self._tenant_id, skip, _MEMBER_PAGE)
@@ -837,12 +1068,31 @@ class TeamService:
                     continue
                 if without_assignment is not None and without_assignment[0] == member:
                     bundle = _without_direct(bundle, without_assignment[1], scope)
+                    if added is not None:
+                        bundle = _with_direct(bundle, *added)
                 held = effective_grants(snapshot, bundle, scope, now)
                 if any(covers(grant, _MANAGE) for grant in held):
                     return
             if len(page) < _MEMBER_PAGE:
                 raise LastManager()
             skip += _MEMBER_PAGE
+
+    async def _added_entries(
+        self, role: Role
+    ) -> tuple[AssignmentEntry, RoleEntry | None]:
+        """A direct tenant assignment of ``role`` as the bundle carries it.
+
+        A tenant role travels in the bundle, rendered by ``BundleBuilder``
+        itself; a project role resolves through the snapshot (a template
+        missing from it contributes no grants).
+        """
+        assignment = AssignmentEntry(
+            role_id=str(role.id), scope=self._scope(), via="direct"
+        )
+        if role.tenant_id is None:
+            return assignment, None
+        (entry,) = await self._bundle_builder.render_roles([role])
+        return assignment, entry
 
     # -- dry run ---------------------------------------------------------------
 
@@ -859,6 +1109,7 @@ class TeamService:
             "add_member": self._check_add_member,
             "revoke_role": self._check_revoke_role,
             "remove_member": self._check_remove_member,
+            "replace_role": self._check_replace_role,
         }
         try:
             await checks[op](**args)
@@ -889,16 +1140,32 @@ class TeamService:
         return role.model_copy(deep=True)
 
     async def _check_grants(
-        self, grants: list[GrantRef]
+        self, grants: list[GrantRef], *, existing: Sequence[Grant] = ()
     ) -> tuple[list[GrantEntry], list[GrantRef]]:
         """Rules 2 and 3, before anything reaches the escalation module.
 
-        Returns the wanted grants (permission string plus condition key) and the
-        deduplicated refs they came from.
+        A grant equal to one in ``existing`` (same permission and condition)
+        skips both: it is already on the role. Returns the new grants
+        (permission string plus condition key), which the escalation check
+        takes, and every deduplicated ref.
         """
+        # Canonical ids first: a case variant of a held grant is that grant.
+        grants = [
+            GrantRef(
+                permission_id=_canonical_id(g.permission_id),
+                condition_id=(
+                    _canonical_id(g.condition_id)
+                    if g.condition_id is not None
+                    else None
+                ),
+            )
+            for g in grants
+        ]
         unique = list(dict.fromkeys(grants))
+        held = {_ref(g) for g in existing}
+        new = [ref for ref in unique if ref not in held]
         await validate_references(
-            unique,
+            new,
             None,
             self._role_repo,
             self._permission_repo,
@@ -906,7 +1173,7 @@ class TeamService:
         )
         entries: list[GrantEntry] = []
         refused: list[str] = []
-        for ref in unique:
+        for ref in new:
             permission = await self._permission_repo.get_by_id(ref.permission_id)
             assert permission is not None  # validate_references found it
             if not _assignable(permission):
@@ -925,6 +1192,16 @@ class TeamService:
         if refused:
             raise NotAssignable(refused)
         return entries, unique
+
+    async def _hidden_grants(self, role: Role) -> list[Grant]:
+        """The role's grants on inactive permissions: no editor sees them."""
+        active = {
+            str(p.id)
+            for p in await self._permission_repo.get_by_ids(
+                [str(g.permission_id) for g in role.grants]
+            )
+        }
+        return [g for g in role.grants if str(g.permission_id) not in active]
 
     def _ensure_escalation_free(
         self, held: list[EffectiveGrant], entries: list[GrantEntry]
@@ -955,6 +1232,12 @@ def _assignable(permission: Permission) -> bool:
     )
 
 
+def _plain(grants: Sequence[ShownGrant]) -> list[GrantEntry]:
+    """Grants as the escalation check compares them: without display fields,
+    so they equal the snapshot's grants."""
+    return [GrantEntry(permission=g.permission, condition=g.condition) for g in grants]
+
+
 def _name_taken(name: str) -> ConflictError:
     return ConflictError("Role with this name already exists", details={"name": name})
 
@@ -967,6 +1250,24 @@ def _to_grants(refs: list[GrantRef]) -> list[Grant]:
         )
         for r in refs
     ]
+
+
+def _ref(grant: Grant) -> GrantRef:
+    return GrantRef(
+        permission_id=str(grant.permission_id),
+        condition_id=str(grant.condition_id) if grant.condition_id else None,
+    )
+
+
+def _deduplicated(grants: list[Grant]) -> list[Grant]:
+    """Each (permission, condition) once, first occurrence kept."""
+    seen: set[GrantRef] = set()
+    kept: list[Grant] = []
+    for grant in grants:
+        if _ref(grant) not in seen:
+            seen.add(_ref(grant))
+            kept.append(grant)
+    return kept
 
 
 def _live(assignment: UserRole, now: float) -> bool:
@@ -1007,12 +1308,48 @@ def _without_direct(
     )
 
 
-def _member_state(user_id: str, roles: list[str]) -> dict[str, Any]:
-    return {"user_id": user_id, "roles": roles}
+def _with_direct(
+    bundle: UserBundle, assignment: AssignmentEntry, role: RoleEntry | None
+) -> UserBundle:
+    """The bundle plus ``assignment`` (and its tenant role, if any)."""
+    return bundle.model_copy(
+        update={
+            "assignments": [*bundle.assignments, assignment],
+            "roles": bundle.roles if role is None else [*bundle.roles, role],
+        }
+    )
 
 
-def _assignment_state(user_id: str, role_id: str, role: Role | None) -> dict[str, Any]:
-    return {"user_id": user_id, "role_id": role_id, "role": role.name if role else None}
+def _member_state(
+    user_id: str, roles: list[str], *, name: str | None, email: str | None
+) -> dict[str, Any]:
+    return {"user_id": user_id, "roles": roles, "name": name, "email": email}
+
+
+def _assignment_state(
+    user_id: str, role_id: str, role: Role | None, roles: list[str]
+) -> dict[str, Any]:
+    return {
+        "user_id": user_id,
+        "role_id": role_id,
+        "role": role.name if role else None,
+        "roles": roles,
+    }
+
+
+def _canonical_id(role_id: str) -> str:
+    """An id (role, permission, condition) in the one spelling stored ids
+    compare equal to.
+
+    Mongo matches an ObjectId whatever its hex case, but the guards compare
+    ids as strings: an uncanonical spelling would find a row the guards then
+    fail to see. An invalid id is left as is, to be refused as before.
+    """
+    return (
+        str(PydanticObjectId(role_id))
+        if PydanticObjectId.is_valid(role_id)
+        else role_id
+    )
 
 
 def _member_not_found(user_id: str) -> NotFoundError:

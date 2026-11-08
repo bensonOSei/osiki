@@ -20,4 +20,10 @@ class BaseConstraintValidator(ABC):
         *,
         now: float | None = None,
         session: AsyncClientSession | None = None,
-    ) -> ConstraintValidationResult: ...
+        without_role_id: str | None = None,
+    ) -> ConstraintValidationResult:
+        """Whether ``user_id`` may be given ``role_id`` in ``scope``.
+
+        ``without_role_id`` judges a replace on its end state: the user's
+        direct assignment of that role in exactly ``scope`` counts as gone.
+        """

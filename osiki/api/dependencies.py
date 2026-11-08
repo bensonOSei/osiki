@@ -361,6 +361,13 @@ ConstraintValidatorDep = Annotated[
 UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
 
 
+def get_audit_writer(audit_repository: AuditLogRepository) -> AuditWriter:
+    return AuditWriter(audit_repository)
+
+
+AuditWriterDep = Annotated[AuditWriter, Depends(get_audit_writer)]
+
+
 def get_team_service(
     tenant_id: str,
     actor: ActorDep,

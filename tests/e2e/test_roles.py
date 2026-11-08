@@ -1,10 +1,27 @@
+import time
+
+import pytest
 from beanie import PydanticObjectId
 from fastapi.testclient import TestClient
+from pymongo.errors import DuplicateKeyError
 
-from osiki.api.dependencies import get_role_repository
+from osiki.api.dependencies import (
+    get_group_role_repository,
+    get_role_repository,
+    get_user_role_repository,
+)
 from osiki.api.routes.roles import _to_read
+from osiki.models.base import Scope
+from osiki.models.role import Role
 from tests.e2e.conftest import API, app
-from tests.mocks import MockRoleRepository, make_role
+from tests.mocks import (
+    MockGroupRoleRepository,
+    MockRoleRepository,
+    MockUserRoleRepository,
+    make_group_role,
+    make_role,
+    make_user_role,
+)
 
 EXPR = {"op": "eq", "left": {"ref": "record.owner_id"}, "right": {"ref": "user.id"}}
 ENV_HEADER = "X-Osiki-Environment"
@@ -521,3 +538,303 @@ def test_tenant_role_copied_from_is_rendered() -> None:
     source = PydanticObjectId()
     read = _to_read(make_role(tenant_id="acme", copied_from=source))
     assert (read.tenant_id, read.copied_from) == ("acme", str(source))
+
+
+# --- Role name conflicts and list total ---
+
+
+def test_create_role_reusing_deleted_name_409(client: TestClient) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "Auditor"}).json()["id"]
+    assert client.delete(f"{API}/roles/{rid}").status_code == 204
+
+    response = client.post(f"{API}/roles", json={"name": "Auditor"})
+
+    assert response.status_code == 409
+    assert response.json()["details"] == {"name": "Auditor"}
+
+
+def test_rename_role_to_taken_name_409(client: TestClient) -> None:
+    client.post(f"{API}/roles", json={"name": "A"})
+    b = client.post(f"{API}/roles", json={"name": "B"}).json()["id"]
+
+    response = client.patch(f"{API}/roles/{b}", json={"name": "A"})
+
+    assert response.status_code == 409
+    assert client.patch(f"{API}/roles/{b}", json={"name": "B"}).status_code == 200
+
+
+def test_create_role_duplicate_key_race_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def boom(role: Role, **_: object) -> Role:
+        raise DuplicateKeyError("E11000 duplicate key")
+
+    monkeypatch.setattr(_role_repo(), "create", boom)
+
+    response = client.post(f"{API}/roles", json={"name": "Racer"})
+
+    assert response.status_code == 409
+    assert response.json()["details"] == {"name": "Racer"}
+
+
+def test_rename_role_duplicate_key_race_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "Before"}).json()["id"]
+
+    async def boom(role: Role, **_: object) -> Role:
+        raise DuplicateKeyError("E11000 duplicate key")
+
+    monkeypatch.setattr(_role_repo(), "update", boom)
+
+    response = client.patch(f"{API}/roles/{rid}", json={"name": "After"})
+
+    assert response.status_code == 409
+    assert response.json()["details"] == {"name": "After"}
+
+
+def test_list_roles_total_counts_all_pages(client: TestClient) -> None:
+    for name in ("r1", "r2", "r3"):
+        client.post(f"{API}/roles", json={"name": name})
+
+    body = client.get(f"{API}/roles", params={"page_size": 2}).json()
+
+    assert len(body["items"]) == 2
+    assert body["total"] == 3
+
+
+# --- Audit ---
+
+DEV = {"X-Osiki-Actor": "developer:dev-1"}
+
+
+def _audit(client: TestClient, action: str) -> list[dict[str, object]]:
+    items = client.get(f"{API}/audit-logs").json()["items"]
+    return [i for i in items if i["action"] == action]
+
+
+def test_role_writes_are_audited(client: TestClient) -> None:
+    perm = _perm(client, "sales", "create")
+    created = client.post(
+        f"{API}/roles",
+        json={"name": "seller", "permission_ids": [perm]},
+        headers=DEV,
+    )
+    role_id = created.json()["id"]
+    renamed = client.patch(
+        f"{API}/roles/{role_id}",
+        json={"name": "closer", "permission_ids": []},
+        headers=DEV,
+    )
+    assert renamed.status_code == 200
+    assert client.delete(f"{API}/roles/{role_id}", headers=DEV).status_code == 204
+
+    [create] = _audit(client, "role.create")
+    assert create["actor_id"] == "dev-1"
+    assert create["actor_type"] == "developer"
+    assert create["tenant_id"] is None
+    assert create["target_type"] == "role"
+    assert create["target_id"] == role_id
+    assert create["before"] is None
+    assert create["after"] == {
+        "name": "seller",
+        "is_template": False,
+        "grants": ["sales:create"],
+    }
+    [update] = _audit(client, "role.update")
+    assert update["before"] == create["after"]
+    assert update["after"] == {"name": "closer", "is_template": False, "grants": []}
+    [delete] = _audit(client, "role.delete")
+    assert delete["before"] == update["after"]
+    assert delete["after"] is None
+    assert delete["actor_id"] == "dev-1"
+
+
+def test_role_audit_targets_the_canonical_id(client: TestClient) -> None:
+    role_id = client.post(f"{API}/roles", json={"name": "seller"}).json()["id"]
+    upper = role_id.upper()
+    assert upper != role_id
+
+    assert client.patch(f"{API}/roles/{upper}", json={"name": "c"}).status_code == 200
+    assert client.delete(f"{API}/roles/{upper}").status_code == 204
+
+    [update] = _audit(client, "role.update")
+    [delete] = _audit(client, "role.delete")
+    assert update["target_id"] == delete["target_id"] == role_id
+
+
+def test_conditional_grant_audit_string(client: TestClient) -> None:
+    perm = _perm(client, "sales", "create")
+    cond = _condition(client, "own_branch")
+    response = client.post(
+        f"{API}/roles",
+        json={
+            "name": "seller",
+            "grants": [{"permission_id": perm, "condition_id": cond}],
+        },
+        headers=DEV,
+    )
+    assert response.status_code == 201
+    [create] = _audit(client, "role.create")
+    assert create["after"]["grants"] == ["sales:create?own_branch"]  # type: ignore[index]
+
+
+def test_failed_role_writes_are_not_audited(client: TestClient) -> None:
+    client.post(f"{API}/roles", json={"name": "seller"})
+    dup = client.post(f"{API}/roles", json={"name": "seller"})
+    assert dup.status_code == 409
+    assert len(_audit(client, "role.create")) == 1
+
+
+# --- Template usage counts ---
+
+
+def _usage_repos(
+    env: str = "default",
+) -> tuple[MockUserRoleRepository, MockGroupRoleRepository, MockRoleRepository]:
+    users: MockUserRoleRepository = app.dependency_overrides[get_user_role_repository](
+        env
+    )
+    groups: MockGroupRoleRepository = app.dependency_overrides[
+        get_group_role_repository
+    ](env)
+    roles: MockRoleRepository = app.dependency_overrides[get_role_repository](env)
+    return users, groups, roles
+
+
+def _assign(repo: MockUserRoleRepository, role_id: str, tenant: str | None) -> None:
+    ur = make_user_role(
+        PydanticObjectId(),
+        PydanticObjectId(role_id),
+        Scope(tenant_id=tenant),
+    )
+    repo._store(str(ur.id), ur)
+
+
+def _usage(client: TestClient, *ids: str, **headers: str) -> list[dict[str, object]]:
+    response = client.get(
+        f"{API}/roles/usage",
+        params=[("role_id", i) for i in ids],
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    body: list[dict[str, object]] = response.json()
+    return body
+
+
+def test_role_usage_counts_distinct_tenants(client: TestClient) -> None:
+    template = client.post(f"{API}/roles", json={"name": "t", "is_template": True})
+    rid = template.json()["id"]
+    users, groups, _ = _usage_repos()
+    _assign(users, rid, "a")
+    _assign(users, rid, "a")
+    _assign(users, rid, "b")
+    _assign(users, rid, None)
+    group_role = make_group_role(
+        PydanticObjectId(), PydanticObjectId(rid), Scope(tenant_id="c")
+    )
+    groups._store(str(group_role.id), group_role)
+    # Tenant "a" again through a group: the union counts it once.
+    again = make_group_role(
+        PydanticObjectId(), PydanticObjectId(rid), Scope(tenant_id="a")
+    )
+    groups._store(str(again.id), again)
+    no_tenant = make_group_role(PydanticObjectId(), PydanticObjectId(rid))
+    groups._store(str(no_tenant.id), no_tenant)
+
+    assert _usage(client, rid) == [{"role_id": rid, "tenants": 3, "copies": 0}]
+
+
+def test_role_usage_ignores_expired_revoked_and_other_environments(
+    client: TestClient,
+) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "t"}).json()["id"]
+    users, groups, _ = _usage_repos()
+    other_users, _, _ = _usage_repos("elsewhere")
+    expired = make_user_role(
+        PydanticObjectId(),
+        PydanticObjectId(rid),
+        Scope(tenant_id="old"),
+        expires_at=time.time() - 10,
+    )
+    users._store(str(expired.id), expired)
+    revoked = make_user_role(
+        PydanticObjectId(), PydanticObjectId(rid), Scope(tenant_id="gone")
+    )
+    revoked.is_active = False
+    users._store(str(revoked.id), revoked)
+    lapsed_group = make_group_role(
+        PydanticObjectId(),
+        PydanticObjectId(rid),
+        Scope(tenant_id="old-group"),
+        expires_at=time.time() - 10,
+    )
+    groups._store(str(lapsed_group.id), lapsed_group)
+    future = make_user_role(
+        PydanticObjectId(),
+        PydanticObjectId(rid),
+        Scope(tenant_id="live"),
+        expires_at=time.time() + 3600,
+    )
+    users._store(str(future.id), future)
+    _assign(other_users, rid, "elsewhere-tenant")
+
+    assert _usage(client, rid)[0]["tenants"] == 1
+
+
+def test_role_usage_counts_active_copies(client: TestClient) -> None:
+    rid = client.post(f"{API}/roles", json={"name": "t", "is_template": True}).json()[
+        "id"
+    ]
+    _, _, roles = _usage_repos()
+    source = PydanticObjectId(rid)
+    for name, tenant, active in [
+        ("c1", "a", True),
+        ("c2", "b", True),
+        ("c3", "c", False),
+    ]:
+        copy = make_role(
+            name=name, tenant_id=tenant, copied_from=source, is_active=active
+        )
+        roles._store(str(copy.id), copy)
+
+    assert _usage(client, rid)[0]["copies"] == 2
+
+
+def test_role_usage_orders_canonicalizes_and_zeroes_unknown(
+    client: TestClient,
+) -> None:
+    first = client.post(f"{API}/roles", json={"name": "one"}).json()["id"]
+    second = client.post(f"{API}/roles", json={"name": "two"}).json()["id"]
+    users, _, _ = _usage_repos()
+    _assign(users, second, "a")
+    tenant_role = _tenant_role()
+    _assign(users, tenant_role, "a")
+    unknown = str(PydanticObjectId())
+
+    result = _usage(client, second.upper(), "not-an-id", tenant_role, unknown, first)
+
+    assert result == [
+        {"role_id": second, "tenants": 1, "copies": 0},
+        {"role_id": "not-an-id", "tenants": 0, "copies": 0},
+        {"role_id": tenant_role, "tenants": 0, "copies": 0},
+        {"role_id": unknown, "tenants": 0, "copies": 0},
+        {"role_id": first, "tenants": 0, "copies": 0},
+    ]
+
+
+def test_role_usage_limits_ids(client: TestClient) -> None:
+    ids = [str(PydanticObjectId()) for _ in range(101)]
+    response = client.get(f"{API}/roles/usage", params=[("role_id", i) for i in ids])
+    assert response.status_code == 422
+    assert client.get(f"{API}/roles/usage").status_code == 422
+    assert len(_usage(client, *ids[:100])) == 100
+
+
+def test_role_usage_with_no_known_role_is_all_zeros(client: TestClient) -> None:
+    unknown = str(PydanticObjectId())
+
+    assert _usage(client, "not-an-id") == [
+        {"role_id": "not-an-id", "tenants": 0, "copies": 0}
+    ]
+    assert _usage(client, unknown) == [{"role_id": unknown, "tenants": 0, "copies": 0}]

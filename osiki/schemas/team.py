@@ -9,10 +9,11 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from osiki.decision.models import GrantEntry
 from osiki.services.team.models import (
     EffectiveSource,
+    GrantEntry,
     GrantRef,
+    TeamCondition,
     TeamMember,
     TeamRole,
     TeamRoleRef,
@@ -50,6 +51,8 @@ class TeamRoleCreate(_Input):
 class TeamRoleUpdate(_Input):
     name: RoleName | None = None
     grants: list[GrantRefIn] | None = None
+    # The ``updated_at`` the editor read; a different stored value is a 409.
+    expected_updated_at: float | None = None
 
 
 class TeamMemberAdd(_Input):
@@ -57,6 +60,11 @@ class TeamMemberAdd(_Input):
     name: str | None = None
     email: str | None = None
     role_id: str
+
+
+class TeamRoleReplace(_Input):
+    from_role_id: str
+    to_role_id: str
 
 
 class CreateRoleArgs(TeamRoleCreate):
@@ -81,6 +89,10 @@ class RevokeRoleArgs(AssignRoleArgs):
 
 
 class RemoveMemberArgs(_Input):
+    user_id: str
+
+
+class ReplaceRoleArgs(TeamRoleReplace):
     user_id: str
 
 
@@ -114,13 +126,19 @@ class _RemoveMemberOp(_Input):
     args: RemoveMemberArgs
 
 
+class _ReplaceRoleOp(_Input):
+    op: Literal["replace_role"]
+    args: ReplaceRoleArgs
+
+
 ValidateRequest = Annotated[
     _CreateRoleOp
     | _UpdateRoleOp
     | _AssignRoleOp
     | _AddMemberOp
     | _RevokeRoleOp
-    | _RemoveMemberOp,
+    | _RemoveMemberOp
+    | _ReplaceRoleOp,
     Field(discriminator="op"),
 ]
 
@@ -143,10 +161,15 @@ def service_args(args: _Input) -> dict[str, Any]:
 class GrantEntryRead(BaseModel):
     permission: str
     condition: str | None
+    inherited_from: str | None = None
 
     @classmethod
     def from_entry(cls, entry: GrantEntry) -> "GrantEntryRead":
-        return cls(permission=entry.permission, condition=entry.condition)
+        return cls(
+            permission=entry.permission,
+            condition=entry.condition,
+            inherited_from=entry.inherited_from,
+        )
 
 
 class TeamRoleRead(BaseModel):
@@ -156,6 +179,7 @@ class TeamRoleRead(BaseModel):
     grants: list[GrantEntryRead]
     copied_from: str | None
     holders: int
+    updated_at: float
 
     @classmethod
     def from_role(cls, role: TeamRole) -> "TeamRoleRead":
@@ -166,6 +190,7 @@ class TeamRoleRead(BaseModel):
             grants=[GrantEntryRead.from_entry(g) for g in role.grants],
             copied_from=role.copied_from,
             holders=role.holders,
+            updated_at=role.updated_at,
         )
 
 
@@ -184,6 +209,7 @@ class TeamMemberRead(BaseModel):
     name: str | None
     email: str | None
     roles: list[TeamRoleRefRead]
+    member_since: float | None = None
 
     @classmethod
     def from_member(cls, member: TeamMember) -> "TeamMemberRead":
@@ -192,7 +218,18 @@ class TeamMemberRead(BaseModel):
             name=member.name,
             email=member.email,
             roles=[TeamRoleRefRead.from_ref(r) for r in member.roles],
+            member_since=member.member_since,
         )
+
+
+class TeamConditionRead(BaseModel):
+    id: str
+    key: str
+    description: str | None
+
+    @classmethod
+    def from_condition(cls, condition: TeamCondition) -> "TeamConditionRead":
+        return cls(**condition.model_dump())
 
 
 class EffectiveSourceRead(BaseModel):

@@ -1,5 +1,7 @@
 """Integration tests for MongoDBTenantMemberRepository."""
 
+import time
+
 from osiki.repositories.environment_state.mongodb_environment_state_repository import (
     MongoDBEnvironmentStateRepository,
 )
@@ -86,3 +88,15 @@ async def test_count_is_per_tenant_and_environment() -> None:
     assert await repo.count("t1") == 2
     assert await repo.count("t2") == 1
     assert await repo.count("nope") == 0
+
+
+async def test_joined_at_is_the_membership_creation_time() -> None:
+    repo = MongoDBTenantMemberRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    before = time.time()
+    await repo.add("t1", "u1")
+    joined = await repo.joined_at("t1", "u1")
+    assert joined is not None and before <= joined <= time.time()
+    assert await repo.joined_at("t1", "u2") is None
+    assert await repo.joined_at("t2", "u1") is None

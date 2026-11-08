@@ -277,7 +277,32 @@ attributes with `{}`, so pass them every time. Each call drops the cached
 bundles it affects. Other processes pick up role, membership and user changes
 on their next poll, within `poll_interval` seconds.
 
-## 10. Failure modes
+## 10. Declaring permissions
+
+An app can declare the permissions it needs in code and have Osiki create them
+at startup:
+
+```python
+from osiki_sdk import PermissionSpec
+
+result = await osiki.permissions.ensure([
+    PermissionSpec("sales", "create", description="Record a sale", assignable=True),
+    PermissionSpec("refunds", "create", description="Issue a refund"),
+])
+print(result.created, result.updated, result.unchanged)  # sorted lists of "resource:action" strings
+```
+
+`ensure` creates the permissions that are missing and updates `description` and
+`assignable` only where a spec sets them (`None` leaves a field as it is). It
+is safe to run on every boot: a second run sends no writes. It never deletes or
+deactivates a permission. Repeating a `resource:action` in one call raises
+`ValueError`. Naming a permission that was deleted earlier raises
+`PermissionDeleted` (an `EngineError`, with the string on `.permission`): the
+engine refuses to recreate it with a 409 whose `details.reason` is `"deleted"`.
+If another replica creates a permission first, `ensure` adopts it and carries on.
+A failure part-way leaves the earlier changes applied, and rerunning is safe.
+
+## 11. Failure modes
 
 | Situation | Answer |
 | --- | --- |
@@ -298,7 +323,7 @@ excluding your loader's query. Decision logs are queued and sent in the
 background, never on the request path. Every denial is logged; successes are
 sampled.
 
-## 11. Configuration
+## 12. Configuration
 
 Use `Osiki(OsikiConfig(...), user_id=...)` or pass the fields to `Osiki`
 directly:

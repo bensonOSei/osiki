@@ -181,3 +181,27 @@ async def test_two_managers_removed_concurrently(
         m for m in ("alice", "bob") if await realmongo_env.members.is_member(TENANT, m)
     ]
     assert len(remaining) == 1
+
+
+async def test_adding_a_brand_new_member_audits_the_role_set(
+    realmongo_env: RealMongoEnv,
+) -> None:
+    """The user is created inside the transaction, so its role set must be
+    read through that user, not looked up again outside the session."""
+    owner_id = await two_owners(realmongo_env)
+
+    await service(realmongo_env, Actor(type="developer", id="dev")).add_member(
+        "carol", name="Carol", email="carol@example.com", role_id=owner_id
+    )
+
+    (entry,) = [
+        e
+        for e in await realmongo_env.audit.list(None, 0, 10)
+        if e.action == "member.add"
+    ]
+    assert entry.changes.after == {
+        "user_id": "carol",
+        "roles": ["Owner"],
+        "name": "Carol",
+        "email": "carol@example.com",
+    }

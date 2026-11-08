@@ -435,3 +435,115 @@ async def test_list_copies() -> None:
     copies = await repo.list_copies(str(template.id))
 
     assert {c.id for c in copies} == {live.id, gone.id}
+
+
+async def test_name_in_use_counts_deleted_and_scopes_by_tenant() -> None:
+    repo = _repo("niu-env")
+    role = await repo.create(Role(name="niu-a"))
+    await repo.create(Role(name="niu-t", tenant_id="acme"))
+
+    assert await repo.name_in_use("niu-a") is True
+    assert await repo.name_in_use("niu-t") is False
+    assert await repo.name_in_use("niu-t", "acme") is True
+    await repo.deactivate(str(role.id))
+    assert await repo.get_by_name("niu-a") is None
+    assert await repo.name_in_use("niu-a") is True
+    assert await repo.name_in_use("niu-missing") is False
+
+
+async def test_count_active_project_ignores_tenant_and_inactive() -> None:
+    repo = _repo("cap-env")
+    gone = await repo.create(Role(name="cap-a"))
+    await repo.create(Role(name="cap-b"))
+    await repo.create(Role(name="cap-c", tenant_id="acme"))
+    await repo.deactivate(str(gone.id))
+
+    assert await repo.count_active_project() == 1
+
+
+async def test_copies_of_counts_active_tenant_copies_in_the_environment() -> None:
+    repo = _repo("copies-env")
+    template = await repo.create(Role(name="Editor", is_template=True))
+    other = await repo.create(Role(name="Viewer", is_template=True))
+    for tenant in ("acme", "beta"):
+        await repo.create(
+            Role(name="Editor", tenant_id=tenant, copied_from=template.id)
+        )
+    await repo.create(Role(name="Viewer", tenant_id="acme", copied_from=other.id))
+    gone = await repo.create(
+        Role(name="Editor", tenant_id="gone", copied_from=template.id)
+    )
+    await repo.deactivate(str(gone.id))
+    await _repo("copies-elsewhere").create(
+        Role(name="Editor", tenant_id="acme", copied_from=template.id)
+    )
+
+    result = await repo.copies_of([str(template.id), str(PydanticObjectId())])
+
+    assert result == {str(template.id): 2}
+
+
+async def test_project_role_ids_excludes_tenant_and_unknown_roles() -> None:
+    repo = _repo("pri-env")
+    live = await repo.create(Role(name="Live"))
+    deleted = await repo.create(Role(name="Deleted"))
+    await repo.deactivate(str(deleted.id))
+    tenant = await repo.create(Role(name="Mine", tenant_id="acme"))
+    elsewhere = await _repo("pri-elsewhere").create(Role(name="Live"))
+
+    result = await repo.project_role_ids(
+        [str(live.id), str(deleted.id), str(tenant.id), str(elsewhere.id)]
+    )
+
+    assert result == {str(live.id), str(deleted.id)}
+
+
+async def test_list_active_pages_in_id_order() -> None:
+    repo = MongoDBRoleRepository(
+        "default", MongoDBEnvironmentStateRepository("default")
+    )
+    low, high = sorted([PydanticObjectId(), PydanticObjectId()])
+    await repo.create(Role(id=high, name="order-high"))
+    await repo.create(Role(id=low, name="order-low"))
+
+    ids = [r.id for r in await repo.list_active(0, 1000)]
+
+    assert ids == sorted(ids)
+    assert ids.index(low) < ids.index(high)
+
+
+async def test_update_if_unchanged_writes_only_while_unchanged() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    role = await repo.create(Role(name="token-role"))
+    read_at = role.updated_at
+    config = await state.get_config_version()
+
+    edit = role.model_copy(deep=True)
+    edit.name = "token-role-2"
+    assert await repo.update_if_unchanged(edit, read_at) is True
+    assert edit.updated_at > read_at
+    assert await state.get_config_version() == config + 1
+
+    stale = role.model_copy(deep=True)
+    stale.name = "token-role-3"
+    assert await repo.update_if_unchanged(stale, read_at) is False
+    assert await state.get_config_version() == config + 1
+    stored = await repo.get_by_id(str(role.id))
+    assert stored is not None
+    assert (stored.name, stored.updated_at) == ("token-role-2", edit.updated_at)
+
+
+async def test_update_if_unchanged_bumps_assignments_for_tenant_roles() -> None:
+    state = MongoDBEnvironmentStateRepository("default")
+    repo = MongoDBRoleRepository("default", state)
+    role = await repo.create(Role(name="token-tenant", tenant_id="acme"))
+    config, assignments = (
+        await state.get_config_version(),
+        await state.get_assignments_version(),
+    )
+
+    assert await repo.update_if_unchanged(role, role.updated_at) is True
+
+    assert await state.get_config_version() == config
+    assert await state.get_assignments_version() == assignments + 1

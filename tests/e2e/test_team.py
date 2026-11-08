@@ -118,7 +118,9 @@ def test_owner_flow_gives_a_weekend_cashier_sales_but_not_refunds(
         json={"user_id": "u-staff", "name": "Stan", "email": "s@x.io", "role_id": role},
     )
     assert added.status_code == 201, added.text
-    assert added.json() == {
+    body = added.json()
+    assert isinstance(body.pop("member_since"), float)
+    assert body == {
         "user_id": "u-staff",
         "name": "Stan",
         "email": "s@x.io",
@@ -131,8 +133,8 @@ def test_owner_flow_gives_a_weekend_cashier_sales_but_not_refunds(
     by_name = {r["name"]: r for r in roles}
     assert by_name["Weekend cashier"]["holders"] == 1
     assert by_name["Weekend cashier"]["grants"] == [
-        {"permission": "sales:create", "condition": None},
-        {"permission": "sales:read", "condition": None},
+        {"permission": "sales:create", "condition": None, "inherited_from": None},
+        {"permission": "sales:read", "condition": None, "inherited_from": None},
     ]
     assert by_name["Owner"]["kind"] == "template"
 
@@ -158,7 +160,7 @@ def test_role_update_assign_revoke_and_delete(client: TestClient, world: World) 
     assert patched.status_code == 200
     assert (patched.json()["name"], patched.json()["grants"]) == (
         "Till",
-        [{"permission": "sales:create", "condition": None}],
+        [{"permission": "sales:create", "condition": None, "inherited_from": None}],
     )
     # Deleting a role someone holds is refused with role_in_use.
     busy = client.delete(f"{T1}/roles/{role}", headers=OWNER)
@@ -179,6 +181,83 @@ def test_role_update_assign_revoke_and_delete(client: TestClient, world: World) 
     assert client.delete(f"{T1}/members/u-staff", headers=OWNER).status_code == 204
     gone = client.get(f"{T1}/members/u-staff/effective", headers=OWNER)
     assert gone.status_code == 404
+
+
+def test_team_replace_endpoint(client: TestClient, world: World) -> None:
+    cashier = world.role("Cashier", world.sales_read, headers=OWNER)
+    weekend = world.role("Weekend cashier", world.sales_read, headers=OWNER)
+    client.post(
+        f"{T1}/members",
+        headers=OWNER,
+        json={"user_id": "u-staff", "name": "Stan", "role_id": cashier},
+    )
+    url = f"{T1}/members/u-staff/roles/replace"
+
+    r = client.post(
+        url, headers=OWNER, json={"from_role_id": cashier, "to_role_id": weekend}
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert isinstance(body.pop("member_since"), float)
+    assert body == {
+        "user_id": "u-staff",
+        "name": "Stan",
+        "email": None,
+        "roles": [{"id": weekend, "name": "Weekend cashier", "kind": "tenant"}],
+    }
+    (entry,) = [
+        e
+        for e in client.get(f"{T1}/audit-logs", headers=OWNER).json()["items"]
+        if e["action"] == "assignment.replace"
+    ]
+    assert (entry["target_type"], entry["target_id"]) == ("member", "u-staff")
+    assert entry["after"]["from_role"] == "Cashier"
+
+    same = client.post(
+        url, headers=OWNER, json={"from_role_id": weekend, "to_role_id": weekend}
+    )
+    assert same.status_code == 422
+    gone = client.post(
+        url, headers=OWNER, json={"from_role_id": cashier, "to_role_id": weekend}
+    )
+    assert gone.status_code == 404
+    malformed = client.post(url, headers=OWNER, json={"from_role_id": cashier})
+    assert malformed.status_code == 422
+
+
+def test_replace_of_the_last_manager_is_409(client: TestClient, world: World) -> None:
+    cashier = world.role("Cashier", world.sales_read, headers=DEV)
+    r = client.post(
+        f"{T1}/members/u-owner/roles/replace",
+        headers=DEV,
+        json={"from_role_id": world.owner_role, "to_role_id": cashier},
+    )
+    assert r.status_code == 409
+    assert r.json()["details"] == {"reason": "last_manager"}
+
+
+def test_expected_updated_at_round_trips_json(client: TestClient, world: World) -> None:
+    role = world.role("Cashier", world.sales_read, headers=OWNER)
+    listed = {r["id"]: r for r in client.get(f"{T1}/roles", headers=OWNER).json()}
+    token = listed[role]["updated_at"]
+    assert isinstance(token, float)
+
+    patched = client.patch(
+        f"{T1}/roles/{role}",
+        headers=OWNER,
+        json={"name": "Till", "expected_updated_at": token},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["updated_at"] > token
+
+    stale = client.patch(
+        f"{T1}/roles/{role}",
+        headers=OWNER,
+        json={"name": "Stock", "expected_updated_at": token},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["details"]["reason"] == "stale"
 
 
 def test_members_are_paginated_with_a_total(client: TestClient, world: World) -> None:
@@ -245,6 +324,58 @@ def test_not_assignable_and_not_offered_are_409_with_reasons(
     )
     assert r.status_code == 409
     assert r.json()["details"] == {"reason": "not_offered", "role_id": not_template}
+
+
+def test_team_conditions_endpoint(client: TestClient, world: World) -> None:
+    expression = {"op": "eq", "left": {"ref": "user.id"}, "right": {"value": "u1"}}
+    created = []
+    for key, description in (("own", "Only their own records"), ("old", None)):
+        r = client.post(
+            f"{API}/conditions",
+            json={
+                "key": key,
+                "name": key,
+                "description": description,
+                "expression": expression,
+            },
+        )
+        assert r.status_code == 201, r.text
+        created.append(r.json()["id"])
+    assert client.delete(f"{API}/conditions/{created[1]}").is_success
+
+    r = client.get(f"{T1}/conditions", headers=OWNER)
+
+    assert r.status_code == 200
+    assert r.json() == [
+        {"id": created[0], "key": "own", "description": "Only their own records"}
+    ]
+
+
+def test_template_lists_inherited_grants(client: TestClient, world: World) -> None:
+    base = client.post(
+        f"{API}/roles",
+        json={
+            "name": "Base",
+            "permission_ids": [world.sales_read],
+            "is_template": True,
+        },
+    ).json()["id"]
+    senior = client.post(
+        f"{API}/roles",
+        json={
+            "name": "Senior",
+            "permission_ids": [world.refunds_create],
+            "parent_role_id": base,
+            "is_template": True,
+        },
+    ).json()["id"]
+
+    roles = {r["id"]: r for r in client.get(f"{T1}/roles", headers=OWNER).json()}
+
+    assert roles[senior]["grants"] == [
+        {"permission": "refunds:create", "condition": None, "inherited_from": None},
+        {"permission": "sales:read", "condition": None, "inherited_from": "Base"},
+    ]
 
 
 def test_constraint_is_409_with_reason_and_constraint_name(
@@ -320,6 +451,7 @@ def test_validate_with_no_violation_is_empty_and_covers_every_op(
 ) -> None:
     role = world.role("Cashier", world.sales_read, headers=DEV)
     client.post(f"{T1}/members", headers=DEV, json={"user_id": "s1", "role_id": role})
+    other = world.role("Stock", world.sales_read, headers=DEV)
     ops: list[dict[str, Any]] = [
         {"op": "create_role", "args": {"name": "N", "grants": []}},
         {"op": "update_role", "args": {"role_id": role, "name": "Renamed"}},
@@ -327,6 +459,10 @@ def test_validate_with_no_violation_is_empty_and_covers_every_op(
         {"op": "add_member", "args": {"user_id": "new", "role_id": role}},
         {"op": "revoke_role", "args": {"user_id": "s1", "role_id": role}},
         {"op": "remove_member", "args": {"user_id": "s1"}},
+        {
+            "op": "replace_role",
+            "args": {"user_id": "s1", "from_role_id": role, "to_role_id": other},
+        },
     ]
     for body in ops:
         r = client.post(f"{T1}/validate", headers=OWNER, json=body)
@@ -457,12 +593,16 @@ def _calls(world: World) -> dict[tuple[str, str], dict[str, Any]]:
         ("POST", "/members"): {"json": {"user_id": "z", "role_id": role}},
         ("PUT", f"/members/u-owner/roles/{role}"): {},
         ("DELETE", f"/members/u-owner/roles/{role}"): {},
+        ("POST", "/members/u-owner/roles/replace"): {
+            "json": {"from_role_id": role, "to_role_id": role}
+        },
         ("DELETE", "/members/u-owner"): {},
         ("GET", "/members/u-owner/effective"): {},
         ("POST", "/validate"): {
             "json": {"op": "remove_member", "args": {"user_id": "u-owner"}}
         },
         ("GET", "/permissions"): {},
+        ("GET", "/conditions"): {},
         ("GET", "/audit-logs"): {},
     }
 
@@ -494,7 +634,7 @@ def test_the_route_table_covers_every_team_route(world: World) -> None:
         return pair[0], pair[1].replace("@role_id", "@x").replace("@user_id", "@x")
 
     assert {norm(p) for p in tested} == {norm(p) for p in routes}
-    assert len(routes) == 13
+    assert len(routes) == 15
 
 
 def test_tenant_user_of_other_tenant_gets_403_on_every_route(

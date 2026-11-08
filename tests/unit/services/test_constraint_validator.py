@@ -1206,3 +1206,151 @@ async def test_exclusion_still_counts_deactivated_held_role(
     result = await constraint_validator.validate(str(user_id), str(TARGET), {})
 
     assert result.valid is False
+
+
+# -- without_role_id: judging a role replace on its end state (M4a D6) --------
+
+ACME = {"tenant_id": "acme"}
+
+
+async def test_without_role_id_drops_that_direct_assignment_for_exclusion(
+    constraint_validator, mock_constraint_repository, mock_user_role_repository
+) -> None:
+    user_id = PydanticObjectId()
+    await mock_constraint_repository.create(_exclusive(PREREQ, TARGET))
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user_id, role_id=PREREQ, scope=Scope(tenant_id="acme"))
+    )
+
+    held = await constraint_validator.validate(str(user_id), str(TARGET), ACME)
+    replaced = await constraint_validator.validate(
+        str(user_id), str(TARGET), ACME, without_role_id=str(PREREQ)
+    )
+
+    assert held.valid is False
+    assert replaced.valid is True
+
+
+async def test_without_role_id_keeps_the_same_role_held_elsewhere(
+    constraint_validator, mock_constraint_repository, mock_user_role_repository, env
+) -> None:
+    """Only the direct assignment in this scope goes: one in another scope,
+    or through a group, still counts."""
+    user_id = PydanticObjectId()
+    await mock_constraint_repository.create(_exclusive(PREREQ, TARGET))
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user_id, role_id=PREREQ, scope=Scope(tenant_id=None))
+    )
+    other = PydanticObjectId()
+    await _join_group_with_role(env, other, PREREQ)
+
+    project_wide = await constraint_validator.validate(
+        str(user_id), str(TARGET), ACME, without_role_id=str(PREREQ)
+    )
+    via_group = await constraint_validator.validate(
+        str(other), str(TARGET), ACME, without_role_id=str(PREREQ)
+    )
+
+    assert project_wide.valid is False
+    assert via_group.valid is False
+
+
+async def test_without_role_id_drops_a_prerequisite(
+    constraint_validator,
+    mock_constraint_repository,
+    mock_user_role_repository,
+    mock_role_repository,
+) -> None:
+    user_id = PydanticObjectId()
+    await mock_constraint_repository.create(
+        make_constraint(
+            name="target-requires-prereq",
+            constraint_type=ConstraintType.PREREQUISITE,
+            config=ConstraintConfig(role_id=TARGET, requires_role_id=PREREQ),
+        )
+    )
+    await _active_role(mock_role_repository, PREREQ)
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user_id, role_id=PREREQ, scope=Scope(tenant_id="acme"))
+    )
+
+    result = await constraint_validator.validate(
+        str(user_id), str(TARGET), ACME, without_role_id=str(PREREQ)
+    )
+
+    assert result.valid is False
+
+
+@pytest.mark.parametrize(
+    "level", [ScopeLevel.GLOBAL, ScopeLevel.PER_TENANT, ScopeLevel.PER_SCOPE]
+)
+async def test_without_role_id_frees_its_slot_when_template_and_copy_swap(
+    constraint_validator,
+    mock_constraint_repository,
+    mock_role_repository,
+    mock_user_role_repository,
+    level: ScopeLevel,
+) -> None:
+    """Moving a member from a template to its copy keeps the count the same."""
+    template = make_role(name="Editor", is_template=True)
+    copy = make_role(name="Editor", tenant_id="acme", copied_from=template.id)
+    for role in (template, copy):
+        await mock_role_repository.create(role)
+    await mock_constraint_repository.create(
+        make_constraint(
+            name="one-editor",
+            constraint_type=ConstraintType.CARDINALITY,
+            config=ConstraintConfig(
+                role_id=template.id, max_assignments=1, scope_level=level
+            ),
+        )
+    )
+    user_id = PydanticObjectId()
+    await mock_user_role_repository.create(
+        make_user_role(
+            user_id=user_id, role_id=template.id, scope=Scope(tenant_id="acme")
+        )
+    )
+
+    assigned = await constraint_validator.validate(str(user_id), str(copy.id), ACME)
+    replaced = await constraint_validator.validate(
+        str(user_id), str(copy.id), ACME, without_role_id=str(template.id)
+    )
+    stranger = await constraint_validator.validate(
+        str(PydanticObjectId()), str(copy.id), ACME, without_role_id=str(template.id)
+    )
+
+    assert assigned.valid is False
+    assert replaced.valid is True
+    # Someone who does not hold the role frees no slot.
+    assert stranger.valid is False
+
+
+async def test_without_role_id_frees_nothing_per_tenant_without_a_tenant(
+    constraint_validator,
+    mock_constraint_repository,
+    mock_role_repository,
+    mock_user_role_repository,
+) -> None:
+    role = make_role(name="Editor")
+    await mock_role_repository.create(role)
+    await mock_constraint_repository.create(
+        make_constraint(
+            name="no-editors",
+            constraint_type=ConstraintType.CARDINALITY,
+            config=ConstraintConfig(
+                role_id=role.id, max_assignments=0, scope_level=ScopeLevel.PER_TENANT
+            ),
+        )
+    )
+    user_id = PydanticObjectId()
+    await mock_user_role_repository.create(
+        make_user_role(user_id=user_id, role_id=role.id)
+    )
+
+    result = await constraint_validator.validate(
+        str(user_id), str(role.id), {}, without_role_id=str(role.id)
+    )
+
+    # Nothing is counted per tenant without a tenant, so nothing is freed.
+    assert result.valid is False

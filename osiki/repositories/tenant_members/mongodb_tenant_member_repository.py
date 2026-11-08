@@ -51,6 +51,10 @@ class MongoDBTenantMemberRepository(BaseTenantMemberRepository):
     ) -> bool:
         return await self._find(tenant_id, user_id, session) is not None
 
+    async def joined_at(self, tenant_id: str, user_id: str) -> float | None:
+        member = await self._find(tenant_id, user_id, None)
+        return member.created_at if member is not None else None
+
     async def tenants_for_user(self, user_id: str) -> list[str]:
         rows = await TenantMember.find(
             TenantMember.environment_id == self.environment_id,

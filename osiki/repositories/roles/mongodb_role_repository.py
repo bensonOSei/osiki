@@ -1,6 +1,7 @@
 import time
 
 from beanie import PydanticObjectId
+from beanie.odm.utils.dump import get_dict
 from loguru import logger
 from pymongo.asynchronous.client_session import AsyncClientSession
 
@@ -45,6 +46,16 @@ class MongoDBRoleRepository(BaseRoleRepository):
         if not role:
             logger.debug("Role not found", role_id=role_id)
         return role
+
+    async def name_in_use(self, name: str, tenant_id: str | None = None) -> bool:
+        return (
+            await Role.find_one(
+                Role.environment_id == self.environment_id,
+                {"tenant_id": tenant_id},
+                Role.name == name,
+            )
+            is not None
+        )
 
     async def get_by_name(
         self,
@@ -91,6 +102,30 @@ class MongoDBRoleRepository(BaseRoleRepository):
             session=session,
         ).to_list()
 
+    async def copies_of(self, role_ids: list[str]) -> dict[str, int]:
+        rows = await Role.aggregate(
+            [
+                {
+                    "$match": {
+                        "environment_id": self.environment_id,
+                        "copied_from": {"$in": [PydanticObjectId(r) for r in role_ids]},
+                        "tenant_id": {"$ne": None},
+                        "is_active": True,
+                    }
+                },
+                {"$group": {"_id": "$copied_from", "copies": {"$sum": 1}}},
+            ]
+        ).to_list()
+        return {str(row["_id"]): int(row["copies"]) for row in rows}
+
+    async def project_role_ids(self, role_ids: list[str]) -> set[str]:
+        roles = await Role.find(
+            Role.environment_id == self.environment_id,
+            {"_id": {"$in": [PydanticObjectId(r) for r in role_ids]}},
+            {"tenant_id": None},
+        ).to_list()
+        return {str(role.id) for role in roles}
+
     async def get_by_ids(self, role_ids: list[str]) -> list[Role]:
         object_ids = [PydanticObjectId(rid) for rid in role_ids]
         return await Role.find(
@@ -119,6 +154,35 @@ class MongoDBRoleRepository(BaseRoleRepository):
         logger.debug("Role updated", role_id=str(role.id))
         return role
 
+    async def update_if_unchanged(
+        self,
+        role: Role,
+        expected_updated_at: float,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> bool:
+        # One filtered write: a concurrent edit that moved ``updated_at``
+        # since the editor's read makes the filter miss, so nothing is lost.
+        updated_at = time.time()
+        document = get_dict(role, to_db=True, keep_nulls=True)
+        document["updated_at"] = updated_at
+        result = await Role.get_pymongo_collection().replace_one(
+            {
+                "_id": role.id,
+                "environment_id": self.environment_id,
+                "updated_at": expected_updated_at,
+            },
+            document,
+            session=session,
+        )
+        if result.matched_count == 0:
+            logger.debug("Role changed since read", role_id=str(role.id))
+            return False
+        role.updated_at = updated_at
+        await self._bump(role, session)
+        logger.debug("Role updated", role_id=str(role.id))
+        return True
+
     async def deactivate(
         self, role_id: str, *, session: AsyncClientSession | None = None
     ) -> bool:
@@ -143,10 +207,18 @@ class MongoDBRoleRepository(BaseRoleRepository):
                 {"tenant_id": None},
                 Role.is_active == True,
             )
+            .sort("_id")
             .skip(skip)
             .limit(limit)
             .to_list()
         )
+
+    async def count_active_project(self) -> int:
+        return await Role.find(
+            Role.environment_id == self.environment_id,
+            {"tenant_id": None},
+            Role.is_active == True,
+        ).count()
 
     async def add_permission(
         self, role_id: str, permission_id: str, condition_id: str | None = None

@@ -22,10 +22,12 @@ from osiki.schemas.permission import PermissionRead
 from osiki.schemas.team import (
     EffectiveSourceRead,
     GrantRefIn,
+    TeamConditionRead,
     TeamMemberAdd,
     TeamMemberRead,
     TeamRoleCreate,
     TeamRoleRead,
+    TeamRoleReplace,
     TeamRoleUpdate,
     ValidateRequest,
     ValidateResponse,
@@ -70,7 +72,9 @@ async def create_role(data: TeamRoleCreate, team: Team) -> TeamRoleRead:
 
 @router.patch("/roles/{role_id}")
 async def update_role(role_id: str, data: TeamRoleUpdate, team: Team) -> TeamRoleRead:
-    role = await team.update_role(role_id, data.name, _refs(data.grants))
+    role = await team.update_role(
+        role_id, data.name, _refs(data.grants), data.expected_updated_at
+    )
     return TeamRoleRead.from_role(role)
 
 
@@ -116,6 +120,15 @@ async def revoke_role(user_id: str, role_id: str, team: Team) -> None:
     await team.revoke_role(user_id, role_id)
 
 
+@router.post("/members/{user_id}/roles/replace")
+async def replace_role(
+    user_id: str, data: TeamRoleReplace, team: Team
+) -> TeamMemberRead:
+    """Swap one direct role for another in one write."""
+    member = await team.replace_role(user_id, data.from_role_id, data.to_role_id)
+    return TeamMemberRead.from_member(member)
+
+
 @router.delete("/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(user_id: str, team: Team) -> None:
     await team.remove_member(user_id)
@@ -143,6 +156,11 @@ async def list_permissions(team: Team) -> list[PermissionRead]:
     return [
         PermissionRead.from_model(p) for p in await team.list_assignable_permissions()
     ]
+
+
+@router.get("/conditions")
+async def list_conditions(team: Team) -> list[TeamConditionRead]:
+    return [TeamConditionRead.from_condition(c) for c in await team.list_conditions()]
 
 
 @router.get("/audit-logs", dependencies=[Depends(managed_team)])

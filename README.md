@@ -177,7 +177,7 @@ The actor is recorded on every team change in the audit log (`GET /tenants/{tena
 3. **Mark what a business may hand out.** Set `assignable: true` on each permission via `PATCH /permissions/{id}`. Tenant roles can hold only assignable permissions.
 4. **Owner setup.** The seeded `Owner` template grants only `osiki.team:manage`, and a team manager can hand out only what they hold. So you must add the business's assignable permissions to the Owner template. It is editable except for renaming it, changing `is_template`, or dropping `osiki.team:manage` (each is a `422`).
 5. **Give a business its first manager.** Add the first member with the `Owner` role as a developer actor (`POST /tenants/{tenant_id}/team/members`). From then on a manager can add the rest of their team.
-6. **Offer templates.** A template (a project role with `is_template: true`) is offered to a tenant when every permission it grants, including its parents', is assignable or built-in. A manager can assign an offered template, or start a tenant role from one. `copied_from` also binds the copy to the template's constraints: the copy counts as the template for mutual exclusion, prerequisites and cardinality. It does not copy the grants, so send them in the request body too.
+6. **Offer templates.** A template (a project role with `is_template: true`) is offered to every tenant while it is active. A manager can assign a template, but only if they hold everything it grants, or start a tenant role from one; `assignable` governs what goes into the roles they make and what a copy carries. `copied_from` also binds the copy to the template's constraints: the copy counts as the template for mutual exclusion, prerequisites and cardinality. It does not copy the grants, so send them in the request body too.
 
 ### What a team manager can do
 
@@ -192,6 +192,16 @@ A `tenant_user` who holds `osiki.team:manage` in the tenant can, for that tenant
 | `GET /members/{user_id}/effective` | The grants the member holds and which role gives each |
 | `POST /validate` | Dry run: the rules the operation would break (`op` plus `args`); writes nothing |
 | `GET /permissions` | The permissions a tenant role may hold, for a role editor |
+| `GET /conditions` | The conditions a tenant role grant may use |
+| `POST /members/{user_id}/roles/replace` | Swap one role for another in a single transaction (`{from_role_id, to_role_id}`); audited as `assignment.replace`; validate op `replace_role` |
+
+Team manager details (v0.4.0):
+
+- **Templates offered.** A manager is offered every active project template. `assignable` now governs only what goes into the roles they create and what a copy carries; assigning a template still requires holding everything it grants.
+- **Inherited grants.** A template's `grants` in team role lists include inherited grants, each with `inherited_from` (the ancestor's name).
+- **Members.** Team members carry `member_since`.
+- **Role edits.** `PATCH /roles/{id}` keeps grants the caller cannot see and accepts unchanged existing grants. `TeamRoleRead` has `updated_at`; send it back as `expected_updated_at` and a concurrent edit returns `409` with `reason: "stale"`.
+- **Audit detail.** Assignment entries record the role sets before and after, copies record `copied_from {id, name}`, and member add and remove record name and email. `assignment.create` `before` and `assignment.revoke` `after` are now objects (they were `null`).
 
 **No escalation.** A manager can only grant permissions they hold themselves. A tenant role may not hold built-in `osiki.*` permissions, and tenant roles cannot contain resource-wildcard (`*:...`) permissions, because such a wildcard would match `osiki.team:manage`.
 
@@ -214,8 +224,9 @@ Team conflicts are `409` with a machine-readable `details.reason`:
 | `escalation` | The role holds permissions the actor does not (`details.uncovered` lists them) |
 | `not_assignable` | A permission cannot be given to a tenant role (`details.permissions` lists them) |
 | `role_in_use` | A role to delete is still assigned |
-| `not_offered` | The template is not offered to this tenant |
+| `not_offered` | The role is not an active template |
 | `constraint` | A constraint refused the assignment (`details.constraint`, `details.detail`) |
+| `stale` | A role edit sent an out-of-date `expected_updated_at` |
 
 Some team `409`s carry no `details.reason`: the duplicates (a role name already taken, a role already assigned, an email already in use).
 
@@ -249,6 +260,17 @@ Behaviour changes on existing data, to check before you upgrade:
 - **Audit your roles before exposing `/team`.** Any held grant that matches `osiki.team:manage` (`*:*`, `*:manage`, `osiki.team:*`) makes its holder a team manager in the tenants they belong to.
 - **Rollback.** Once tenant roles share names with project roles, a v0.2 engine fails to build its unique `(environment, name)` index.
 
+### Upgrading to v0.4.0
+
+No migration is needed. Behaviour changes to check:
+
+- **Role name conflicts are `409`**, including names held by deleted project roles and renames. `GET /roles` and `GET /permissions` report a real `total`, and permission listing is stably ordered.
+- **`POST /permissions` conflicts** carry `details.reason`: `deleted` (the key belongs to a deleted permission and cannot be recreated) or `exists`.
+- **Project role and permission writes are audited** (`role.*`, `permission.*`, with `tenant_id` null). With `REQUIRE_ACTOR` set they need `X-Osiki-Actor`, like other audited writes.
+- **Security fix.** Team role ids are canonicalized, which closes a case-variant id bypass of the last-manager guard on revoke. Upgrade before exposing `/team`.
+- **New:** `GET /roles/usage?role_id=...` (1 to 100 ids) returns `[{role_id, tenants, copies}]`, `tenants` is the number of distinct tenants with a live (unexpired, active) assignment of the role, direct or via a group, in this environment; `copies` is the number of active tenant roles copied from it. Unknown, tenant-owned and non-ObjectId ids report 0 and 0.
+- **SDK 0.3.0** adds `osiki.permissions.ensure(...)` (it supersedes the unpublished 0.2.0).
+
 ## Key concepts
 
 - **Permissions** are `resource:action` pairs (e.g. `invoices:write`, `reports:read`). Wildcards work too — `invoices:*`, `*:read`, `*:*`. Neither part may be empty or contain `:`.
@@ -256,7 +278,7 @@ Behaviour changes on existing data, to check before you upgrade:
 - **Groups** let you assign roles to many users at once. Add a user to the "finance-team" group and they get all roles attached to that group.
 - **Scopes** handle multi-tenancy. A role can be scoped to `{ "tenant_id": "acme-corp", "region": "eu" }` so permissions only apply within that context. Scope values are strings; custom keys are allowed, but a non-string value is rejected with `422`.
 - **Constraints** enforce business rules — mutual exclusion between roles, cardinality limits, and prerequisite requirements.
-- **Access logs** record authorization checks (all denials, sampled successes). Changes made through the tenant team API are written to the audit log (actor, action, before and after); changes through the developer routes are not audited in this version.
+- **Access logs** record authorization checks (all denials, sampled successes). Changes made through the tenant team API are written to the audit log (actor, action, before and after); project role and permission writes through the developer routes are audited too (actions `role.*` and `permission.*`, `tenant_id` null); other developer routes are not audited in this version.
 
 ## Getting started
 
@@ -306,7 +328,7 @@ All endpoints live under `/api/v1`. Here's the shape of things:
 |---|---|
 | **Users** | Create, get, update, delete, list. Assign/revoke roles (`?tenant_id=` on revoke). Add/remove from groups. Upsert and bundle by external id. |
 | **Groups** | Create, get, update, delete, list. Assign/revoke roles (`?tenant_id=` on revoke). |
-| **Roles** | Create, get, update, delete, list. |
+| **Roles** | Create, get, update, delete, list. `GET /roles/usage` counts tenants and copies per template. |
 | **Permissions** | Create, get, update, delete, list. |
 | **Conditions** | Create, get, update, delete, list. |
 | **Constraints** | Create, get, update, delete, list. |
@@ -314,7 +336,7 @@ All endpoints live under `/api/v1`. Here's the shape of things:
 | **Authorization** | `POST /authorization/check` — the main event. `POST /authorization/filter` for list filters. |
 | **Snapshot** | `GET /snapshot` (ETag/304), `GET /snapshot/version`, `GET /users/by-external/{id}/bundle`. |
 | **Environment** | `PUT /environment/bootstrap`: create the `osiki.*` built-ins and the Owner template. |
-| **Team** | `/tenants/{id}/team/...`: roles, members, validate, permissions and audit logs for a tenant's own managers (see Team management). |
+| **Team** | `/tenants/{id}/team/...`: roles, members, role replace, validate, permissions, conditions and audit logs for a tenant's own managers (see Team management). |
 | **Access logs** | `POST /access-logs/batch` — SDK decision ingest. |
 
 Once the server is running, full interactive docs are at `http://localhost:8000/docs`.

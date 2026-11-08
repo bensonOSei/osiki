@@ -46,3 +46,9 @@ class RoleUpdate(BaseModel):
     permission_ids: list[str] | None = None
     is_template: bool | None = None
     metadata: dict[str, Any] | None = None
+
+
+class RoleUsageRead(BaseModel):
+    role_id: str
+    tenants: int
+    copies: int
