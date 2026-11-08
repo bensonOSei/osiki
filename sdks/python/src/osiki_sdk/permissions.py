@@ -19,13 +19,13 @@ class PermissionSpec:
         return f"{self.resource}:{self.action}"
 
 
-@dataclass(frozen=True)
+@dataclass
 class EnsureResult:
-    """Permission strings (``resource:action``), each tuple sorted."""
+    """Permission strings (``resource:action``), each list sorted."""
 
-    created: tuple[str, ...]
-    updated: tuple[str, ...]
-    unchanged: tuple[str, ...]
+    created: list[str]
+    updated: list[str]
+    unchanged: list[str]
 
 
 def is_deleted_conflict(exc: EngineError) -> bool:

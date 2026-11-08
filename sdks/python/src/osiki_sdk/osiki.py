@@ -166,9 +166,7 @@ class _Permissions:
                 updated.append(spec.key)
             else:
                 unchanged.append(spec.key)
-        return EnsureResult(
-            tuple(sorted(created)), tuple(sorted(updated)), tuple(sorted(unchanged))
-        )
+        return EnsureResult(sorted(created), sorted(updated), sorted(unchanged))
 
 
 class Osiki:

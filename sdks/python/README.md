@@ -289,7 +289,7 @@ result = await osiki.permissions.ensure([
     PermissionSpec("sales", "create", description="Record a sale", assignable=True),
     PermissionSpec("refunds", "create", description="Issue a refund"),
 ])
-print(result.created, result.updated, result.unchanged)  # sorted "resource:action" strings
+print(result.created, result.updated, result.unchanged)  # sorted lists of "resource:action" strings
 ```
 
 `ensure` creates the permissions that are missing and updates `description` and

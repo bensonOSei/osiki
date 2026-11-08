@@ -79,8 +79,8 @@ async def test_ensure_creates_missing_and_sets_fields() -> None:
     engine = FakeEngine()
     osiki = make(engine)
     result = await osiki.permissions.ensure(SPECS)
-    assert result.created == ("refunds:create", "sales:create")
-    assert result.updated == () and result.unchanged == ()
+    assert result.created == ["refunds:create", "sales:create"]
+    assert result.updated == [] and result.unchanged == []
     posts = [w for w in engine.writes if w[0] == "POST"]
     patches = [w for w in engine.writes if w[0] == "PATCH"]
     assert [p[2] for p in posts] == [
@@ -95,8 +95,8 @@ async def test_ensure_updates_only_differing_fields() -> None:
     engine = FakeEngine([perm("sales", "create", description="Old", assignable=True)])
     osiki = make(engine)
     result = await osiki.permissions.ensure(SPECS[:1])
-    assert result.updated == ("sales:create",)
-    assert result.created == () and result.unchanged == ()
+    assert result.updated == ["sales:create"]
+    assert result.created == [] and result.unchanged == []
     assert engine.writes == [
         ("PATCH", "/permissions/sales-create", {"description": "Make a sale"})
     ]
@@ -110,8 +110,8 @@ async def test_ensure_twice_is_noop() -> None:
     engine.writes.clear()
     result = await osiki.permissions.ensure(SPECS)
     assert engine.writes == []
-    assert result.unchanged == ("refunds:create", "sales:create")
-    assert result.created == () and result.updated == ()
+    assert result.unchanged == ["refunds:create", "sales:create"]
+    assert result.created == [] and result.updated == []
     await osiki.aclose()
 
 
@@ -120,7 +120,7 @@ async def test_ensure_none_fields_left_alone() -> None:
     osiki = make(engine)
     result = await osiki.permissions.ensure([PermissionSpec("sales", "create")])
     assert engine.writes == []
-    assert result.unchanged == ("sales:create",)
+    assert result.unchanged == ["sales:create"]
     await osiki.aclose()
 
 
@@ -173,7 +173,7 @@ async def test_ensure_pages_through_permissions() -> None:
     osiki = make(engine)
     specs = [PermissionSpec("r", "a0"), PermissionSpec("r", "a149")]
     result = await osiki.permissions.ensure(specs)
-    assert result.unchanged == ("r:a0", "r:a149")
+    assert result.unchanged == ["r:a0", "r:a149"]
     assert engine.writes == []
     assert len(engine.reads) == 2
     await osiki.aclose()
@@ -246,7 +246,7 @@ async def test_ensure_race_409_adopts_the_winner() -> None:
     result = await osiki.permissions.ensure(
         [PermissionSpec("sales", "create", description="New", assignable=False)]
     )
-    assert result.created == () and result.updated == ("sales:create",)
+    assert result.created == [] and result.updated == ["sales:create"]
     assert engine.writes == [
         ("PATCH", "/permissions/sales-create", {"description": "New"})
     ]
@@ -323,9 +323,3 @@ async def test_ensure_malformed_create_response_is_engine_error() -> None:
     with pytest.raises(EngineError):
         await osiki.permissions.ensure([PermissionSpec("a", "b")])
     await osiki.aclose()
-
-
-def test_ensure_result_is_hashable() -> None:
-    from osiki_sdk import EnsureResult
-
-    assert hash(EnsureResult(("a:b",), (), ())) == hash(EnsureResult(("a:b",), (), ()))
