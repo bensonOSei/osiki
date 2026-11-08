@@ -349,6 +349,10 @@ class TeamService:
                 role = await self._role_repo.create(role, session=session)
             except DuplicateKeyError as exc:
                 raise _name_taken(name) from exc
+            after = _audit_state(name, entries)
+            if copied_from is not None:
+                (template,) = await self._role_repo.get_by_ids([copied_from])
+                after["copied_from"] = {"id": copied_from, "name": template.name}
             await self._audit.record(
                 self._actor,
                 "role.create",
@@ -356,7 +360,7 @@ class TeamService:
                 str(role.id),
                 tenant_id=self._tenant_id,
                 before=None,
-                after=_audit_state(name, entries),
+                after=after,
                 session=session,
             )
             return role
@@ -571,7 +575,12 @@ class TeamService:
                 user_id,
                 tenant_id=self._tenant_id,
                 before=None,
-                after=_member_state(user_id, [role.name]),
+                after=_member_state(
+                    user_id,
+                    await self._direct_role_names(user_id, session),
+                    name=user.name,
+                    email=user.email,
+                ),
                 session=session,
             )
 
@@ -583,15 +592,17 @@ class TeamService:
             user, role, stale = await self._check_assign_role(
                 user_id, role_id, session=session
             )
+            before = await self._direct_role_names(user_id, session)
             created = await self._assign(user, role, stale, session)
+            after = await self._direct_role_names(user_id, session)
             await self._audit.record(
                 self._actor,
                 "assignment.create",
                 "assignment",
                 str(created.id),
                 tenant_id=self._tenant_id,
-                before=None,
-                after=_assignment_state(user_id, role_id, role),
+                before={"user_id": user_id, "roles": before},
+                after=_assignment_state(user_id, role_id, role, after),
                 session=session,
             )
 
@@ -603,15 +614,17 @@ class TeamService:
             assignment, role = await self._check_revoke_role(
                 user_id, role_id, session=session
             )
+            before = await self._direct_role_names(user_id, session)
             await self._user_role_repo.revoke(str(assignment.id), session=session)
+            after = await self._direct_role_names(user_id, session)
             await self._audit.record(
                 self._actor,
                 "assignment.revoke",
                 "assignment",
                 str(assignment.id),
                 tenant_id=self._tenant_id,
-                before=_assignment_state(user_id, role_id, role),
-                after=None,
+                before=_assignment_state(user_id, role_id, role, before),
+                after={"user_id": user_id, "roles": after},
                 session=session,
             )
 
@@ -620,6 +633,7 @@ class TeamService:
     async def remove_member(self, user_id: str) -> None:
         async def operation(session: AsyncClientSession | None) -> None:
             assignments = await self._check_remove_member(user_id, session=session)
+            user = await self._user_repo.get_by_external_id(user_id)
             for assignment in assignments:
                 await self._user_role_repo.revoke(str(assignment.id), session=session)
             await self._member_repo.remove(self._tenant_id, user_id, session=session)
@@ -632,12 +646,37 @@ class TeamService:
                 "member",
                 user_id,
                 tenant_id=self._tenant_id,
-                before=_member_state(user_id, [r.name for r in roles]),
+                before=_member_state(
+                    user_id,
+                    [r.name for r in roles],
+                    name=user.name if user else None,
+                    email=user.email if user else None,
+                ),
                 after=None,
                 session=session,
             )
 
         await self._team_write(operation)
+
+    async def _direct_role_names(
+        self, user_id: str, session: AsyncClientSession | None
+    ) -> list[str]:
+        """Sorted names of the member's live direct roles in this tenant."""
+        user = await self._user_repo.get_by_external_id(user_id)
+        if user is None:
+            return []
+        now = time.time()
+        role_ids = list(
+            dict.fromkeys(
+                str(a.role_id)
+                for a in await self._user_role_repo.get_by_tenant(
+                    self._tenant_id, session=session
+                )
+                if a.user_id == user.id and _live(a, now)
+            )
+        )
+        roles = await self._role_repo.get_by_ids(role_ids) if role_ids else []
+        return sorted(r.name for r in roles)
 
     async def _existing_or_new_user(
         self,
@@ -1110,12 +1149,21 @@ def _without_direct(
     )
 
 
-def _member_state(user_id: str, roles: list[str]) -> dict[str, Any]:
-    return {"user_id": user_id, "roles": roles}
+def _member_state(
+    user_id: str, roles: list[str], *, name: str | None, email: str | None
+) -> dict[str, Any]:
+    return {"user_id": user_id, "roles": roles, "name": name, "email": email}
 
 
-def _assignment_state(user_id: str, role_id: str, role: Role | None) -> dict[str, Any]:
-    return {"user_id": user_id, "role_id": role_id, "role": role.name if role else None}
+def _assignment_state(
+    user_id: str, role_id: str, role: Role | None, roles: list[str]
+) -> dict[str, Any]:
+    return {
+        "user_id": user_id,
+        "role_id": role_id,
+        "role": role.name if role else None,
+        "roles": roles,
+    }
 
 
 def _member_not_found(user_id: str) -> NotFoundError:

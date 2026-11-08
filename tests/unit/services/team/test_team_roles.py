@@ -709,6 +709,25 @@ async def test_copy_records_copied_from(env: Env) -> None:
     assert stored.copied_from == template.id
 
 
+async def test_copy_audit_names_source(env: Env) -> None:
+    read = await env.permission("invoices", "read")
+    template = await env.template("Cashier", [read])
+
+    await env.service().create_role("Mine", [ref(read)], str(template.id))
+    await env.service().create_role("Plain", [ref(read)], None)
+
+    copy, plain = sorted(
+        await env.audit_repo.list(None, 0, 10),
+        key=lambda e: e.changes.after["name"],  # type: ignore[index]
+    )
+    assert plain.changes.after is not None and "copied_from" not in plain.changes.after
+    assert copy.changes.after is not None
+    assert copy.changes.after["copied_from"] == {
+        "id": str(template.id),
+        "name": "Cashier",
+    }
+
+
 async def test_copying_an_offered_template_with_builtin_grant_cannot_smuggle_it(
     env: Env,
 ) -> None:

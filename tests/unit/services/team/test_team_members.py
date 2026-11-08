@@ -151,7 +151,12 @@ async def test_add_member_creates_user_membership_assignment_and_one_audit_entry
     assert [(e.action, e.target_type, e.target_id, e.tenant_id) for e in entries] == [
         ("member.add", "member", "u-new", TENANT)
     ]
-    assert entries[0].changes.after == {"user_id": "u-new", "roles": ["Cashier"]}
+    assert entries[0].changes.after == {
+        "user_id": "u-new",
+        "roles": ["Cashier"],
+        "name": "Ama",
+        "email": "ama@example.com",
+    }
     assert env.locks._data[TENANT].version == 1
 
 
@@ -453,6 +458,62 @@ async def test_assign_role_assigns_and_audits(env: Env) -> None:
         "user_id": "u-1",
         "role_id": str(cashier.id),
         "role": "Cashier",
+        "roles": ["Cashier"],
+    }
+
+
+async def test_assign_audit_carries_role_sets(env: Env) -> None:
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    manager = await tenant_role(env, "Manager", [await env.permission("till", "open")])
+    await member(env, "u-1", [cashier])
+
+    await env.service().assign_role("u-1", str(manager.id))
+
+    (entry,) = await env.audit_repo.list(None, 0, 10)
+    assert entry.changes.before == {"user_id": "u-1", "roles": ["Cashier"]}
+    assert entry.changes.after == {
+        "user_id": "u-1",
+        "role_id": str(manager.id),
+        "role": "Manager",
+        "roles": ["Cashier", "Manager"],
+    }
+
+
+async def test_revoke_audit_carries_role_sets(env: Env) -> None:
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    manager = await tenant_role(env, "Manager", [await env.permission("till", "open")])
+    await owner(env, "boss")
+    await member(env, "u-1", [cashier, manager])
+
+    await env.service().revoke_role("u-1", str(manager.id))
+
+    (entry,) = await env.audit_repo.list(None, 0, 10)
+    assert entry.changes.before == {
+        "user_id": "u-1",
+        "role_id": str(manager.id),
+        "role": "Manager",
+        "roles": ["Cashier", "Manager"],
+    }
+    assert entry.changes.after == {"user_id": "u-1", "roles": ["Cashier"]}
+
+
+async def test_member_add_and_remove_audit_name_email(env: Env) -> None:
+    await owner(env, "boss")
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    await env.service().add_member(
+        "u-new", name="Ama", email="ama@example.com", role_id=str(cashier.id)
+    )
+    await env.service().remove_member("u-new")
+
+    entries = {e.action: e for e in await env.audit_repo.list(None, 0, 10)}
+    assert entries["member.add"].changes.after is not None
+    assert entries["member.add"].changes.after["name"] == "Ama"
+    assert entries["member.add"].changes.after["email"] == "ama@example.com"
+    assert entries["member.remove"].changes.before == {
+        "user_id": "u-new",
+        "roles": ["Cashier"],
+        "name": "Ama",
+        "email": "ama@example.com",
     }
 
 
@@ -564,7 +625,8 @@ async def test_second_manager_can_be_removed_when_one_remains(env: Env) -> None:
     assert await active_assignment(env, "deputy", owner_) is None
     entries = await env.audit_repo.list(None, 0, 10)
     assert [(e.action, e.target_id) for e in entries] == [("member.remove", "deputy")]
-    assert entries[0].changes.before == {"user_id": "deputy", "roles": ["Owner"]}
+    assert entries[0].changes.before is not None
+    assert entries[0].changes.before["roles"] == ["Owner"]
 
 
 async def test_second_manager_can_be_revoked_when_one_remains(env: Env) -> None:
@@ -581,7 +643,9 @@ async def test_second_manager_can_be_revoked_when_one_remains(env: Env) -> None:
         "user_id": "deputy",
         "role_id": str(owner_.id),
         "role": "Owner",
+        "roles": ["Owner"],
     }
+    assert entries[0].changes.after == {"user_id": "deputy", "roles": []}
 
 
 async def test_a_manager_may_revoke_their_own_role_when_another_remains(
@@ -687,7 +751,12 @@ async def test_removing_a_member_without_a_user_record_drops_the_membership(
     await env.service().remove_member("ghost")
     assert not await env.members.is_member(TENANT, "ghost")
     entries = await env.audit_repo.list(None, 0, 10)
-    assert entries[0].changes.before == {"user_id": "ghost", "roles": []}
+    assert entries[0].changes.before == {
+        "user_id": "ghost",
+        "roles": [],
+        "name": None,
+        "email": None,
+    }
 
 
 async def test_member_writes_require_a_manager_before_anything_is_written(
@@ -1095,3 +1164,7 @@ async def test_inactive_permission_the_manager_holds_does_not_block(
         "u-new", name=None, email=None, role_id=str(role.id)
     )
     assert [r.id for r in result.roles] == [str(role.id)]
+
+
+async def test_direct_role_names_of_an_unknown_user_is_empty(env: Env) -> None:
+    assert await env.service()._direct_role_names("ghost", None) == []
