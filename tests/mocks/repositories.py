@@ -63,6 +63,11 @@ from osiki.repositories.user_roles.base_user_role_repository import (
 from osiki.repositories.users.base_user_repository import BaseUserRepository
 
 
+def _same_id(stored: PydanticObjectId, given: str) -> bool:
+    """Compare as Mongo does: as ObjectIds, whatever the hex case."""
+    return PydanticObjectId.is_valid(given) and stored == PydanticObjectId(given)
+
+
 class _EnvironmentBound[T: EnvironmentMixin]:
     """In-memory store whose reads and writes are scoped to one environment."""
 
@@ -285,7 +290,7 @@ class MockUserRoleRepository(_AssignmentBound[UserRole], BaseUserRoleRepository)
         for ur in self._scoped():
             if (
                 str(ur.user_id) == user_id
-                and str(ur.role_id) == role_id
+                and _same_id(ur.role_id, role_id)
                 and ur.is_active
             ):
                 if ur.scope.tenant_id == tenant_id:

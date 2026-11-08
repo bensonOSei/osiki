@@ -13,9 +13,15 @@ from osiki.api.dependencies import get_permission_repository
 from osiki.models.base import Scope
 from osiki.models.role import Role
 from osiki.models.user_role import UserRole
+from osiki.services.team.models import LastManager
 from tests.mocks import make_permission, make_role, make_user, make_user_role
 from tests.realmongo.conftest import ENVIRONMENT_ID, RealMongoEnv
-from tests.realmongo.test_last_manager_race import TENANT, service, two_owners
+from tests.realmongo.test_last_manager_race import (
+    TENANT,
+    owners_left,
+    service,
+    two_owners,
+)
 
 pytestmark = pytest.mark.realmongo
 
@@ -113,3 +119,35 @@ async def test_two_concurrent_replaces_of_one_role_apply_once(
     held = await live_roles(realmongo_env, staff)
     assert len(held) == 1 and held <= {str(weekend.id), str(stock.id)}
     assert await replaces(realmongo_env) == 1
+
+
+# Mongo matches an ObjectId whatever its hex case; the guards must see the same
+# row the write then revokes (review fix round 1).
+
+
+async def test_replace_with_an_uppercase_id_keeps_the_last_manager(
+    realmongo_env: RealMongoEnv,
+) -> None:
+    owner_id = await two_owners(realmongo_env)
+    await service(realmongo_env, DEVELOPER).revoke_role("bob", owner_id)
+    cashier = await tenant_role(realmongo_env, "Cashier")
+
+    with pytest.raises(LastManager):
+        await service(realmongo_env, DEVELOPER).replace_role(
+            "alice", owner_id.upper(), str(cashier.id)
+        )
+
+    assert await owners_left(realmongo_env, owner_id) == 1
+    assert await replaces(realmongo_env) == 0
+
+
+async def test_revoke_with_an_uppercase_id_keeps_the_last_manager(
+    realmongo_env: RealMongoEnv,
+) -> None:
+    owner_id = await two_owners(realmongo_env)
+    await service(realmongo_env, DEVELOPER).revoke_role("bob", owner_id)
+
+    with pytest.raises(LastManager):
+        await service(realmongo_env, DEVELOPER).revoke_role("alice", owner_id.upper())
+
+    assert await owners_left(realmongo_env, owner_id) == 1

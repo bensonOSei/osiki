@@ -55,7 +55,6 @@ from osiki.services.constraint_validator.base_constraint_validator import (
     BaseConstraintValidator,
 )
 from osiki.services.roles.validation import validate_references
-from osiki.services.snapshot_builder.render import role_entry
 from osiki.services.snapshot_builder.snapshot_builder import SnapshotBuilder
 from osiki.services.team.escalation import covers, uncovered
 from osiki.services.team.models import (
@@ -331,6 +330,7 @@ class TeamService:
         *,
         session: AsyncClientSession | None = None,
     ) -> tuple[Role, list[GrantEntry], Role | None]:
+        copied_from = _canonical_id(copied_from) if copied_from is not None else None
         held = await self._held_grants()
         entries, unique = await self._check_grants(grants)
         source: Role | None = None
@@ -359,6 +359,8 @@ class TeamService:
     async def create_role(
         self, name: str, grants: list[GrantRef], copied_from: str | None
     ) -> TeamRole:
+        copied_from = _canonical_id(copied_from) if copied_from is not None else None
+
         async def operation(session: AsyncClientSession | None) -> Role:
             role, entries, source = await self._check_create_role(
                 name, grants, copied_from
@@ -402,6 +404,7 @@ class TeamService:
         role already has is kept as is (grandfathered); only new ones pass the
         assignable, reference and escalation checks.
         """
+        role_id = _canonical_id(role_id)
         held = await self._held_grants()
         role = await self._own_role(role_id)
         if expected_updated_at is not None and expected_updated_at != role.updated_at:
@@ -432,6 +435,8 @@ class TeamService:
         grants: list[GrantRef] | None,
         expected_updated_at: float | None = None,
     ) -> TeamRole:
+        role_id = _canonical_id(role_id)
+
         async def operation(session: AsyncClientSession | None) -> TeamRole:
             role, before, changed = await self._check_update_role(
                 role_id, name, grants, expected_updated_at
@@ -458,6 +463,8 @@ class TeamService:
         return await self._uow.run(operation)
 
     async def delete_role(self, role_id: str) -> None:
+        role_id = _canonical_id(role_id)
+
         async def operation(session: AsyncClientSession | None) -> None:
             await self.require_manager()
             role = await self._own_role(role_id)
@@ -577,6 +584,7 @@ class TeamService:
         engine returns that user's environment-wide name and email to the
         tenant's managers.
         """
+        role_id = _canonical_id(role_id)
 
         async def operation(session: AsyncClientSession | None) -> None:
             role, stale = await self._check_add_member(
@@ -605,6 +613,8 @@ class TeamService:
         return await self._member(user_id)
 
     async def assign_role(self, user_id: str, role_id: str) -> TeamMember:
+        role_id = _canonical_id(role_id)
+
         async def operation(session: AsyncClientSession | None) -> None:
             user, role, stale = await self._check_assign_role(
                 user_id, role_id, session=session
@@ -627,6 +637,8 @@ class TeamService:
         return await self._member(user_id)
 
     async def revoke_role(self, user_id: str, role_id: str) -> None:
+        role_id = _canonical_id(role_id)
+
         async def operation(session: AsyncClientSession | None) -> None:
             assignment, role, user = await self._check_revoke_role(
                 user_id, role_id, session=session
@@ -652,6 +664,8 @@ class TeamService:
     ) -> TeamMember:
         """Swap one direct role for another in one write: never both, never
         neither. The rules are revoke-then-assign judged on the end state."""
+        from_role_id = _canonical_id(from_role_id)
+        to_role_id = _canonical_id(to_role_id)
 
         async def operation(session: AsyncClientSession | None) -> None:
             (
@@ -812,6 +826,7 @@ class TeamService:
         session: AsyncClientSession | None = None,
     ) -> tuple[Role, UserRole | None]:
         """The user need not exist yet: the write upserts it."""
+        role_id = _canonical_id(role_id)
         held = await self._held_grants()
         user = await self._user_repo.get_by_external_id(user_id)
         # An existing user's profile is never changed, so their email is not
@@ -829,6 +844,7 @@ class TeamService:
         *,
         session: AsyncClientSession | None = None,
     ) -> tuple[User, Role, UserRole | None]:
+        role_id = _canonical_id(role_id)
         held = await self._held_grants()
         user = await self._member_user(user_id, session)
         role, stale = await self._check_assignment(held, role_id, user, session=session)
@@ -841,6 +857,7 @@ class TeamService:
         *,
         session: AsyncClientSession | None = None,
     ) -> tuple[UserRole, Role | None, User]:
+        role_id = _canonical_id(role_id)
         await self.require_manager()
         user = await self._member_user(user_id, session)
         assignment = await self._direct_assignment(user, role_id, session)
@@ -862,6 +879,8 @@ class TeamService:
         Every check runs before any write, so a refusal changes nothing even
         without transactions.
         """
+        from_role_id = _canonical_id(from_role_id)
+        to_role_id = _canonical_id(to_role_id)
         held = await self._held_grants()
         if from_role_id == to_role_id:
             raise ValidationError(
@@ -1057,26 +1076,17 @@ class TeamService:
     ) -> tuple[AssignmentEntry, RoleEntry | None]:
         """A direct tenant assignment of ``role`` as the bundle carries it.
 
-        A tenant role travels in the bundle, rendered from active permissions
-        only, as ``BundleBuilder`` does; a project role resolves through the
-        snapshot (a template missing from it grants nothing: fail closed).
+        A tenant role travels in the bundle, rendered by ``BundleBuilder``
+        itself; a project role resolves through the snapshot (a template
+        missing from it contributes no grants).
         """
         assignment = AssignmentEntry(
             role_id=str(role.id), scope=self._scope(), via="direct"
         )
         if role.tenant_id is None:
             return assignment, None
-        permissions = {
-            str(p.id): p.permission_string
-            for p in await self._permission_repo.get_by_ids(
-                list(dict.fromkeys(str(g.permission_id) for g in role.grants))
-            )
-            if p.is_active
-        }
-        condition_keys = {
-            str(c.id): c.key for c in await self._condition_repo.get_all()
-        }
-        return assignment, role_entry(role, permissions, condition_keys)
+        (entry,) = await self._bundle_builder.render_roles([role])
+        return assignment, entry
 
     # -- dry run ---------------------------------------------------------------
 
@@ -1307,6 +1317,20 @@ def _assignment_state(
         "role": role.name if role else None,
         "roles": roles,
     }
+
+
+def _canonical_id(role_id: str) -> str:
+    """The role id in the one spelling stored ids compare equal to.
+
+    Mongo matches an ObjectId whatever its hex case, but the guards compare
+    ids as strings: an uncanonical spelling would find a row the guards then
+    fail to see. An invalid id is left as is, to be refused as before.
+    """
+    return (
+        str(PydanticObjectId(role_id))
+        if PydanticObjectId.is_valid(role_id)
+        else role_id
+    )
 
 
 def _member_not_found(user_id: str) -> NotFoundError:

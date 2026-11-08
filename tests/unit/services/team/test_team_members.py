@@ -1435,3 +1435,77 @@ async def test_validate_replace_role(env: Env) -> None:
         == []
     )
     assert await snapshot_of_writes(env) == before
+
+
+# -- role ids in any hex case (review fix round 1) ---------------------------
+
+
+async def test_an_uppercase_role_id_cannot_slip_past_the_last_manager_guard(
+    env: Env,
+) -> None:
+    owner_r = await owner_role(env)
+    await owner(env, "boss")
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    upper = str(owner_r.id).upper()
+
+    with pytest.raises(LastManager):
+        await env.service().revoke_role("boss", upper)
+    with pytest.raises(LastManager):
+        await env.service().replace_role("boss", upper, str(cashier.id))
+    assert (
+        await env.service().validate(
+            "replace_role",
+            user_id="boss",
+            from_role_id=upper,
+            to_role_id=str(cashier.id),
+        )
+    )[0].kind == "last_manager"
+    assert await active_assignment(env, "boss", owner_r) is not None
+    assert await audit_actions(env) == []
+
+
+async def test_the_same_role_in_two_spellings_is_422(env: Env) -> None:
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    await member(env, "u-1", [cashier])
+
+    with pytest.raises(ValidationError):
+        await env.service().replace_role(
+            "u-1", str(cashier.id), str(cashier.id).upper()
+        )
+
+
+async def test_role_writes_take_a_role_id_in_any_case(env: Env) -> None:
+    """Every id is canonical before it reaches a check, a write or the audit."""
+    till = await env.permission("till", "open")
+    cashier = await tenant_role(env, "Cashier", [till])
+    await owner(env, "boss")
+    await member(env, "u-1")
+    service = env.service()
+    upper = str(cashier.id).upper()
+
+    assigned = await service.assign_role("u-1", upper)
+    await service.revoke_role("u-1", upper)
+    await service.add_member("u-2", name=None, email=None, role_id=upper)
+    await service.revoke_role("u-2", upper)
+    renamed = await service.update_role(upper, "Till", None)
+    await service.delete_role(upper)
+
+    assert [r.id for r in assigned.roles] == [str(cashier.id)]
+    assert renamed.name == "Till"
+    entries = await env.audit_repo.list(None, 0, 20)
+    targets = {e.target_id for e in entries if e.target_type == "role"}
+    assert targets == {str(cashier.id)}
+    assert all(
+        (e.changes.after or e.changes.before or {}).get("role_id", str(cashier.id))
+        == str(cashier.id)
+        for e in entries
+    )
+
+
+async def test_a_copy_names_its_template_in_canonical_case(env: Env) -> None:
+    till = await env.permission("till", "open")
+    template = await env.template("Cashier", [till])
+
+    role = await env.service().create_role("My cashier", [], str(template.id).upper())
+
+    assert role.copied_from == str(template.id)
