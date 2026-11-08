@@ -6,6 +6,7 @@ from loguru import logger
 from pymongo.asynchronous.client_session import AsyncClientSession
 
 from osiki.models.constraint import ConstraintType, ScopeLevel
+from osiki.models.user_role import UserRole
 from osiki.repositories.constraints.base_constraint_repository import (
     BaseConstraintRepository,
 )
@@ -30,6 +31,19 @@ class _Held(NamedTuple):
     role_id: PydanticObjectId  # canonical
     tenant_id: str | None
     active: bool  # the role document was found active
+
+
+class _Without(NamedTuple):
+    """A direct assignment a replace takes away: ``role_id`` in exactly ``scope``."""
+
+    role_id: str
+    scope: dict[str, str]
+
+    def matches(self, user_role: UserRole) -> bool:
+        return (
+            str(user_role.role_id) == self.role_id
+            and user_role.scope.to_dict() == self.scope
+        )
 
 
 class ConstraintValidator(BaseConstraintValidator):
@@ -69,19 +83,37 @@ class ConstraintValidator(BaseConstraintValidator):
             )
         return canonical
 
-    async def _held(
-        self, user_id: str, now: float, session: AsyncClientSession | None
-    ) -> list[_Held]:
-        """Every active, unexpired role the user holds, directly or through a
-        group that is itself still active. A user with no assignments holds
-        nothing."""
-        assignments = [
-            (ur.role_id, ur.scope.tenant_id)
+    async def _direct(
+        self,
+        user_id: str,
+        now: float,
+        session: AsyncClientSession | None,
+        without: _Without | None,
+    ) -> tuple[list[UserRole], bool]:
+        """The user's active, unexpired direct assignments minus ``without``'s,
+        and whether ``without``'s was among them."""
+        live = [
+            ur
             for ur in await self._user_role_repo.get_user_roles(
                 user_id, session=session
             )
             if ur.is_active and (ur.expires_at is None or ur.expires_at > now)
         ]
+        kept = [ur for ur in live if without is None or not without.matches(ur)]
+        return kept, len(kept) < len(live)
+
+    async def _held(
+        self,
+        user_id: str,
+        now: float,
+        session: AsyncClientSession | None,
+        without: _Without | None = None,
+    ) -> list[_Held]:
+        """Every active, unexpired role the user holds, directly or through a
+        group that is itself still active. A user with no assignments holds
+        nothing."""
+        direct, _ = await self._direct(user_id, now, session, without)
+        assignments = [(ur.role_id, ur.scope.tenant_id) for ur in direct]
         # Deleting a group only deactivates it: its members hold nothing then.
         member_of = [
             str(m.group_id)
@@ -111,6 +143,19 @@ class ConstraintValidator(BaseConstraintValidator):
             for rid, t in assignments
         ]
 
+    async def _frees_slot(
+        self,
+        user_id: str,
+        now: float,
+        session: AsyncClientSession | None,
+        without: _Without | None,
+    ) -> str | None:
+        """``without``'s role id when the user really holds that assignment."""
+        if without is None:
+            return None
+        _, dropped = await self._direct(user_id, now, session, without)
+        return without.role_id if dropped else None
+
     async def validate(
         self,
         user_id: str,
@@ -119,8 +164,12 @@ class ConstraintValidator(BaseConstraintValidator):
         *,
         now: float | None = None,
         session: AsyncClientSession | None = None,
+        without_role_id: str | None = None,
     ) -> ConstraintValidationResult:
         now = time.time() if now is None else now
+        without = (
+            _Without(without_role_id, scope) if without_role_id is not None else None
+        )
         logger.debug(
             "Validating constraints for role assignment",
             user_id=user_id,
@@ -143,6 +192,7 @@ class ConstraintValidator(BaseConstraintValidator):
                     constraint.config.role_ids or [],
                     now,
                     session,
+                    without,
                 )
                 if not result.valid:
                     logger.warning(
@@ -169,6 +219,7 @@ class ConstraintValidator(BaseConstraintValidator):
                         constraint.config.scope_level or ScopeLevel.GLOBAL,
                         now,
                         session,
+                        await self._frees_slot(user_id, now, session, without),
                     )
                     if not result.valid:
                         logger.warning(
@@ -194,6 +245,7 @@ class ConstraintValidator(BaseConstraintValidator):
                         constraint.config.requires_role_id,
                         now,
                         session,
+                        without,
                     )
                     if not result.valid:
                         logger.warning(
@@ -224,6 +276,7 @@ class ConstraintValidator(BaseConstraintValidator):
         conflicting_role_ids: list[PydanticObjectId],
         now: float,
         session: AsyncClientSession | None,
+        without: _Without | None,
     ) -> ConstraintValidationResult:
         role_oid = PydanticObjectId(canonical_role)
         if role_oid not in conflicting_role_ids:
@@ -235,7 +288,7 @@ class ConstraintValidator(BaseConstraintValidator):
         tenant_id = scope.get("tenant_id")
         user_role_ids = {
             held.role_id
-            for held in await self._held(user_id, now, session)
+            for held in await self._held(user_id, now, session, without)
             if tenant_id is None
             or held.tenant_id is None
             or held.tenant_id == tenant_id
@@ -258,7 +311,9 @@ class ConstraintValidator(BaseConstraintValidator):
         scope_level: ScopeLevel,
         now: float,
         session: AsyncClientSession | None,
+        freed: str | None,
     ) -> ConstraintValidationResult:
+        """``freed`` is a role id whose assignment, counted here, is going."""
         count = 0
         # The template's assignments and those of every tenant copy count.
         role_ids = [
@@ -283,6 +338,11 @@ class ConstraintValidator(BaseConstraintValidator):
                 role_ids, scope, now, exact=True, session=session
             )
 
+        # The freed row is tenant-scoped with exactly ``scope``, so every level
+        # counted it, except per tenant without a tenant, which counted nothing.
+        if freed in role_ids and count > 0:
+            count -= 1
+
         if count >= max_assignments:
             return ConstraintValidationResult(
                 valid=False,
@@ -298,6 +358,7 @@ class ConstraintValidator(BaseConstraintValidator):
         requires_role_id: PydanticObjectId | None,
         now: float,
         session: AsyncClientSession | None,
+        without: _Without | None,
     ) -> ConstraintValidationResult:
         if not requires_role_id:
             return ConstraintValidationResult(valid=True)
@@ -309,7 +370,7 @@ class ConstraintValidator(BaseConstraintValidator):
         tenant_id = scope.get("tenant_id")
         user_role_ids = {
             held.role_id
-            for held in await self._held(user_id, now, session)
+            for held in await self._held(user_id, now, session, without)
             if held.active and (held.tenant_id is None or held.tenant_id == tenant_id)
         }
 

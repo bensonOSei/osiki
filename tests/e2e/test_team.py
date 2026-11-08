@@ -183,6 +183,60 @@ def test_role_update_assign_revoke_and_delete(client: TestClient, world: World) 
     assert gone.status_code == 404
 
 
+def test_team_replace_endpoint(client: TestClient, world: World) -> None:
+    cashier = world.role("Cashier", world.sales_read, headers=OWNER)
+    weekend = world.role("Weekend cashier", world.sales_read, headers=OWNER)
+    client.post(
+        f"{T1}/members",
+        headers=OWNER,
+        json={"user_id": "u-staff", "name": "Stan", "role_id": cashier},
+    )
+    url = f"{T1}/members/u-staff/roles/replace"
+
+    r = client.post(
+        url, headers=OWNER, json={"from_role_id": cashier, "to_role_id": weekend}
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert isinstance(body.pop("member_since"), float)
+    assert body == {
+        "user_id": "u-staff",
+        "name": "Stan",
+        "email": None,
+        "roles": [{"id": weekend, "name": "Weekend cashier", "kind": "tenant"}],
+    }
+    (entry,) = [
+        e
+        for e in client.get(f"{T1}/audit-logs", headers=OWNER).json()["items"]
+        if e["action"] == "assignment.replace"
+    ]
+    assert (entry["target_type"], entry["target_id"]) == ("member", "u-staff")
+    assert entry["after"]["from_role"] == "Cashier"
+
+    same = client.post(
+        url, headers=OWNER, json={"from_role_id": weekend, "to_role_id": weekend}
+    )
+    assert same.status_code == 422
+    gone = client.post(
+        url, headers=OWNER, json={"from_role_id": cashier, "to_role_id": weekend}
+    )
+    assert gone.status_code == 404
+    malformed = client.post(url, headers=OWNER, json={"from_role_id": cashier})
+    assert malformed.status_code == 422
+
+
+def test_replace_of_the_last_manager_is_409(client: TestClient, world: World) -> None:
+    cashier = world.role("Cashier", world.sales_read, headers=DEV)
+    r = client.post(
+        f"{T1}/members/u-owner/roles/replace",
+        headers=DEV,
+        json={"from_role_id": world.owner_role, "to_role_id": cashier},
+    )
+    assert r.status_code == 409
+    assert r.json()["details"] == {"reason": "last_manager"}
+
+
 def test_expected_updated_at_round_trips_json(client: TestClient, world: World) -> None:
     role = world.role("Cashier", world.sales_read, headers=OWNER)
     listed = {r["id"]: r for r in client.get(f"{T1}/roles", headers=OWNER).json()}
@@ -397,6 +451,7 @@ def test_validate_with_no_violation_is_empty_and_covers_every_op(
 ) -> None:
     role = world.role("Cashier", world.sales_read, headers=DEV)
     client.post(f"{T1}/members", headers=DEV, json={"user_id": "s1", "role_id": role})
+    other = world.role("Stock", world.sales_read, headers=DEV)
     ops: list[dict[str, Any]] = [
         {"op": "create_role", "args": {"name": "N", "grants": []}},
         {"op": "update_role", "args": {"role_id": role, "name": "Renamed"}},
@@ -404,6 +459,10 @@ def test_validate_with_no_violation_is_empty_and_covers_every_op(
         {"op": "add_member", "args": {"user_id": "new", "role_id": role}},
         {"op": "revoke_role", "args": {"user_id": "s1", "role_id": role}},
         {"op": "remove_member", "args": {"user_id": "s1"}},
+        {
+            "op": "replace_role",
+            "args": {"user_id": "s1", "from_role_id": role, "to_role_id": other},
+        },
     ]
     for body in ops:
         r = client.post(f"{T1}/validate", headers=OWNER, json=body)
@@ -534,6 +593,9 @@ def _calls(world: World) -> dict[tuple[str, str], dict[str, Any]]:
         ("POST", "/members"): {"json": {"user_id": "z", "role_id": role}},
         ("PUT", f"/members/u-owner/roles/{role}"): {},
         ("DELETE", f"/members/u-owner/roles/{role}"): {},
+        ("POST", "/members/u-owner/roles/replace"): {
+            "json": {"from_role_id": role, "to_role_id": role}
+        },
         ("DELETE", "/members/u-owner"): {},
         ("GET", "/members/u-owner/effective"): {},
         ("POST", "/validate"): {
@@ -572,7 +634,7 @@ def test_the_route_table_covers_every_team_route(world: World) -> None:
         return pair[0], pair[1].replace("@role_id", "@x").replace("@user_id", "@x")
 
     assert {norm(p) for p in tested} == {norm(p) for p in routes}
-    assert len(routes) == 14
+    assert len(routes) == 15
 
 
 def test_tenant_user_of_other_tenant_gets_403_on_every_route(

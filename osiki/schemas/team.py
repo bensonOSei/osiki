@@ -62,6 +62,11 @@ class TeamMemberAdd(_Input):
     role_id: str
 
 
+class TeamRoleReplace(_Input):
+    from_role_id: str
+    to_role_id: str
+
+
 class CreateRoleArgs(TeamRoleCreate):
     pass
 
@@ -84,6 +89,10 @@ class RevokeRoleArgs(AssignRoleArgs):
 
 
 class RemoveMemberArgs(_Input):
+    user_id: str
+
+
+class ReplaceRoleArgs(TeamRoleReplace):
     user_id: str
 
 
@@ -117,13 +126,19 @@ class _RemoveMemberOp(_Input):
     args: RemoveMemberArgs
 
 
+class _ReplaceRoleOp(_Input):
+    op: Literal["replace_role"]
+    args: ReplaceRoleArgs
+
+
 ValidateRequest = Annotated[
     _CreateRoleOp
     | _UpdateRoleOp
     | _AssignRoleOp
     | _AddMemberOp
     | _RevokeRoleOp
-    | _RemoveMemberOp,
+    | _RemoveMemberOp
+    | _ReplaceRoleOp,
     Field(discriminator="op"),
 ]
 

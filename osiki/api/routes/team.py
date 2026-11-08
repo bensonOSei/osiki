@@ -27,6 +27,7 @@ from osiki.schemas.team import (
     TeamMemberRead,
     TeamRoleCreate,
     TeamRoleRead,
+    TeamRoleReplace,
     TeamRoleUpdate,
     ValidateRequest,
     ValidateResponse,
@@ -117,6 +118,15 @@ async def assign_role(user_id: str, role_id: str, team: Team) -> TeamMemberRead:
 )
 async def revoke_role(user_id: str, role_id: str, team: Team) -> None:
     await team.revoke_role(user_id, role_id)
+
+
+@router.post("/members/{user_id}/roles/replace")
+async def replace_role(
+    user_id: str, data: TeamRoleReplace, team: Team
+) -> TeamMemberRead:
+    """Swap one direct role for another in one write."""
+    member = await team.replace_role(user_id, data.from_role_id, data.to_role_id)
+    return TeamMemberRead.from_member(member)
 
 
 @router.delete("/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

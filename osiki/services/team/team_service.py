@@ -13,9 +13,15 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import DuplicateKeyError
 
 from osiki.api.actor import Actor
-from osiki.api.exceptions import ConflictError, NotFoundError
+from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
 from osiki.decision.decide import effective_grants
-from osiki.decision.models import EffectiveGrant, GrantEntry, RoleEntry, UserBundle
+from osiki.decision.models import (
+    AssignmentEntry,
+    EffectiveGrant,
+    GrantEntry,
+    RoleEntry,
+    UserBundle,
+)
 from osiki.decision.scope import scope_matches
 from osiki.models.base import Scope
 from osiki.models.permission import Permission
@@ -49,6 +55,7 @@ from osiki.services.constraint_validator.base_constraint_validator import (
     BaseConstraintValidator,
 )
 from osiki.services.roles.validation import validate_references
+from osiki.services.snapshot_builder.render import role_entry
 from osiki.services.snapshot_builder.snapshot_builder import SnapshotBuilder
 from osiki.services.team.escalation import covers, uncovered
 from osiki.services.team.models import (
@@ -83,6 +90,7 @@ DryRunOp = Literal[
     "add_member",
     "revoke_role",
     "remove_member",
+    "replace_role",
 ]
 
 # The refusals a dry run reports as violations rather than raising.
@@ -639,6 +647,45 @@ class TeamService:
 
         await self._team_write(operation)
 
+    async def replace_role(
+        self, user_id: str, from_role_id: str, to_role_id: str
+    ) -> TeamMember:
+        """Swap one direct role for another in one write: never both, never
+        neither. The rules are revoke-then-assign judged on the end state."""
+
+        async def operation(session: AsyncClientSession | None) -> None:
+            (
+                assignment,
+                from_role,
+                user,
+                to_role,
+                stale,
+            ) = await self._check_replace_role(
+                user_id, from_role_id, to_role_id, session=session
+            )
+            before = await self._direct_role_names(user, session)
+            await self._user_role_repo.revoke(str(assignment.id), session=session)
+            await self._assign(user, to_role, stale, session)
+            after = await self._direct_role_names(user, session)
+            await self._audit.record(
+                self._actor,
+                "assignment.replace",
+                "member",
+                user_id,
+                tenant_id=self._tenant_id,
+                before={"user_id": user_id, "roles": before},
+                after={
+                    "user_id": user_id,
+                    "roles": after,
+                    "from_role": from_role.name if from_role else None,
+                    "to_role": to_role.name,
+                },
+                session=session,
+            )
+
+        await self._team_write(operation)
+        return await self._member(user_id)
+
     async def remove_member(self, user_id: str) -> None:
         async def operation(session: AsyncClientSession | None) -> None:
             assignments = await self._check_remove_member(user_id, session=session)
@@ -796,6 +843,45 @@ class TeamService:
     ) -> tuple[UserRole, Role | None, User]:
         await self.require_manager()
         user = await self._member_user(user_id, session)
+        assignment = await self._direct_assignment(user, role_id, session)
+        await self._ensure_manager_remains(without_assignment=(user_id, role_id))
+        return assignment, await self._role_repo.get_by_id(role_id), user
+
+    async def _check_replace_role(
+        self,
+        user_id: str,
+        from_role_id: str,
+        to_role_id: str,
+        *,
+        session: AsyncClientSession | None = None,
+    ) -> tuple[UserRole, Role | None, User, Role, UserRole | None]:
+        """The revoke checks on ``from`` and the assign checks on ``to``, all
+        judged on the end state: constraints without ``from``, and the
+        last-manager guard with ``from`` gone and ``to`` held.
+
+        Every check runs before any write, so a refusal changes nothing even
+        without transactions.
+        """
+        held = await self._held_grants()
+        if from_role_id == to_role_id:
+            raise ValidationError(
+                "Role cannot replace itself", details={"role_id": from_role_id}
+            )
+        user = await self._member_user(user_id, session)
+        assignment = await self._direct_assignment(user, from_role_id, session)
+        to_role, stale = await self._check_assignment(
+            held, to_role_id, user, session=session, without_role_id=from_role_id
+        )
+        await self._ensure_manager_remains(
+            without_assignment=(user_id, from_role_id), adding=to_role
+        )
+        from_role = await self._role_repo.get_by_id(from_role_id)
+        return assignment, from_role, user, to_role, stale
+
+    async def _direct_assignment(
+        self, user: User, role_id: str, session: AsyncClientSession | None
+    ) -> UserRole:
+        """The member's direct assignment of ``role_id`` in this tenant."""
         assignment = (
             await self._user_role_repo.find_assignment(
                 str(user.id), role_id, self._tenant_id, session=session
@@ -806,10 +892,9 @@ class TeamService:
         if assignment is None:
             raise NotFoundError(
                 "Role assignment not found",
-                details={"user_id": user_id, "role_id": role_id},
+                details={"user_id": user.external_id, "role_id": role_id},
             )
-        await self._ensure_manager_remains(without_assignment=(user_id, role_id))
-        return assignment, await self._role_repo.get_by_id(role_id), user
+        return assignment
 
     async def _check_remove_member(
         self, user_id: str, *, session: AsyncClientSession | None = None
@@ -839,12 +924,14 @@ class TeamService:
         user: User | None,
         *,
         session: AsyncClientSession | None,
+        without_role_id: str | None = None,
     ) -> tuple[Role, UserRole | None]:
         """The role to assign and any expired row holding its slot.
 
         Escalation covers every grant the role gives, built-ins included, so
         assigning Owner needs ``osiki.team:manage``: owners hand on management.
-        ``user=None`` is a user who does not exist yet.
+        ``user=None`` is a user who does not exist yet. ``without_role_id`` is
+        the direct role a replace takes away; constraints judge without it.
         """
         role = await self._assignable_role(role_id)
         self._ensure_escalation_free(held, await self._role_grants(role))
@@ -861,6 +948,7 @@ class TeamService:
             role_id,
             self._scope(),
             session=session,
+            without_role_id=without_role_id,
         )
         if not result.valid:
             raise ConstraintViolated(result.constraint_name, result.reason)
@@ -926,12 +1014,15 @@ class TeamService:
         *,
         without_member: str | None = None,
         without_assignment: tuple[str, str] | None = None,
+        adding: Role | None = None,
     ) -> None:
         """``LastManager`` unless some member would still effectively hold
         ``osiki.team:manage`` in the tenant after the change.
 
         The change is the removal of ``without_member`` or of the direct
-        tenant-scoped assignment ``without_assignment`` (user id, role id).
+        tenant-scoped assignment ``without_assignment`` (user id, role id),
+        with, for a replace, the same member then holding ``adding`` directly
+        in the tenant, rendered as the bundle would render it after the write.
         Effective means what decides access: direct or group, unexpired,
         scope matching the tenant, via the role and its ancestors.
         Run it after the tenant lock is taken, so a concurrent change
@@ -940,6 +1031,7 @@ class TeamService:
         snapshot = await self._snapshot_builder.build()
         scope = self._scope()
         now = time.time()
+        added = await self._added_entries(adding) if adding is not None else None
         skip = 0
         while True:
             page = await self._member_repo.members(self._tenant_id, skip, _MEMBER_PAGE)
@@ -951,12 +1043,40 @@ class TeamService:
                     continue
                 if without_assignment is not None and without_assignment[0] == member:
                     bundle = _without_direct(bundle, without_assignment[1], scope)
+                    if added is not None:
+                        bundle = _with_direct(bundle, *added)
                 held = effective_grants(snapshot, bundle, scope, now)
                 if any(covers(grant, _MANAGE) for grant in held):
                     return
             if len(page) < _MEMBER_PAGE:
                 raise LastManager()
             skip += _MEMBER_PAGE
+
+    async def _added_entries(
+        self, role: Role
+    ) -> tuple[AssignmentEntry, RoleEntry | None]:
+        """A direct tenant assignment of ``role`` as the bundle carries it.
+
+        A tenant role travels in the bundle, rendered from active permissions
+        only, as ``BundleBuilder`` does; a project role resolves through the
+        snapshot (a template missing from it grants nothing: fail closed).
+        """
+        assignment = AssignmentEntry(
+            role_id=str(role.id), scope=self._scope(), via="direct"
+        )
+        if role.tenant_id is None:
+            return assignment, None
+        permissions = {
+            str(p.id): p.permission_string
+            for p in await self._permission_repo.get_by_ids(
+                list(dict.fromkeys(str(g.permission_id) for g in role.grants))
+            )
+            if p.is_active
+        }
+        condition_keys = {
+            str(c.id): c.key for c in await self._condition_repo.get_all()
+        }
+        return assignment, role_entry(role, permissions, condition_keys)
 
     # -- dry run ---------------------------------------------------------------
 
@@ -973,6 +1093,7 @@ class TeamService:
             "add_member": self._check_add_member,
             "revoke_role": self._check_revoke_role,
             "remove_member": self._check_remove_member,
+            "replace_role": self._check_replace_role,
         }
         try:
             await checks[op](**args)
@@ -1155,6 +1276,18 @@ def _without_direct(
                 for a in bundle.assignments
                 if not (a.via == "direct" and a.role_id == role_id and a.scope == scope)
             ]
+        }
+    )
+
+
+def _with_direct(
+    bundle: UserBundle, assignment: AssignmentEntry, role: RoleEntry | None
+) -> UserBundle:
+    """The bundle plus ``assignment`` (and its tenant role, if any)."""
+    return bundle.model_copy(
+        update={
+            "assignments": [*bundle.assignments, assignment],
+            "roles": bundle.roles if role is None else [*bundle.roles, role],
         }
     )
 

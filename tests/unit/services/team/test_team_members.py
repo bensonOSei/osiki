@@ -9,7 +9,7 @@ from beanie import PydanticObjectId
 from pymongo.errors import DuplicateKeyError
 
 from osiki.api.actor import Actor
-from osiki.api.exceptions import ConflictError, NotFoundError
+from osiki.api.exceptions import ConflictError, NotFoundError, ValidationError
 from osiki.models.base import Scope
 from osiki.models.constraint import ConstraintConfig, ConstraintType, ScopeLevel
 from osiki.models.permission import Permission
@@ -1164,3 +1164,274 @@ async def test_inactive_permission_the_manager_holds_does_not_block(
         "u-new", name=None, email=None, role_id=str(role.id)
     )
     assert [r.id for r in result.roles] == [str(role.id)]
+
+
+# -- replace_role ------------------------------------------------------------
+
+
+async def manager_role(env: Env, name: str = "Manager") -> Role:
+    """A tenant role granting ``osiki.team:manage`` (made directly, as an
+    owner could not put a built-in in a role)."""
+    return await tenant_role(env, name, [await env._manage_permission()])
+
+
+async def test_replace_swaps_in_one_write(env: Env) -> None:
+    till = await env.permission("till", "open")
+    cashier = await tenant_role(env, "Cashier", [till])
+    weekend = await tenant_role(env, "Weekend cashier", [till])
+    await owner(env, "boss")
+    await member(env, "u-1", [cashier])
+
+    result = await env.service().replace_role("u-1", str(cashier.id), str(weekend.id))
+
+    assert [r.name for r in result.roles] == ["Weekend cashier"]
+    assert await active_assignment(env, "u-1", cashier) is None
+    assert await active_assignment(env, "u-1", weekend) is not None
+    entries = await env.audit_repo.list(None, 0, 10)
+    assert [(e.action, e.target_type, e.target_id, e.tenant_id) for e in entries] == [
+        ("assignment.replace", "member", "u-1", TENANT)
+    ]
+    assert entries[0].changes.before == {"user_id": "u-1", "roles": ["Cashier"]}
+    assert entries[0].changes.after == {
+        "user_id": "u-1",
+        "roles": ["Weekend cashier"],
+        "from_role": "Cashier",
+        "to_role": "Weekend cashier",
+    }
+    assert env.locks._data[TENANT].version == 1
+
+
+async def test_replace_keeps_the_members_other_roles(env: Env) -> None:
+    till = await env.permission("till", "open")
+    cashier = await tenant_role(env, "Cashier", [till])
+    stock = await tenant_role(env, "Stock", [till])
+    weekend = await tenant_role(env, "Weekend cashier", [till])
+    await owner(env, "boss")
+    await member(env, "u-1", [cashier, stock])
+
+    await env.service().replace_role("u-1", str(cashier.id), str(weekend.id))
+
+    (entry,) = await env.audit_repo.list(None, 0, 10)
+    assert entry.changes.before["roles"] == ["Cashier", "Stock"]
+    assert entry.changes.after["roles"] == ["Stock", "Weekend cashier"]
+
+
+async def test_replace_last_manager_to_non_manager_refused(env: Env) -> None:
+    owner_r = await owner_role(env)
+    await owner(env, "boss")
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+
+    with pytest.raises(LastManager):
+        await env.service().replace_role("boss", str(owner_r.id), str(cashier.id))
+    assert await active_assignment(env, "boss", owner_r) is not None
+    assert await active_assignment(env, "boss", cashier) is None
+    assert await audit_actions(env) == []
+
+
+async def test_replace_between_two_manager_roles_allowed(env: Env) -> None:
+    owner_r = await owner_role(env)
+    await owner(env, "boss")
+    manager = await manager_role(env)
+
+    result = await env.service().replace_role("boss", str(owner_r.id), str(manager.id))
+
+    assert [r.name for r in result.roles] == ["Manager"]
+    assert await active_assignment(env, "boss", owner_r) is None
+
+
+async def test_replace_into_a_template_granting_manage_allowed(env: Env) -> None:
+    owner_r = await owner_role(env)
+    await owner(env, "boss")
+    supervisor = await env.template("Supervisor", [await env._manage_permission()])
+
+    result = await env.service().replace_role(
+        "boss", str(owner_r.id), str(supervisor.id)
+    )
+
+    assert [r.name for r in result.roles] == ["Supervisor"]
+
+
+async def test_replace_into_a_role_whose_manage_is_inactive_refused(env: Env) -> None:
+    """The guard reads what decides access: a dormant manage grant is none."""
+    owner_r = await owner_role(env)
+    await owner(env, "boss")
+    dormant = await manager_role(env, "Dormant")
+    await env.permissions.deactivate(str((await env._manage_permission()).id))
+
+    with pytest.raises(LastManager):
+        await env.service().replace_role("boss", str(owner_r.id), str(dormant.id))
+
+
+async def test_replace_of_another_members_manager_role_checks_end_state(
+    env: Env,
+) -> None:
+    """With a second manager, the first may swap to a non-manager role."""
+    owner_r = await owner_role(env)
+    await owner(env, "boss")
+    await owner(env, "deputy")
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+
+    await env.service().replace_role("boss", str(owner_r.id), str(cashier.id))
+
+    assert await active_assignment(env, "boss", cashier) is not None
+
+
+async def test_replace_escalation_refused_leaves_state(env: Env) -> None:
+    read = await env.permission("invoices", "read")
+    write = await env.permission("invoices", "write")
+    actor = await env.manager(holds=[read])
+    reader = await tenant_role(env, "Reader", [read])
+    writer = await tenant_role(env, "Writer", [write])
+    await member(env, "u-1", [reader])
+
+    with pytest.raises(EscalationRefused) as caught:
+        await env.service(actor).replace_role("u-1", str(reader.id), str(writer.id))
+    assert caught.value.details["uncovered"] == "invoices:write"
+    assert await active_assignment(env, "u-1", reader) is not None
+    assert await active_assignment(env, "u-1", writer) is None
+    assert await audit_actions(env) == []
+
+
+async def test_replace_requires_a_manager(env: Env) -> None:
+    till = await env.permission("till", "open")
+    cashier = await tenant_role(env, "Cashier", [till])
+    weekend = await tenant_role(env, "Weekend cashier", [till])
+    await member(env, "u-1", [cashier])
+    service = env.service(Actor(type="tenant_user", id="u-1"))
+
+    with pytest.raises(NotManager):
+        await service.replace_role("u-1", str(cashier.id), str(weekend.id))
+    assert await active_assignment(env, "u-1", cashier) is not None
+
+
+@pytest.mark.parametrize("from_id", ["not-an-id", None])
+async def test_replace_not_assigned_404(env: Env, from_id: str | None) -> None:
+    till = await env.permission("till", "open")
+    cashier = await tenant_role(env, "Cashier", [till])
+    weekend = await tenant_role(env, "Weekend cashier", [till])
+    await member(env, "u-1")
+
+    with pytest.raises(NotFoundError) as caught:
+        await env.service().replace_role(
+            "u-1", from_id or str(cashier.id), str(weekend.id)
+        )
+    assert caught.value.message == "Role assignment not found"
+    assert await active_assignment(env, "u-1", weekend) is None
+
+
+async def test_replace_for_a_non_member_404(env: Env) -> None:
+    till = await env.permission("till", "open")
+    cashier = await tenant_role(env, "Cashier", [till])
+    weekend = await tenant_role(env, "Weekend cashier", [till])
+
+    with pytest.raises(NotFoundError) as caught:
+        await env.service().replace_role("ghost", str(cashier.id), str(weekend.id))
+    assert caught.value.message == "Member not found"
+
+
+async def test_replace_target_already_assigned_409(env: Env) -> None:
+    till = await env.permission("till", "open")
+    cashier = await tenant_role(env, "Cashier", [till])
+    weekend = await tenant_role(env, "Weekend cashier", [till])
+    await member(env, "u-1", [cashier, weekend])
+
+    with pytest.raises(ConflictError) as caught:
+        await env.service().replace_role("u-1", str(cashier.id), str(weekend.id))
+    assert caught.value.message == "Role already assigned"
+    assert await active_assignment(env, "u-1", cashier) is not None
+    assert await audit_actions(env) == []
+
+
+async def test_replace_same_role_422(env: Env) -> None:
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    await member(env, "u-1", [cashier])
+
+    with pytest.raises(ValidationError) as caught:
+        await env.service().replace_role("u-1", str(cashier.id), str(cashier.id))
+    assert caught.value.details == {"role_id": str(cashier.id)}
+    assert await active_assignment(env, "u-1", cashier) is not None
+    assert await audit_actions(env) == []
+
+
+async def test_replace_between_mutually_exclusive_roles_allowed(env: Env) -> None:
+    """Constraints judge the end state: the old role is gone once swapped."""
+    till = await env.permission("till", "open")
+    cashier = await tenant_role(env, "Cashier", [till])
+    auditor = await tenant_role(env, "Auditor", [till])
+    await owner(env, "boss")
+    await member(env, "u-1", [cashier])
+    assert cashier.id is not None and auditor.id is not None
+    await env.constraints.create(
+        make_constraint(
+            "cash-or-audit",
+            ConstraintType.MUTUAL_EXCLUSION,
+            ConstraintConfig(role_ids=[cashier.id, auditor.id]),
+        )
+    )
+    with pytest.raises(ConstraintViolated):
+        await env.service().assign_role("u-1", str(auditor.id))
+    # The dry run judges the same end state as the write.
+    assert (
+        await env.service().validate(
+            "replace_role",
+            user_id="u-1",
+            from_role_id=str(cashier.id),
+            to_role_id=str(auditor.id),
+        )
+        == []
+    )
+
+    result = await env.service().replace_role("u-1", str(cashier.id), str(auditor.id))
+
+    assert [r.name for r in result.roles] == ["Auditor"]
+
+
+async def test_replace_into_a_role_requiring_the_old_one_refused(env: Env) -> None:
+    till = await env.permission("till", "open")
+    cashier = await tenant_role(env, "Cashier", [till])
+    senior = await tenant_role(env, "Senior cashier", [till])
+    await member(env, "u-1", [cashier])
+    await env.constraints.create(
+        make_constraint(
+            "senior-needs-cashier",
+            ConstraintType.PREREQUISITE,
+            ConstraintConfig(role_id=senior.id, requires_role_id=cashier.id),
+        )
+    )
+
+    with pytest.raises(ConstraintViolated):
+        await env.service().replace_role("u-1", str(cashier.id), str(senior.id))
+    assert await active_assignment(env, "u-1", cashier) is not None
+    assert await audit_actions(env) == []
+
+
+async def test_validate_replace_role(env: Env) -> None:
+    owner_r = await owner_role(env)
+    await owner(env, "boss")
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    manager = await manager_role(env)
+    service = env.service()
+    before = await snapshot_of_writes(env)
+
+    assert await service.validate(
+        "replace_role",
+        user_id="boss",
+        from_role_id=str(owner_r.id),
+        to_role_id=str(cashier.id),
+    ) == [
+        Violation(
+            kind="last_manager",
+            message=LastManager().message,
+            details={"reason": "last_manager"},
+        )
+    ]
+    assert (
+        await service.validate(
+            "replace_role",
+            user_id="boss",
+            from_role_id=str(owner_r.id),
+            to_role_id=str(manager.id),
+        )
+        == []
+    )
+    assert await snapshot_of_writes(env) == before
