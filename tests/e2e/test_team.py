@@ -118,7 +118,9 @@ def test_owner_flow_gives_a_weekend_cashier_sales_but_not_refunds(
         json={"user_id": "u-staff", "name": "Stan", "email": "s@x.io", "role_id": role},
     )
     assert added.status_code == 201, added.text
-    assert added.json() == {
+    body = added.json()
+    assert isinstance(body.pop("member_since"), float)
+    assert body == {
         "user_id": "u-staff",
         "name": "Stan",
         "email": "s@x.io",
@@ -131,8 +133,8 @@ def test_owner_flow_gives_a_weekend_cashier_sales_but_not_refunds(
     by_name = {r["name"]: r for r in roles}
     assert by_name["Weekend cashier"]["holders"] == 1
     assert by_name["Weekend cashier"]["grants"] == [
-        {"permission": "sales:create", "condition": None},
-        {"permission": "sales:read", "condition": None},
+        {"permission": "sales:create", "condition": None, "inherited_from": None},
+        {"permission": "sales:read", "condition": None, "inherited_from": None},
     ]
     assert by_name["Owner"]["kind"] == "template"
 
@@ -158,7 +160,7 @@ def test_role_update_assign_revoke_and_delete(client: TestClient, world: World) 
     assert patched.status_code == 200
     assert (patched.json()["name"], patched.json()["grants"]) == (
         "Till",
-        [{"permission": "sales:create", "condition": None}],
+        [{"permission": "sales:create", "condition": None, "inherited_from": None}],
     )
     # Deleting a role someone holds is refused with role_in_use.
     busy = client.delete(f"{T1}/roles/{role}", headers=OWNER)
@@ -245,6 +247,58 @@ def test_not_assignable_and_not_offered_are_409_with_reasons(
     )
     assert r.status_code == 409
     assert r.json()["details"] == {"reason": "not_offered", "role_id": not_template}
+
+
+def test_team_conditions_endpoint(client: TestClient, world: World) -> None:
+    expression = {"op": "eq", "left": {"ref": "user.id"}, "right": {"value": "u1"}}
+    created = []
+    for key, description in (("own", "Only their own records"), ("old", None)):
+        r = client.post(
+            f"{API}/conditions",
+            json={
+                "key": key,
+                "name": key,
+                "description": description,
+                "expression": expression,
+            },
+        )
+        assert r.status_code == 201, r.text
+        created.append(r.json()["id"])
+    assert client.delete(f"{API}/conditions/{created[1]}").is_success
+
+    r = client.get(f"{T1}/conditions", headers=OWNER)
+
+    assert r.status_code == 200
+    assert r.json() == [
+        {"id": created[0], "key": "own", "description": "Only their own records"}
+    ]
+
+
+def test_template_lists_inherited_grants(client: TestClient, world: World) -> None:
+    base = client.post(
+        f"{API}/roles",
+        json={
+            "name": "Base",
+            "permission_ids": [world.sales_read],
+            "is_template": True,
+        },
+    ).json()["id"]
+    senior = client.post(
+        f"{API}/roles",
+        json={
+            "name": "Senior",
+            "permission_ids": [world.refunds_create],
+            "parent_role_id": base,
+            "is_template": True,
+        },
+    ).json()["id"]
+
+    roles = {r["id"]: r for r in client.get(f"{T1}/roles", headers=OWNER).json()}
+
+    assert roles[senior]["grants"] == [
+        {"permission": "refunds:create", "condition": None, "inherited_from": None},
+        {"permission": "sales:read", "condition": None, "inherited_from": "Base"},
+    ]
 
 
 def test_constraint_is_409_with_reason_and_constraint_name(
@@ -463,6 +517,7 @@ def _calls(world: World) -> dict[tuple[str, str], dict[str, Any]]:
             "json": {"op": "remove_member", "args": {"user_id": "u-owner"}}
         },
         ("GET", "/permissions"): {},
+        ("GET", "/conditions"): {},
         ("GET", "/audit-logs"): {},
     }
 
@@ -494,7 +549,7 @@ def test_the_route_table_covers_every_team_route(world: World) -> None:
         return pair[0], pair[1].replace("@role_id", "@x").replace("@user_id", "@x")
 
     assert {norm(p) for p in tested} == {norm(p) for p in routes}
-    assert len(routes) == 13
+    assert len(routes) == 14
 
 
 def test_tenant_user_of_other_tenant_gets_403_on_every_route(

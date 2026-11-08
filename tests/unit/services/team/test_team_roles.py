@@ -14,7 +14,7 @@ from osiki.api.exceptions import (
     NotFoundError,
     ValidationError,
 )
-from osiki.decision.models import GrantEntry
+from osiki.decision import models as decision
 from osiki.models.base import Scope
 from osiki.models.condition import Condition
 from osiki.models.permission import Permission
@@ -28,12 +28,14 @@ from osiki.services.snapshot_builder.snapshot_builder import (
 )
 from osiki.services.team.models import (
     EscalationRefused,
+    GrantEntry,
     GrantRef,
     LastManager,
     NotAssignable,
     NotManager,
     NotOffered,
     RoleInUse,
+    TeamCondition,
     TeamRole,
 )
 from osiki.services.team.team_service import TeamService
@@ -208,8 +210,18 @@ def ref(permission: Permission, condition: Condition | None = None) -> GrantRef:
     )
 
 
-def entry(permission: str, condition: str | None = None) -> GrantEntry:
-    return GrantEntry(permission=permission, condition=condition)
+def entry(
+    permission: str, condition: str | None = None, inherited_from: str | None = None
+) -> GrantEntry:
+    """A grant as a rendered team role shows it."""
+    return GrantEntry(
+        permission=permission, condition=condition, inherited_from=inherited_from
+    )
+
+
+def wanted(permission: str, condition: str | None = None) -> decision.GrantEntry:
+    """A grant as the escalation check reports it."""
+    return decision.GrantEntry(permission=permission, condition=condition)
 
 
 # --- authorization ---------------------------------------------------------
@@ -327,7 +339,7 @@ async def test_manager_cannot_add_permission_they_lack(env: Env) -> None:
     with pytest.raises(EscalationRefused) as exc:
         await env.service(actor).create_role("Cashier", [ref(read), ref(refund)], None)
 
-    assert exc.value.uncovered == [entry("refunds:create")]
+    assert exc.value.uncovered == [wanted("refunds:create")]
     assert isinstance(exc.value, ConflictError)
     assert exc.value.details["reason"] == "escalation"
     assert exc.value.details["uncovered"] == "refunds:create"
@@ -365,7 +377,7 @@ async def test_conditional_hold_cannot_grant_unconditionally(env: Env) -> None:
 
     with pytest.raises(EscalationRefused) as exc:
         await env.service(actor).create_role("Cashier", [ref(read)], None)
-    assert exc.value.uncovered == [entry("invoices:read")]
+    assert exc.value.uncovered == [wanted("invoices:read")]
 
     role = await env.service(actor).create_role("Cashier", [ref(read, own)], None)
     assert role.grants == [entry("invoices:read", "own")]
@@ -380,7 +392,7 @@ async def test_update_cannot_add_permission_the_manager_lacks(env: Env) -> None:
     with pytest.raises(EscalationRefused) as exc:
         await env.service(actor).update_role(role.id, None, [ref(read), ref(refund)])
 
-    assert exc.value.uncovered == [entry("refunds:create")]
+    assert exc.value.uncovered == [wanted("refunds:create")]
     stored = await env.roles.get_by_id(role.id)
     assert stored is not None
     assert len(stored.grants) == 1
@@ -507,7 +519,7 @@ async def test_duplicate_grants_are_stored_once(env: Env) -> None:
 # --- templates ---------------------------------------------------------------
 
 
-async def test_list_roles_offers_only_usable_templates_then_tenant_roles(
+async def test_list_roles_offers_every_active_template_then_tenant_roles(
     env: Env,
 ) -> None:
     read = await env.permission("invoices", "read")
@@ -515,7 +527,7 @@ async def test_list_roles_offers_only_usable_templates_then_tenant_roles(
     manage = await env._manage_permission()
     owner = await env.template("Owner", [manage])
     cashier = await env.template("Cashier", [read])
-    await env.template("Payroll", [read, secret])
+    payroll = await env.template("Payroll", [read, secret])
     await env.template("Retired", [read], active=False)
     await env.roles.create(make_role("Not a template", permission_ids=[read.id]))
     mine = await env.service().create_role("Mine", [ref(read)], None)
@@ -526,28 +538,145 @@ async def test_list_roles_offers_only_usable_templates_then_tenant_roles(
     assert [(r.id, r.name, r.kind) for r in roles] == [
         (str(owner.id), "Owner", "template"),
         (str(cashier.id), "Cashier", "template"),
+        (str(payroll.id), "Payroll", "template"),
         (mine.id, "Mine", "tenant"),
     ]
     assert roles[0].grants == [entry("osiki.team:manage")]
+    assert roles[2].grants == [entry("invoices:read"), entry("payroll:read")]
 
 
-async def test_template_with_missing_permission_is_not_offered(env: Env) -> None:
+async def test_template_with_missing_permission_is_offered_without_it(
+    env: Env,
+) -> None:
     ghost = make_role("Ghost", permission_ids=[PydanticObjectId()], is_template=True)
     await env.roles.create(ghost)
 
-    assert await env.service().list_roles() == []
+    (role,) = await env.service().list_roles()
+
+    assert (role.name, role.grants) == ("Ghost", [])
 
 
-async def test_copy_from_unoffered_template_refused(env: Env) -> None:
+async def test_template_with_unassignable_permission_is_offered(env: Env) -> None:
+    refunds = await env.permission("refunds", "create", assignable=False)
+    cashier = await env.template("Cashier", [refunds])
+
+    roles = await env.service().list_roles()
+
+    assert [(r.id, r.grants) for r in roles] == [
+        (str(cashier.id), [entry("refunds:create")])
+    ]
+
+
+async def test_copy_of_template_with_unassignable_grant_refuses_that_grant(
+    env: Env,
+) -> None:
+    sales = await env.permission("sales", "create")
+    refunds = await env.permission("refunds", "create", assignable=False)
+    cashier = await env.template("Cashier", [sales, refunds])
+
+    with pytest.raises(NotAssignable) as exc:
+        await env.service().create_role(
+            "Mine", [ref(sales), ref(refunds)], str(cashier.id)
+        )
+    assert exc.value.permissions == ["refunds:create"]
+
+    copy = await env.service().create_role("Mine", [ref(sales)], str(cashier.id))
+
+    assert copy.copied_from == str(cashier.id)
+    assert copy.grants == [entry("sales:create")]
+
+
+async def test_copy_from_an_inactive_template_is_not_offered(env: Env) -> None:
     read = await env.permission("invoices", "read")
-    secret = await env.permission("payroll", "read", assignable=False)
-    template = await env.template("Payroll", [read, secret])
+    retired = await env.template("Retired", [read], active=False)
 
     with pytest.raises(NotOffered) as exc:
-        await env.service().create_role("Mine", [ref(read)], str(template.id))
+        await env.service().create_role("Mine", [ref(read)], str(retired.id))
 
     assert exc.value.details["reason"] == "not_offered"
     assert isinstance(exc.value, ConflictError)
+
+
+async def test_template_render_includes_inherited_grants(env: Env) -> None:
+    read = await env.permission("sales", "read")
+    create = await env.permission("sales", "create")
+    base = await env.template("Base", [read, create])
+    await env.roles.create(
+        make_role(
+            "Senior",
+            permission_ids=[create.id],
+            is_template=True,
+            parent_role_id=base.id,
+        )
+    )
+
+    roles = {r.name: r for r in await env.service().list_roles()}
+
+    assert roles["Senior"].grants == [
+        entry("sales:create"),
+        entry("sales:read", inherited_from="Base"),
+    ]
+    assert roles["Base"].grants == [entry("sales:read"), entry("sales:create")]
+
+
+async def test_inherited_grants_come_nearest_ancestor_first_and_skip_inactive(
+    env: Env,
+) -> None:
+    read = await env.permission("sales", "read")
+    void = await env.permission("sales", "void")
+    old = await env.permission("old", "read", active=False)
+    own = await env.condition("own")
+    grand = await env.template("Grand", [read, void, old])
+    parent = await env.roles.create(
+        make_role(
+            "Parent",
+            grants=[
+                Grant(permission_id=read.id, condition_id=own.id),
+                Grant(permission_id=read.id),
+            ],
+            is_template=True,
+            parent_role_id=grand.id,
+        )
+    )
+    await env.roles.create(
+        make_role("Child", is_template=True, parent_role_id=parent.id)
+    )
+
+    roles = {r.name: r for r in await env.service().list_roles()}
+
+    assert roles["Child"].grants == [
+        entry("sales:read", "own", inherited_from="Parent"),
+        entry("sales:read", inherited_from="Parent"),
+        entry("sales:void", inherited_from="Grand"),
+    ]
+
+
+async def test_an_inactive_parent_contributes_no_inherited_grants(env: Env) -> None:
+    read = await env.permission("sales", "read")
+    create = await env.permission("sales", "create")
+    gone = await env.template("Gone", [read], active=False)
+    await env.roles.create(
+        make_role(
+            "Senior",
+            permission_ids=[create.id],
+            is_template=True,
+            parent_role_id=gone.id,
+        )
+    )
+
+    (senior,) = await env.service().list_roles()
+
+    assert senior.grants == [entry("sales:create")]
+
+
+async def test_tenant_roles_never_show_inherited_grants(env: Env) -> None:
+    read = await env.permission("sales", "read")
+    base = await env.template("Base", [read])
+    await env.roles.create(make_role("Child", tenant_id=TENANT, parent_role_id=base.id))
+
+    roles = {r.name: r for r in await env.service().list_roles()}
+
+    assert roles["Child"].grants == []
 
 
 @pytest.mark.parametrize("copied_from", ["nope", None])
@@ -998,16 +1127,18 @@ async def test_unexpired_assignment_with_future_expiry_still_blocks_delete(
         await env.service().delete_role(role.id)
 
 
-async def test_template_with_inactive_assignable_permission_is_not_offered(
+async def test_template_with_inactive_permission_is_offered_without_it(
     env: Env,
 ) -> None:
     dead = await env.permission("old", "read", assignable=True, active=False)
     await env.template("Dead", [dead])
 
-    assert await env.service().list_roles() == []
+    assert [(r.name, r.grants) for r in await env.service().list_roles()] == [
+        ("Dead", [])
+    ]
 
 
-async def test_template_inheriting_a_non_assignable_grant_is_not_offered(
+async def test_template_inheriting_a_non_assignable_grant_is_offered(
     env: Env,
 ) -> None:
     secret = await env.permission("vault", "open", assignable=False)
@@ -1021,12 +1152,16 @@ async def test_template_inheriting_a_non_assignable_grant_is_not_offered(
         )
     )
 
-    offered = {r.name for r in await env.service().list_roles()}
+    offered = {r.name: r for r in await env.service().list_roles()}
 
-    assert offered == set()
+    assert set(offered) == {"Parent", "Child"}
+    assert offered["Child"].grants == [
+        entry("till:open"),
+        entry("vault:open", inherited_from="Parent"),
+    ]
 
 
-async def test_template_inheriting_an_inactive_permission_is_not_offered(
+async def test_template_inheriting_an_inactive_permission_is_offered(
     env: Env,
 ) -> None:
     dead = await env.permission("old", "read", assignable=True, active=False)
@@ -1043,7 +1178,9 @@ async def test_template_inheriting_an_inactive_permission_is_not_offered(
         )
     )
 
-    assert await env.service().list_roles() == []
+    offered = {r.name: r.grants for r in await env.service().list_roles()}
+
+    assert offered == {"Grand": [], "Parent": [], "Child": [entry("till:open")]}
 
 
 async def test_template_inheriting_only_assignable_grants_is_offered(
@@ -1059,7 +1196,12 @@ async def test_template_inheriting_only_assignable_grants_is_offered(
         )
     )
 
-    assert {r.name for r in await env.service().list_roles()} == {"Parent", "Child"}
+    offered = {r.name: r.grants for r in await env.service().list_roles()}
+
+    assert offered == {
+        "Parent": [entry("till:close")],
+        "Child": [entry("till:open"), entry("till:close", inherited_from="Parent")],
+    }
 
 
 async def test_inheritance_stops_at_an_inactive_or_missing_parent(env: Env) -> None:
@@ -1151,3 +1293,38 @@ async def test_list_assignable_permissions_needs_a_manager(env: Env) -> None:
     actor = await env.manager("plain", manage=False)
     with pytest.raises(NotManager):
         await env.service(actor).list_assignable_permissions()
+
+
+# --- conditions ----------------------------------------------------------------------
+
+
+async def test_list_conditions_active_only(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osiki.services.team.team_service as module
+
+    # A page of 2 forces the listing to walk several pages.
+    monkeypatch.setattr(module, "_MEMBER_PAGE", 2)
+    own = await env.condition("own")
+    own.description = "Only their own records"
+    shift = await env.condition("on_shift")
+    branch = await env.condition("branch")
+    retired = await env.condition("retired")
+    await env.conditions.deactivate(str(retired.id))
+    actor = await env.manager()
+
+    found = await env.service(actor).list_conditions()
+
+    assert found == [
+        TeamCondition(id=str(own.id), key="own", description="Only their own records"),
+        TeamCondition(id=str(shift.id), key="on_shift", description=None),
+        TeamCondition(id=str(branch.id), key="branch", description=None),
+    ]
+
+
+async def test_list_conditions_requires_manager(env: Env) -> None:
+    await env.condition("own")
+    actor = await env.manager("plain", manage=False)
+
+    with pytest.raises(NotManager):
+        await env.service(actor).list_conditions()

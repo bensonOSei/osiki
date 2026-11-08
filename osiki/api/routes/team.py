@@ -22,6 +22,7 @@ from osiki.schemas.permission import PermissionRead
 from osiki.schemas.team import (
     EffectiveSourceRead,
     GrantRefIn,
+    TeamConditionRead,
     TeamMemberAdd,
     TeamMemberRead,
     TeamRoleCreate,
@@ -143,6 +144,11 @@ async def list_permissions(team: Team) -> list[PermissionRead]:
     return [
         PermissionRead.from_model(p) for p in await team.list_assignable_permissions()
     ]
+
+
+@router.get("/conditions")
+async def list_conditions(team: Team) -> list[TeamConditionRead]:
+    return [TeamConditionRead.from_condition(c) for c in await team.list_conditions()]
 
 
 @router.get("/audit-logs", dependencies=[Depends(managed_team)])

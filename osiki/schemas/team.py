@@ -9,10 +9,11 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from osiki.decision.models import GrantEntry
 from osiki.services.team.models import (
     EffectiveSource,
+    GrantEntry,
     GrantRef,
+    TeamCondition,
     TeamMember,
     TeamRole,
     TeamRoleRef,
@@ -143,10 +144,15 @@ def service_args(args: _Input) -> dict[str, Any]:
 class GrantEntryRead(BaseModel):
     permission: str
     condition: str | None
+    inherited_from: str | None = None
 
     @classmethod
     def from_entry(cls, entry: GrantEntry) -> "GrantEntryRead":
-        return cls(permission=entry.permission, condition=entry.condition)
+        return cls(
+            permission=entry.permission,
+            condition=entry.condition,
+            inherited_from=entry.inherited_from,
+        )
 
 
 class TeamRoleRead(BaseModel):
@@ -184,6 +190,7 @@ class TeamMemberRead(BaseModel):
     name: str | None
     email: str | None
     roles: list[TeamRoleRefRead]
+    member_since: float | None = None
 
     @classmethod
     def from_member(cls, member: TeamMember) -> "TeamMemberRead":
@@ -192,7 +199,18 @@ class TeamMemberRead(BaseModel):
             name=member.name,
             email=member.email,
             roles=[TeamRoleRefRead.from_ref(r) for r in member.roles],
+            member_since=member.member_since,
         )
+
+
+class TeamConditionRead(BaseModel):
+    id: str
+    key: str
+    description: str | None
+
+    @classmethod
+    def from_condition(cls, condition: TeamCondition) -> "TeamConditionRead":
+        return cls(**condition.model_dump())
 
 
 class EffectiveSourceRead(BaseModel):

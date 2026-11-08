@@ -38,7 +38,13 @@ from tests.mocks import (
     make_user_group,
     make_user_role,
 )
-from tests.unit.services.team.test_team_roles import DEVELOPER, TENANT, Env, ref
+from tests.unit.services.team.test_team_roles import (
+    DEVELOPER,
+    TENANT,
+    Env,
+    ref,
+    wanted,
+)
 
 
 @pytest.fixture
@@ -131,7 +137,9 @@ async def test_add_member_creates_user_membership_assignment_and_one_audit_entry
         name="Ama",
         email="ama@example.com",
         roles=[TeamRoleRef(id=str(cashier.id), name="Cashier", kind="tenant")],
+        member_since=await env.members.joined_at(TENANT, "u-new"),
     )
+    assert result.member_since is not None
     user = await env.users.get_by_external_id("u-new")
     assert user is not None and user.email == "ama@example.com"
     assert await env.members.is_member(TENANT, "u-new")
@@ -345,15 +353,84 @@ async def test_assigning_a_project_role_that_is_not_a_template_is_not_offered(
         await env.service().assign_role("u-1", str(project.id))
 
 
-async def test_assigning_a_template_that_is_not_offered_is_not_offered(
+async def test_template_with_unassignable_permission_can_be_assigned(
     env: Env,
 ) -> None:
     await member(env, "u-1")
-    hidden = await env.template(
-        "Hidden", [await env.permission("vault", "open", assignable=False)]
+    cashier = await env.template(
+        "Cashier", [await env.permission("refunds", "create", assignable=False)]
     )
-    with pytest.raises(NotOffered):
-        await env.service().assign_role("u-1", str(hidden.id))
+
+    result = await env.service().assign_role("u-1", str(cashier.id))
+
+    assert [(r.id, r.kind) for r in result.roles] == [(str(cashier.id), "template")]
+
+
+async def test_assigning_offered_template_still_checks_escalation(
+    env: Env,
+) -> None:
+    sales = await env.permission("sales", "create")
+    refunds = await env.permission("refunds", "create", assignable=False)
+    actor = await env.manager(holds=[sales])
+    await member(env, "u-1")
+    cashier = await env.template("Cashier", [sales, refunds])
+
+    with pytest.raises(EscalationRefused) as caught:
+        await env.service(actor).assign_role("u-1", str(cashier.id))
+
+    assert caught.value.uncovered == [wanted("refunds:create")]
+    assert await active_assignment(env, "u-1", cashier) is None
+
+
+async def test_assigning_a_template_checks_escalation_on_inherited_grants(
+    env: Env,
+) -> None:
+    sales = await env.permission("sales", "create")
+    refunds = await env.permission("refunds", "create", assignable=False)
+    actor = await env.manager(holds=[sales])
+    base = await env.template("Base", [refunds])
+    senior = await env.roles.create(
+        make_role(
+            "Senior",
+            permission_ids=[sales.id],
+            is_template=True,
+            parent_role_id=base.id,
+        )
+    )
+
+    with pytest.raises(EscalationRefused) as caught:
+        await env.service(actor).add_member(
+            "u-new", name=None, email=None, role_id=str(senior.id)
+        )
+
+    assert caught.value.uncovered == [wanted("refunds:create")]
+
+
+async def test_member_since_is_join_time(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    joined = 1_700_000_000.0
+    cashier = await tenant_role(env, "Cashier", [await env.permission("till", "open")])
+    await env.tenants.upsert(TENANT, TENANT, {})
+    with monkeypatch.context() as frozen:
+        frozen.setattr(time, "time", lambda: joined)
+        await env.service().add_member(
+            "u-new", name=None, email=None, role_id=str(cashier.id)
+        )
+
+    (listed,) = await env.service().list_members()
+
+    assert listed.member_since == joined
+    assert await env.members.joined_at(TENANT, "u-new") == joined
+
+
+async def test_member_since_is_none_without_a_membership_row(env: Env) -> None:
+    await env.users.create(make_user(external_id="outsider"))
+
+    found = await env.service()._member("outsider")
+
+    assert found.member_since is None
+    assert await env.members.joined_at(TENANT, "outsider") is None
 
 
 # -- assign_role -------------------------------------------------------------
@@ -640,21 +717,41 @@ async def test_list_members_shows_live_direct_roles(env: Env) -> None:
     members = await env.service(actor).list_members()
 
     owner_id = str((await owner_role(env)).id)
+
+    async def since(user_id: str) -> float | None:
+        joined = await env.members.joined_at(TENANT, user_id)
+        assert joined is not None
+        return joined
+
     assert members == [
         TeamMember(
             user_id="boss",
             name=None,
             email=None,
             roles=[TeamRoleRef(id=owner_id, name="Owner", kind="template")],
+            member_since=await since("boss"),
         ),
         TeamMember(
             user_id="u-1",
             name=None,
             email=None,
             roles=[TeamRoleRef(id=str(cashier.id), name="Cashier", kind="tenant")],
+            member_since=await since("u-1"),
         ),
-        TeamMember(user_id="u-2", name=None, email=None, roles=[]),
-        TeamMember(user_id="ghost", name=None, email=None, roles=[]),
+        TeamMember(
+            user_id="u-2",
+            name=None,
+            email=None,
+            roles=[],
+            member_since=await since("u-2"),
+        ),
+        TeamMember(
+            user_id="ghost",
+            name=None,
+            email=None,
+            roles=[],
+            member_since=await since("ghost"),
+        ),
     ]
     page = await env.service(actor).list_members(skip=1, limit=1)
     assert [m.user_id for m in page] == ["u-1"]

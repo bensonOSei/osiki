@@ -61,6 +61,7 @@ from osiki.services.team.models import (
     NotManager,
     NotOffered,
     RoleInUse,
+    TeamCondition,
     TeamError,
     TeamMember,
     TeamRole,
@@ -68,6 +69,7 @@ from osiki.services.team.models import (
     Violation,
     ViolationKind,
 )
+from osiki.services.team.models import GrantEntry as ShownGrant
 from osiki.services.unit_of_work import Operation, UnitOfWork
 
 _MANAGE = GrantEntry(permission="osiki.team:manage")
@@ -169,7 +171,7 @@ class TeamService:
         await self.require_manager()
         offered = await self._offered_templates()
         own = await self._role_repo.list_tenant(self._tenant_id)
-        return await self._render([*offered, *own])
+        return await self._render([*offered, *own], inherited=True)
 
     async def list_assignable_permissions(self) -> list[Permission]:
         """Permissions the role editor may offer: the ones a tenant role may hold."""
@@ -181,21 +183,26 @@ class TeamService:
             skip += _MEMBER_PAGE
         return found
 
+    async def list_conditions(self) -> list[TeamCondition]:
+        """Active conditions, which a team role's grants may carry."""
+        await self.require_manager()
+        found: list[TeamCondition] = []
+        skip = 0
+        while page := await self._condition_repo.list_active(skip, _MEMBER_PAGE):
+            found.extend(
+                TeamCondition(id=str(c.id), key=c.key, description=c.description)
+                for c in page
+            )
+            skip += _MEMBER_PAGE
+        return found
+
     async def _offered_templates(self) -> list[Role]:
-        """Active project templates whose every grant is assignable or built-in."""
-        offered: list[Role] = []
-        for template in await self._role_repo.list_templates():
-            permissions = [
-                p
-                for ancestor in await self._lineage(template)
-                for p in await self._permissions_of(ancestor)
-            ]
-            if all(
-                p is not None and (is_builtin(p) or (p.is_active and p.assignable))
-                for p in permissions
-            ):
-                offered.append(template)
-        return offered
+        """Every active project template: the developer's own definition.
+
+        ``assignable`` does not hide one. Assigning it still passes the
+        no-escalation check, and a copy still carries only assignable grants.
+        """
+        return await self._role_repo.list_templates()
 
     async def _lineage(self, role: Role) -> list[Role]:
         """The role then its ancestors; stops at a missing or inactive parent
@@ -212,20 +219,34 @@ class TeamService:
             parent_id = parent.parent_role_id
         return lineage
 
-    async def _permissions_of(self, role: Role) -> list[Permission | None]:
-        return [
-            await self._permission_repo.get_by_id(str(g.permission_id))
-            for g in role.grants
-        ]
-
     async def _render(
-        self, roles: list[Role], *, include_inactive: bool = False
+        self,
+        roles: list[Role],
+        *,
+        include_inactive: bool = False,
+        inherited: bool = False,
     ) -> list[TeamRole]:
         """Roles as the team sees them. Grants on inactive permissions are
         left out unless ``include_inactive``, which escalation checks use: a
-        later reactivation would hand them out."""
+        later reactivation would hand them out.
+
+        With ``inherited``, a template also shows the grants of its active
+        ancestors (nearest first, each once), marked with the ancestor's name.
+        """
+        lineages = {
+            str(role.id): (
+                (await self._lineage(role))[1:]
+                if inherited and _kind(role) == "template"
+                else []
+            )
+            for role in roles
+        }
         permission_ids = list(
-            dict.fromkeys(str(g.permission_id) for r in roles for g in r.grants)
+            dict.fromkeys(
+                str(g.permission_id)
+                for r in [*roles, *(a for ls in lineages.values() for a in ls)]
+                for g in r.grants
+            )
         )
         found = (
             await self._permission_repo.get_by_ids_any(permission_ids)
@@ -234,21 +255,36 @@ class TeamService:
         )
         permissions = {str(p.id): p.permission_string for p in found}
         conditions = {str(c.id): c.key for c in await self._condition_repo.get_all()}
+
+        def shown(role: Role, inherited_from: str | None) -> list[ShownGrant]:
+            return [
+                ShownGrant(
+                    permission=permissions[str(g.permission_id)],
+                    condition=(
+                        conditions[str(g.condition_id)] if g.condition_id else None
+                    ),
+                    inherited_from=inherited_from,
+                )
+                for g in role.grants
+                if str(g.permission_id) in permissions
+            ]
+
+        def grants_of(role: Role) -> list[ShownGrant]:
+            grants = shown(role, None)
+            seen = {(g.permission, g.condition) for g in grants}
+            for ancestor in lineages[str(role.id)]:
+                for grant in shown(ancestor, ancestor.name):
+                    if (grant.permission, grant.condition) not in seen:
+                        seen.add((grant.permission, grant.condition))
+                        grants.append(grant)
+            return grants
+
         return [
             TeamRole(
                 id=str(role.id),
                 name=role.name,
                 kind=_kind(role),
-                grants=[
-                    GrantEntry(
-                        permission=permissions[str(g.permission_id)],
-                        condition=(
-                            conditions[str(g.condition_id)] if g.condition_id else None
-                        ),
-                    )
-                    for g in role.grants
-                    if str(g.permission_id) in permissions
-                ],
+                grants=grants_of(role),
                 copied_from=str(role.copied_from) if role.copied_from else None,
                 holders=await self._holders(str(role.id)),
             )
@@ -418,9 +454,16 @@ class TeamService:
         self, user_id: str, assignments: list[UserRole] | None = None
     ) -> TeamMember:
         """A member with the live roles assigned to them directly in the tenant."""
+        member_since = await self._member_repo.joined_at(self._tenant_id, user_id)
         user = await self._user_repo.get_by_external_id(user_id)
         if user is None:
-            return TeamMember(user_id=user_id, name=None, email=None, roles=[])
+            return TeamMember(
+                user_id=user_id,
+                name=None,
+                email=None,
+                roles=[],
+                member_since=member_since,
+            )
         if assignments is None:
             assignments = await self._user_role_repo.get_by_tenant(self._tenant_id)
         role_ids = list(
@@ -443,6 +486,7 @@ class TeamService:
                 )
                 for r in roles
             ],
+            member_since=member_since,
         )
 
     async def effective(self, user_id: str) -> list[EffectiveSource]:
@@ -781,13 +825,15 @@ class TeamService:
         grants on inactive permissions too: reactivating one must not hand out
         what the assigner could not."""
         if role.tenant_id is not None:
-            return (await self._render([role], include_inactive=True))[0].grants
+            return _plain((await self._render([role], include_inactive=True))[0].grants)
         lineage = await self._lineage(role)
-        dormant = [
-            g
-            for rendered in await self._render(lineage, include_inactive=True)
-            for g in rendered.grants
-        ]
+        dormant = _plain(
+            [
+                g
+                for rendered in await self._render(lineage, include_inactive=True)
+                for g in rendered.grants
+            ]
+        )
         snapshot = await self._snapshot_builder.build()
         roles = {r.id: r for r in snapshot.roles}
         if str(role.id) not in roles:
@@ -953,6 +999,12 @@ def _assignable(permission: Permission) -> bool:
         and not is_builtin(permission)
         and permission.resource != "*"
     )
+
+
+def _plain(grants: Sequence[ShownGrant]) -> list[GrantEntry]:
+    """Grants as the escalation check compares them: without display fields,
+    so they equal the snapshot's grants."""
+    return [GrantEntry(permission=g.permission, condition=g.condition) for g in grants]
 
 
 def _name_taken(name: str) -> ConflictError:

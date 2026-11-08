@@ -809,7 +809,12 @@ class MockTenantMemberRepository(
     ) -> None:
         key = self._key(tenant_id, user_id)
         if self._get(key) is None:
-            self._store(key, TenantMember(tenant_id=tenant_id, user_id=user_id))
+            self._store(
+                key,
+                TenantMember(
+                    tenant_id=tenant_id, user_id=user_id, created_at=time.time()
+                ),
+            )
             await self._bump()
 
     async def remove(
@@ -826,6 +831,10 @@ class MockTenantMemberRepository(
         self, tenant_id: str, user_id: str, *, session: AsyncClientSession | None = None
     ) -> bool:
         return self._get(self._key(tenant_id, user_id)) is not None
+
+    async def joined_at(self, tenant_id: str, user_id: str) -> float | None:
+        member = self._get(self._key(tenant_id, user_id))
+        return member.created_at if member is not None else None
 
     async def tenants_for_user(self, user_id: str) -> list[str]:
         return [m.tenant_id for m in self._scoped() if m.user_id == user_id]

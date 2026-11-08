@@ -20,6 +20,10 @@ class BaseTenantMemberRepository(ABC):
     ) -> bool: ...
 
     @abstractmethod
+    async def joined_at(self, tenant_id: str, user_id: str) -> float | None:
+        """When the user joined the tenant; ``None`` when not a member."""
+
+    @abstractmethod
     async def tenants_for_user(self, user_id: str) -> list[str]: ...
 
     @abstractmethod
